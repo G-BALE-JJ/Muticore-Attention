@@ -167,7 +167,9 @@ def _next_power_of_two(value: int) -> int:
 
 MM_MAT_STRIDE = _align_up(BLOCK_MAT_BYTES, MM_ALIGN)
 OFF_GEMM_MAT = 0x0
-MM_VEC_STRIDE = _align_up(BLOCK_VEC_BYTES, MM_ALIGN)
+# Pack B vectors back-to-back.  Padding each FP16 vector to a 256B line would
+# waste half of the transferred bytes and is not part of the data layout.
+MM_VEC_STRIDE = BLOCK_VEC_BYTES
 MAT_REUSE_SLOTS = B_REUSE_M_TILES if B_REUSE_M_TILES > 1 else 1
 VEC_REUSE_SLOTS = A_REUSE_N_TILES if A_REUSE_N_TILES > 1 else 1
 OUT_REUSE_SLOTS = MAT_REUSE_SLOTS * VEC_REUSE_SLOTS
@@ -878,12 +880,15 @@ def main(argv=None):
         raise ValueError(
             f"GOLEM_GEMM_M/N/K must be positive, got {GEMM_M}/{GEMM_N}/{GEMM_K}"
         )
+    block_k = MATMUL_OP_DESC["block_k"]
     if (
         MATMUL_OP_DESC["block_m"] % ARRAY_OUTPUT_SIZE != 0
-        or MATMUL_OP_DESC["block_k"] % ARRAY_INPUT_SIZE != 0
+        or (block_k > ARRAY_INPUT_SIZE and block_k % ARRAY_INPUT_SIZE != 0)
     ):
         raise ValueError(
-            f"Phase-1 requires block_M/block_K to be integer multiples of ARRAY_OUTPUT/INPUT({ARRAY_OUTPUT_SIZE}/{ARRAY_INPUT_SIZE}), got {MATMUL_OP_DESC['block_m']}/{MATMUL_OP_DESC['block_k']}"
+            f"Phase-1 requires block_M to be a multiple of ARRAY_OUTPUT({ARRAY_OUTPUT_SIZE}); "
+            f"block_K must be <= ARRAY_INPUT({ARRAY_INPUT_SIZE}) or an integer multiple of it, "
+            f"got {MATMUL_OP_DESC['block_m']}/{block_k}"
         )
     if MATMUL_OP_DESC["block_n"] <= 0 or MATMUL_OP_DESC["block_n"] > NUM_ARRAYS:
         raise ValueError(
@@ -1246,7 +1251,6 @@ def main(argv=None):
         node_idx = _b_data_node_for_n_tile(n_tile)
         b_slot = _b_slot_for_n_tile(n_tile)
         for k_tile in range(GEMM_K_TILES):
-            vec_tile_data = bytearray(BLOCK_N * MM_VEC_STRIDE)
             for n_col in range(BLOCK_N):
                 if b_matrix is not None:
                     vec = _vector_from_input(
@@ -1261,16 +1265,14 @@ def main(argv=None):
                 else:
                     vec = _build_vector_tile(n_tile, k_tile, n_col, BLOCK_K)
                 vec_data = _pack_tensor_values(vec)
-                start = n_col * MM_VEC_STRIDE
-                vec_tile_data[start : start + len(vec_data)] = vec_data
-            vec_slot = (b_slot * GEMM_K_TILES + k_tile) * BLOCK_N
-            vec_off = OFF_GEMM_VEC_BASE + vec_slot * MM_VEC_STRIDE
-            _write_block(
-                node_buffers[node_idx],
-                vec_off,
-                bytes(vec_tile_data),
-                f"b_n{n_tile}_k{k_tile}_node{node_idx}",
-            )
+                vec_slot = (b_slot * GEMM_K_TILES + k_tile) * BLOCK_N + n_col
+                vec_off = OFF_GEMM_VEC_BASE + vec_slot * MM_VEC_STRIDE
+                _write_block(
+                    node_buffers[node_idx],
+                    vec_off,
+                    vec_data,
+                    f"b_n{n_tile}_k{k_tile}_n{n_col}_node{node_idx}",
+                )
 
     if bias_vec is not None:
         bias_data = _pack_tensor_values(bias_vec)

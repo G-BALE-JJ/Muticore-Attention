@@ -1128,7 +1128,8 @@ PortControl::handle_output(Event* ev) {
 	    output_timing->send(size,NULL);
 
 	    // Subtract credits
-	    port_out_credits[vc_to_send] -= size;
+	    const int credit_vc = host_port ? send_event->getVN() : vc_to_send;
+	    port_out_credits[credit_vc] -= size;
 	    output_buf_count[vc_to_send]++;
 
         if (is_idle) {

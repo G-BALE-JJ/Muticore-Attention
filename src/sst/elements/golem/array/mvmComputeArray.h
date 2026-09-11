@@ -46,16 +46,22 @@ public:
         selfLink->setDefaultTimeBase(*clockTC);
 
         // Initialize vectors   numArrays表示有几个矩阵
-        inputVectors.resize(numArrays);
+        const size_t operandContexts =
+            static_cast<size_t>(numArrays) * operandContextBanks;
+        inputVectors.resize(operandContexts);
         outputVectors.resize(numArrays);
-        matrixData.resize(numArrays);
+        matrixData.resize(operandContexts);
         outputModes.resize(numArrays, OutputMode::Overwrite);
-        for (uint32_t i = 0; i < numArrays; i++) {
+        activeInputColumns.resize(operandContexts, inputArraySize);
+        for (size_t i = 0; i < operandContexts; i++) {
             inputVectors[i].resize(inputArraySize, T());
-            outputVectors[i].resize(outputArraySize, T());
             matrixData[i].resize(inputArraySize * outputArraySize, T());
         }
+        for (uint32_t i = 0; i < numArrays; i++) {
+            outputVectors[i].resize(outputArraySize, T());
+        }
 
+        functionalCompute = params.find<int>("functionalCompute", 1) != 0;
         dumpEnabled = params.find<int>("mvm_dump_enable", 0) != 0;
         coreId = params.find<int>("core_id", -1);
         dumpRootDir = params.find<std::string>("mvm_dump_dir", "mvm_dumps");
@@ -78,11 +84,36 @@ public:
     }
     //启动计算 根据 arrayID 获取阵列的延迟，并通过 selfLink 发送一个计算事件
     virtual void beginComputation(uint32_t arrayID) override {
+        beginComputationBank(arrayID, 0);
+    }
+
+    virtual void beginComputationBank(
+            uint32_t arrayID, uint32_t operandBank) override {
+        if (!validOperandContext(arrayID, operandBank)) return;
+        activeInputColumns[operandIndex(arrayID, operandBank)] = inputArraySize;
         SimTime_t latency = getArrayLatency(arrayID);   // 得到阵列延迟，比如返回1
-        ArrayEvent* ev = new ArrayEvent(arrayID);       // 新建事件，带arrayID
+        ArrayEvent* ev = new ArrayEvent(arrayID, operandBank);
         selfLink->send(latency, ev);                    // 延迟latency后将事件ev发送给自己
         //把事件通过selfLink（SST框架的本地自环连接）发送，延迟latency后会回到当前组件。
         //这就是模拟“异步/延迟计算”，即MVM计算不是立刻完成，而是等一段时间（比如硬件计算延迟）。
+    }
+
+    virtual void beginComputationActive(
+            uint32_t arrayID, uint32_t activeColumns) override {
+        beginComputationActiveBank(arrayID, 0, activeColumns);
+    }
+
+    virtual void beginComputationActiveBank(
+            uint32_t arrayID, uint32_t operandBank,
+            uint32_t activeColumns) override {
+        if (!validOperandContext(arrayID, operandBank) ||
+            !validateActiveColumnRequest(activeColumns)) {
+            return;
+        }
+        activeInputColumns[operandIndex(arrayID, operandBank)] = activeColumns;
+        const SimTime_t latency = getArrayLatencyActive(arrayID, activeColumns);
+        recordActiveKLaunch(activeColumns, latency);
+        selfLink->send(latency, new ArrayEvent(arrayID, operandBank));
     }
 
 
@@ -94,8 +125,15 @@ public:
     virtual void handleSelfEvent(Event* ev) override {
         ArrayEvent* aev = static_cast<ArrayEvent*>(ev);
         uint32_t arrayID = aev->getArrayID();
+        const uint32_t operandBank = aev->getOperandBank();
 
-        compute(arrayID);   //对arrayID的阵列进行计算
+        if (functionalCompute) {
+            computeBank(arrayID, operandBank);
+        } else if (outputModes[arrayID] == OutputMode::Overwrite) {
+            // Timing-only mode preserves the modeled completion event and data
+            // movement while avoiding host-side numerical MAC execution.
+            clearOutputVector(arrayID);
+        }
 
         (*tileHandler)(ev);
     }
@@ -115,14 +153,23 @@ public:
         size_t elemBytes,
         uint64_t tag,
         typename ComputeArray::BufferCallback callback) override {
-        if (arrayID >= matrixData.size() ||
+        return programMatrixBankAsync(
+            arrayID, 0, matrix, elemBytes, tag, std::move(callback));
+    }
+
+    virtual bool programMatrixBankAsync(
+        uint32_t arrayID, uint32_t operandBank,
+        const std::vector<double>& matrix, size_t elemBytes, uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        if (!validOperandContext(arrayID, operandBank) ||
             matrix.size() != inputArraySize * outputArraySize || elemBytes == 0) {
             return false;
         }
+        const size_t context = operandIndex(arrayID, operandBank);
         return enqueueBufferTransfer(
             matrix.size() * elemBytes, tag,
-            [this, arrayID, matrix, tag, callback = std::move(callback)]() {
-                std::transform(matrix.begin(), matrix.end(), matrixData[arrayID].begin(),
+            [this, context, matrix, tag, callback = std::move(callback)]() {
+                std::transform(matrix.begin(), matrix.end(), matrixData[context].begin(),
                                [](double value) { return static_cast<T>(value); });
                 if (callback) {
                     callback(true, tag);
@@ -136,18 +183,92 @@ public:
         size_t elemBytes,
         uint64_t tag,
         typename ComputeArray::BufferCallback callback) override {
-        if (arrayIDs.empty() ||
-            matrix.size() != inputArraySize * outputArraySize || elemBytes == 0 ||
-            std::any_of(arrayIDs.begin(), arrayIDs.end(),
-                        [this](uint32_t id) { return id >= matrixData.size(); })) {
+        return programMatrixGroupBankAsync(
+            arrayIDs, 0, matrix, elemBytes, tag, std::move(callback));
+    }
+
+    virtual bool programMatrixGroupBankAsync(
+        const std::vector<uint32_t>& arrayIDs, uint32_t operandBank,
+        const std::vector<double>& matrix, size_t elemBytes, uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        if (!validateMatrixBroadcastRequest(
+                arrayIDs, matrix.size(), elemBytes) ||
+            operandBank >= operandContextBanks) {
+            return false;
+        }
+        return enqueueMatrixBroadcastTransfer(
+            matrix.size() * elemBytes, arrayIDs.size(), tag,
+            [this, arrayIDs, operandBank, matrix, tag,
+             callback = std::move(callback)]() {
+                for (uint32_t arrayID : arrayIDs) {
+                    auto& target = matrixData[operandIndex(arrayID, operandBank)];
+                    std::transform(matrix.begin(), matrix.end(), target.begin(),
+                                   [](double value) { return static_cast<T>(value); });
+                }
+                if (callback) callback(true, tag);
+            });
+    }
+
+    virtual bool programMatrixActiveAsync(
+        uint32_t arrayID,
+        const std::vector<double>& matrix,
+        uint32_t activeColumns,
+        size_t elemBytes,
+        uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        return programMatrixActiveBankAsync(
+            arrayID, 0, matrix, activeColumns, elemBytes, tag,
+            std::move(callback));
+    }
+
+    virtual bool programMatrixActiveBankAsync(
+        uint32_t arrayID, uint32_t operandBank,
+        const std::vector<double>& matrix, uint32_t activeColumns,
+        size_t elemBytes, uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        if (!validateActiveMatrixRequest(
+                arrayID, matrix.size(), activeColumns, elemBytes) ||
+            operandBank >= operandContextBanks) {
             return false;
         }
         return enqueueBufferTransfer(
             matrix.size() * elemBytes, tag,
-            [this, arrayIDs, matrix, tag, callback = std::move(callback)]() {
+            [this, arrayID, operandBank, matrix, activeColumns, tag,
+             callback = std::move(callback)]() {
+                writeCompactMatrix(arrayID, operandBank, matrix, activeColumns);
+                if (callback) callback(true, tag);
+            });
+    }
+
+    virtual bool programMatrixGroupActiveAsync(
+        const std::vector<uint32_t>& arrayIDs,
+        const std::vector<double>& matrix,
+        uint32_t activeColumns,
+        size_t elemBytes,
+        uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        return programMatrixGroupActiveBankAsync(
+            arrayIDs, 0, matrix, activeColumns, elemBytes, tag,
+            std::move(callback));
+    }
+
+    virtual bool programMatrixGroupActiveBankAsync(
+        const std::vector<uint32_t>& arrayIDs, uint32_t operandBank,
+        const std::vector<double>& matrix, uint32_t activeColumns,
+        size_t elemBytes, uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        if (!validateMatrixBroadcastRequest(
+                arrayIDs, matrix.size(), elemBytes, activeColumns) ||
+            operandBank >= operandContextBanks) {
+            return false;
+        }
+        return enqueueMatrixBroadcastTransfer(
+            matrix.size() * elemBytes, arrayIDs.size(), tag,
+            [this, arrayIDs, operandBank, matrix, activeColumns, tag,
+             callback = std::move(callback)]() {
                 for (uint32_t arrayID : arrayIDs) {
-                    std::transform(matrix.begin(), matrix.end(), matrixData[arrayID].begin(),
-                                   [](double value) { return static_cast<T>(value); });
+                    writeCompactMatrix(
+                        arrayID, operandBank, matrix, activeColumns);
                 }
                 if (callback) callback(true, tag);
             });
@@ -159,18 +280,62 @@ public:
         size_t elemBytes,
         uint64_t tag,
         typename ComputeArray::BufferCallback callback) override {
-        if (arrayID >= inputVectors.size() || input.empty() ||
+        return programInputBankAsync(
+            arrayID, 0, input, elemBytes, tag, std::move(callback));
+    }
+
+    virtual bool programInputBankAsync(
+        uint32_t arrayID, uint32_t operandBank,
+        const std::vector<double>& input, size_t elemBytes, uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        if (!validOperandContext(arrayID, operandBank) || input.empty() ||
             input.size() > inputArraySize || elemBytes == 0) {
             return false;
         }
+        const size_t context = operandIndex(arrayID, operandBank);
         return enqueueBufferTransfer(
             input.size() * elemBytes, tag,
-            [this, arrayID, input, tag, callback = std::move(callback)]() {
-                std::transform(input.begin(), input.end(), inputVectors[arrayID].begin(),
+            [this, context, input, tag, callback = std::move(callback)]() {
+                std::transform(input.begin(), input.end(), inputVectors[context].begin(),
                                [](double value) { return static_cast<T>(value); });
                 if (callback) {
                     callback(true, tag);
                 }
+            });
+    }
+
+    virtual bool programInputActiveAsync(
+        uint32_t arrayID,
+        const std::vector<double>& input,
+        uint32_t activeColumns,
+        size_t elemBytes,
+        uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        return programInputActiveBankAsync(
+            arrayID, 0, input, activeColumns, elemBytes, tag,
+            std::move(callback));
+    }
+
+    virtual bool programInputActiveBankAsync(
+        uint32_t arrayID, uint32_t operandBank,
+        const std::vector<double>& input, uint32_t activeColumns,
+        size_t elemBytes, uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        if (!validateActiveInputRequest(
+                arrayID, input.size(), activeColumns, elemBytes) ||
+            operandBank >= operandContextBanks) {
+            return false;
+        }
+        const size_t context = operandIndex(arrayID, operandBank);
+        return enqueueBufferTransfer(
+            input.size() * elemBytes, tag,
+            [this, context, input, tag, callback = std::move(callback)]() {
+                std::fill(inputVectors[context].begin(),
+                          inputVectors[context].end(), T());
+                std::transform(input.begin(), input.end(),
+                               inputVectors[context].begin(),
+                               [](double value) { return static_cast<T>(value); });
+                if (callback) callback(true, tag);
             });
     }
 
@@ -181,7 +346,7 @@ public:
         size_t elemBytes,
         uint64_t tag,
         typename ComputeArray::BufferCallback callback) override {
-        if (arrayID >= matrixData.size() ||
+        if (arrayID >= numArrays ||
             matrix.size() != inputArraySize * outputArraySize ||
             input.size() != inputArraySize || elemBytes == 0) {
             return false;
@@ -208,7 +373,7 @@ public:
         if (arrayID >= outputVectors.size() || elemBytes == 0) {
             return false;
         }
-        return enqueueBufferTransfer(
+        return enqueueOutputReadTransfer(arrayID,
             outputArraySize * elemBytes, tag,
             [this, arrayID, tag, callback = std::move(callback)]() {
                 std::vector<double> values(outputVectors[arrayID].size(), 0.0);
@@ -266,9 +431,15 @@ public:
     }
 
     virtual void compute(uint32_t arrayID) override {
-        auto& inputVector = inputVectors[arrayID];  //arrayID 是当前计算阵列的标识符
+        computeBank(arrayID, 0);
+    }
+
+    void computeBank(uint32_t arrayID, uint32_t operandBank) {
+        if (!validOperandContext(arrayID, operandBank)) return;
+        const size_t context = operandIndex(arrayID, operandBank);
+        auto& inputVector = inputVectors[context];
         auto& outputVector = outputVectors[arrayID];
-        auto& matrix = matrixData[arrayID];
+        auto& matrix = matrixData[context];
 
         // Ensure output vector is correctly sized
         outputVector.resize(outputArraySize);
@@ -280,7 +451,8 @@ public:
 
         // Print input vector
         out.verbose(CALL_INFO, 2, 0, "MVM for array %u:\n\n", arrayID);
-        for (uint32_t col = 0; col < inputArraySize; col++) {
+        const uint32_t activeColumns = activeInputColumns[context];
+        for (uint32_t col = 0; col < activeColumns; col++) {
             printValue(inputVector[col]);
         }
         out.verbose(CALL_INFO, 2, 0, "\n\n");
@@ -288,7 +460,7 @@ public:
         // Perform matrix-vector multiplication
         for (uint32_t row = 0; row < outputArraySize; row++) {
             T dot = 0;
-            for (uint32_t col = 0; col < inputArraySize; col++) {
+            for (uint32_t col = 0; col < activeColumns; col++) {
                 dot += matrix[row * inputArraySize + col] * inputVector[col];
                 printValue(matrix[row * inputArraySize + col]);
             }
@@ -312,6 +484,15 @@ public:
         (void)arrayID;
         return modeledComputeCycles;
     }
+    virtual SimTime_t getArrayLatencyActive(
+            uint32_t arrayID, uint32_t activeColumns) override {
+        (void)arrayID;
+        if (!validateActiveColumnRequest(activeColumns)) return 0;
+        if (activeColumns == inputArraySize) return modeledComputeCycles;
+        return modeledActiveComputeCycles(activeColumns);
+    }
+
+    virtual bool supportsActiveColumns() const override { return true; }
     //这个虚拟函数用于将某个阵列的输出向量移动到另一个阵列的输入向量
     virtual void moveOutputToInput(uint32_t srcArrayID, uint32_t destArrayID) override {
         std::copy(outputVectors[srcArrayID].begin(), outputVectors[srcArrayID].end(), inputVectors[destArrayID].begin());
@@ -360,6 +541,8 @@ protected:
     std::vector<std::vector<T>> outputVectors;
     std::vector<std::vector<T>> matrixData;
     std::vector<OutputMode> outputModes;
+    std::vector<uint32_t> activeInputColumns;
+    bool functionalCompute = true;
     bool dumpEnabled = false;
     int coreId = -1;
     std::string dumpRootDir;
@@ -367,6 +550,20 @@ protected:
     uint64_t dumpSeq = 0;
     bool dumpOverwrite = true;
     std::vector<bool> dumpFileInitialized;
+
+    void writeCompactMatrix(
+            uint32_t arrayID, uint32_t operandBank,
+            const std::vector<double>& matrix,
+            uint32_t activeColumns) {
+        auto& target = matrixData[operandIndex(arrayID, operandBank)];
+        std::fill(target.begin(), target.end(), T());
+        for (uint32_t row = 0; row < outputArraySize; ++row) {
+            for (uint32_t col = 0; col < activeColumns; ++col) {
+                target[row * inputArraySize + col] =
+                    static_cast<T>(matrix[row * activeColumns + col]);
+            }
+        }
+    }
 
     void dumpMvmSnapshot(uint32_t arrayID,
                          const std::vector<T>& inputVector,
@@ -434,6 +631,14 @@ protected:
 
     void clearOutputVector(uint32_t arrayID) {
         std::fill(outputVectors[arrayID].begin(), outputVectors[arrayID].end(), T());
+    }
+
+    bool validOperandContext(uint32_t arrayID, uint32_t operandBank) const {
+        return arrayID < numArrays && operandBank < operandContextBanks;
+    }
+
+    size_t operandIndex(uint32_t arrayID, uint32_t operandBank) const {
+        return static_cast<size_t>(operandBank) * numArrays + arrayID;
     }
 
     void printValue(const T& value) {

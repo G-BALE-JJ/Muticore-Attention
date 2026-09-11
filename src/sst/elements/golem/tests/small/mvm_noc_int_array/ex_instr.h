@@ -290,7 +290,7 @@ inline void configure_output_mode(uint32_t tile_id, uint32_t mode, bool clear_no
 // 用法: mm2gm(主存地址, GM地址)
 // 汇编: mm2gm rd, rs1, rs2
 // =============================================================
-static inline void mm2gm(void* mm_addr, uint64_t gm_addr) {
+static inline void mm2gm(const void* mm_addr, uint64_t gm_addr) {
     asm volatile (
         GOLEM_R_INSN("0xD", "x0", "%0", "%1")
         :

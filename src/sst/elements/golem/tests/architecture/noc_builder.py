@@ -24,6 +24,9 @@ class MeshNoCBuilder:
         input_buf_size: str = "2KB",
         output_buf_size: str = "2KB",
         num_vns: int = 3,
+        vn_priority_order: str = "",
+        vn_starvation_vn: int = -1,
+        vn_max_starvation_cycles: int = 0,
         width: str = "1x1",
         verify_topology: bool = True,
         inter_router_no_cut: bool = True,
@@ -61,6 +64,9 @@ class MeshNoCBuilder:
             "input_buf_size": input_buf_size,
             "output_buf_size": output_buf_size,
             "num_vns": num_vns,
+            "vn_priority_order": vn_priority_order,
+            "vn_starvation_vn": str(vn_starvation_vn),
+            "vn_max_starvation_cycles": str(vn_max_starvation_cycles),
             "debug": str(debug),  # Merlin 路由器只支持 debug (0/1)
         }
         self.router_params = base_router_params

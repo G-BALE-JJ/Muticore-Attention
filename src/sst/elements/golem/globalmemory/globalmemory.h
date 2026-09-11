@@ -10,7 +10,6 @@
 #include <memory>
 #include <cctype>
 #include <deque>
-#include <mutex>
 #include <utility>
 
 #include <sst/core/interfaces/simpleNetwork.h>
@@ -52,6 +51,34 @@ enum class DmaRequestKind : uint8_t {
     AttentionKv,
     AttentionKvPrefetch,
     AttentionOutput,
+};
+
+enum class DmaOperand : uint8_t {
+    Unknown,
+    AttentionK,
+    AttentionV,
+};
+
+struct DmaConsumerMetadata {
+    uint8_t valid = 0;
+    uint64_t jobId = 0;
+    uint32_t worker = 0;
+    uint32_t consumerQueryBlock = 0;
+    uint32_t consumerTile = 0;
+    uint32_t targetQueryBlock = 0;
+    uint32_t targetTile = 0;
+    DmaOperand operand = DmaOperand::Unknown;
+
+    void serialize_order(SST::Core::Serialization::serializer& ser) {
+        ser & valid;
+        ser & jobId;
+        ser & worker;
+        ser & consumerQueryBlock;
+        ser & consumerTile;
+        ser & targetQueryBlock;
+        ser & targetTile;
+        ser & operand;
+    }
 };
 
 using LocalReadCallback =
@@ -167,23 +194,27 @@ class NetworkDataEvent : public Event {
 public:
     // 枚举类型表示事件类型: READ=读请求, WRITE=写请求或读回复, DMA_WRITE=DMA写请求,
     // DMA_READ_COMPLETE=DMA读完成, DMA_WRITE_COMPLETE=DMA写完成
-    enum Type { READ, WRITE, DMA_WRITE, DMA_READ_COMPLETE, DMA_WRITE_COMPLETE };
+    enum Type { READ, WRITE, DMA_WRITE, DMA_READ_COMPLETE, DMA_WRITE_COMPLETE,
+                DMA_CONSUMER_PROGRESS };
 
     // 默认构造函数 (序列化需要)
-    NetworkDataEvent() : Event(), type(READ), addr(0), length(0), data(), returnAddr(0), returnEndpoint(-1), completionFlagAddr(0), completionValue(0), requestId(0), dmaRequestKind(DmaRequestKind::Unknown) {}
+    NetworkDataEvent() : Event(), type(READ), addr(0), length(0), data(), returnAddr(0), returnEndpoint(-1), completionFlagAddr(0), completionValue(0), requestId(0), dmaRequestKind(DmaRequestKind::Unknown), dmaConsumer() {}
 
     // 带参数构造函数
     NetworkDataEvent(Type type, uint64_t addr, size_t length, const std::vector<uint8_t>& data)
         : NetworkDataEvent(type, addr, length, data, addr) {}
 
     NetworkDataEvent(Type type, uint64_t addr, size_t length, const std::vector<uint8_t>& data, uint64_t returnAddr)
-        : Event(), type(type), addr(addr), length(length), data(data), returnAddr(returnAddr), returnEndpoint(-1), completionFlagAddr(0), completionValue(0), requestId(0) {}
+        : Event(), type(type), addr(addr), length(length), data(data), returnAddr(returnAddr),
+          returnEndpoint(-1), completionFlagAddr(0), completionValue(0), requestId(0),
+          dmaRequestKind(DmaRequestKind::Unknown), dmaConsumer() {}
 
     NetworkDataEvent(Type type, uint64_t addr, size_t length, const std::vector<uint8_t>& data,
                      uint64_t returnAddr, int returnEndpoint, uint64_t completionFlagAddr, uint64_t completionValue,
-                     uint64_t requestId = 0, DmaRequestKind dmaRequestKind = DmaRequestKind::Unknown)
+                     uint64_t requestId = 0, DmaRequestKind dmaRequestKind = DmaRequestKind::Unknown,
+                     const DmaConsumerMetadata& dmaConsumer = DmaConsumerMetadata())
         : Event(), type(type), addr(addr), length(length), data(data), returnAddr(returnAddr),
-          returnEndpoint(returnEndpoint), completionFlagAddr(completionFlagAddr), completionValue(completionValue), requestId(requestId), dmaRequestKind(dmaRequestKind) {}
+          returnEndpoint(returnEndpoint), completionFlagAddr(completionFlagAddr), completionValue(completionValue), requestId(requestId), dmaRequestKind(dmaRequestKind), dmaConsumer(dmaConsumer) {}
 
     // 获取事件类型
     Type getType() const { return type; }
@@ -200,6 +231,7 @@ public:
     uint64_t getCompletionValue() const { return completionValue; }
     uint64_t getRequestId() const { return requestId; }
     DmaRequestKind getDmaRequestKind() const { return dmaRequestKind; }
+    const DmaConsumerMetadata& getDmaConsumerMetadata() const { return dmaConsumer; }
     // 序列化函数: 序列化所有字段以支持跨节点传输
     void serialize_order(SST::Core::Serialization::serializer &ser) override {
         Event::serialize_order(ser);
@@ -213,6 +245,7 @@ public:
         ser & completionValue;
         ser & requestId;
         ser & dmaRequestKind;
+        ser & dmaConsumer;
     }
 
     ImplementSerializable(SST::Golem::NetworkDataEvent);
@@ -228,6 +261,7 @@ private:
     uint64_t completionValue;       // optional direct-completion flag value on receiver
     uint64_t requestId;             // optional scheduler transaction identifier
     DmaRequestKind dmaRequestKind;  // semantic tag for DMA response trace attribution
+    DmaConsumerMetadata dmaConsumer;
 };
 
 
@@ -268,7 +302,11 @@ public:
                                                    DmaCallback cb,
                                                    DmaRequestKind kind = DmaRequestKind::Unknown) = 0;
     virtual void dma_read_from_host_to_globalmem(uint64_t src_pa, size_t length, uint64_t gm_dst_addr, DmaCallback cb,
-                                                 DmaRequestKind kind = DmaRequestKind::Unknown) = 0;
+                                                 DmaRequestKind kind = DmaRequestKind::Unknown,
+                                                 const DmaConsumerMetadata& consumer = DmaConsumerMetadata()) = 0;
+    virtual void dma_update_consumer_progress(uint64_t firstHostAddr,
+                                              uint64_t secondHostAddr,
+                                              const DmaConsumerMetadata& consumer) = 0;
     virtual uint64_t dma_write_to_host_async(uint64_t dst_pa, size_t length,
                                              const std::vector<uint8_t>& data) = 0;
     virtual bool dma_completion_done(uint64_t token) const = 0;
@@ -303,6 +341,10 @@ public:
         {"size",     "内存字节容量", "0"},
         {"src_id",   "Logical core index for this GlobalMemory instance."},
         {"num_vns",  "Number of requested virtual networks."},
+        {"dma_write_vn", "Virtual network used by DMA writes. Defaults to VN2 when available.", "2"},
+        {"network_vn_priority_order", "Comma-separated VN injection priority order. Empty preserves round-robin.", ""},
+        {"network_vn_starvation_vn", "VN allowed to bypass injection priority after a bounded wait.", "-1"},
+        {"network_vn_max_starvation_cycles", "Maximum injection queue age before starvation bypass. 0 disables bypass.", "0"},
         {"verbose",  "GlobalMemory verbose level", "1"},
         {"dump_data", "Enable detailed data hex dump logs", "0"},
         {"link_bw",  "Bandwidth of the router link (e.g., \"1GB/s\")."},
@@ -374,7 +416,10 @@ public:
                                            DmaCallback cb,
                                            DmaRequestKind kind = DmaRequestKind::Unknown) override;
     void dma_read_from_host_to_globalmem(uint64_t src_pa, size_t length, uint64_t gm_dst_addr, DmaCallback cb,
-                                         DmaRequestKind kind = DmaRequestKind::Unknown) override;
+                                         DmaRequestKind kind = DmaRequestKind::Unknown,
+                                         const DmaConsumerMetadata& consumer = DmaConsumerMetadata()) override;
+    void dma_update_consumer_progress(uint64_t firstHostAddr, uint64_t secondHostAddr,
+                                      const DmaConsumerMetadata& consumer) override;
     bool reductionNetworkAvailable() const override;
     bool sendReductionMessage(uint32_t destinationCore,
                               const ReductionTransportMessage& message) override;
@@ -388,8 +433,6 @@ public:
 
     uint64_t ctrlReadLocalU64(uint64_t addr) const;
     void ctrlWriteLocalU64(uint64_t addr, uint64_t value);
-    static GlobalMemoryImplement* lookupByCoreId(int coreId);
-    static int lookupEndpointByCoreId(int coreId);
     int ctrlLookupMemNicEndpointId(uint64_t phys_addr);
     uint8_t ctrlLookupDmaTargetRouter(uint64_t phys_addr);
     int ctrlResolveEndpointForAddress(uint64_t addr);
@@ -398,6 +441,7 @@ public:
                                         uint64_t completionFlagAddr, uint64_t completionValue,
                                         size_t totalLength = 0);
     bool ctrlIsReadRequestPending(uint64_t requestId) const;
+    void ctrlSetReadCompletionCallback(std::function<void(uint64_t)> callback);
     uint32_t getRequestVn() const { return request_vn; }
 
     SST::Output* output;
@@ -416,8 +460,6 @@ public:
     SST::Event::HandlerBase* tileHandler = nullptr;
 
 private:
-    static std::unordered_map<int, GlobalMemoryImplement*> ctrlRegistry;
-    static std::mutex ctrlRegistryMutex;
     class StdMemHandlers : public SST::Interfaces::StandardMem::RequestHandler {
     public:
         StdMemHandlers(GlobalMemoryImplement* parent, SST::Output* output)
@@ -437,6 +479,7 @@ private:
         uint64_t gm_dst_addr = 0;
         size_t length = 0;
         DmaRequestKind dmaRequestKind = DmaRequestKind::Unknown;
+        DmaConsumerMetadata dmaConsumer;
         DmaCallback cb;
         struct DmaContext {
             uint64_t host_base = 0;
@@ -465,6 +508,7 @@ private:
         uint64_t last_send_tick = 0;
         uint64_t first_send_cycle = 0;
         uint64_t last_send_cycle = 0;
+        uint64_t issue_cycle = 0;
     };
 
     struct PendingReadReply {
@@ -526,6 +570,7 @@ private:
     std::unordered_map<uint64_t, bool> dma_completion_tokens;
     std::unordered_map<uint64_t, PendingReadReply> read_pending;
     std::unordered_map<uint64_t, PendingReadRequest> request_pending;
+    std::function<void(uint64_t)> ctrl_read_completion_callback;
     uint64_t next_dma_completion_token = 1;
     uint64_t next_dma_request_id = 1;
 
@@ -563,6 +608,7 @@ private:
     std::unordered_map<uint64_t, PendingDmaLanding> pendingDmaLandings_;
 
     void handleDmaMemEvent(SST::Interfaces::StandardMem::Request* req);
+    void notifyCtrlReadComplete(uint64_t requestId);
 
     void registerEndpoint(const std::string& name, int endpointId);
     int extractCoreId(const std::string& name) const;
@@ -587,7 +633,8 @@ private:
     void dma_write_to_host_impl(uint64_t dst_pa, size_t length, const std::vector<uint8_t>& data, DmaCallback cb,
                                 uint64_t completion_token, DmaRequestKind kind = DmaRequestKind::Unknown);
     void dma_read_from_host_to_globalmem_impl(uint64_t src_pa, size_t length, uint64_t gm_dst_addr, DmaCallback cb,
-                                              uint64_t completion_token, DmaRequestKind kind);
+                                              uint64_t completion_token, DmaRequestKind kind,
+                                              const DmaConsumerMetadata& consumer = DmaConsumerMetadata());
 
     uint64_t read_u64_from_storage(uint64_t addr) const;
     void write_u64_to_storage(uint64_t addr, uint64_t value);
@@ -609,6 +656,7 @@ private:
     uint32_t request_vn = 0;
     uint32_t response_vn = 0;
     uint32_t reduction_vn = 0;
+    uint32_t write_vn = 0;
     uint64_t dma_retry_tick_counter = 0;
     uint64_t dma_read_send_immediate_count = 0;
     uint64_t dma_read_send_queued_count = 0;
@@ -622,6 +670,12 @@ private:
     uint64_t dma_read_timeout_exhausted_count = 0;
     uint64_t dma_read_completion_count = 0;
     uint64_t dma_write_completion_count = 0;
+    uint64_t dma_write_rtt_samples = 0;
+    uint64_t dma_write_rtt_cycles_sum = 0;
+    uint64_t dma_write_rtt_cycles_max = 0;
+    uint64_t dma_write_first_issue_cycle = 0;
+    uint64_t dma_write_last_issue_cycle = 0;
+    uint64_t dma_write_last_complete_cycle = 0;
     uint64_t dma_read_completion_no_pending_count = 0;
     uint64_t dma_wait_count = 0;
     uint64_t dma_read_rtt_samples = 0;
@@ -700,7 +754,10 @@ public:
     void dma_write_from_globalmem_to_host(uint64_t, uint64_t, size_t, DmaCallback,
                                           DmaRequestKind = DmaRequestKind::Unknown) override;
     void dma_read_from_host_to_globalmem(uint64_t, size_t, uint64_t, DmaCallback,
-                                         DmaRequestKind = DmaRequestKind::Unknown) override;
+                                         DmaRequestKind = DmaRequestKind::Unknown,
+                                         const DmaConsumerMetadata& = DmaConsumerMetadata()) override;
+    void dma_update_consumer_progress(uint64_t, uint64_t,
+                                      const DmaConsumerMetadata&) override {}
     bool reductionNetworkAvailable() const override { return false; }
     bool sendReductionMessage(uint32_t, const ReductionTransportMessage&) override { return false; }
     void setReductionMessageHandler(ReductionMessageHandler) override {}

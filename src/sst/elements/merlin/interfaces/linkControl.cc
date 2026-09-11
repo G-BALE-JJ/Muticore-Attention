@@ -21,6 +21,7 @@
 #include <sst/core/output.h>
 
 #include <algorithm>
+#include <mutex>
 #include <vector>
 
 #include "merlin.h"
@@ -33,6 +34,9 @@ namespace Merlin {
 namespace {
 std::vector<uint64_t> g_packet_latencies_ns;
 bool g_packet_latency_summary_printed = false;
+std::mutex g_packet_latency_mutex;
+size_t g_link_control_count = 0;
+size_t g_link_control_finished_count = 0;
 
 uint64_t percentile_of_sorted(const std::vector<uint64_t>& vals, double pct) {
     if (vals.empty()) return 0;
@@ -48,14 +52,26 @@ LinkControl::LinkControl(ComponentId_t cid, Params &params, int vns) :
     req_vns(vns), used_vns(0), total_vns(0), vn_out_map(nullptr),
     vn_remap_out(nullptr), output_queues(nullptr), router_credits(nullptr),
     router_return_credits(nullptr), input_queues(nullptr),
-    id(-1), logical_nid(-1), use_nid_map(false), job_id(0),
-    curr_out_vn(0), waiting(true), have_packets(false), start_block(0),
+    id(-1), logical_nid(-1), job_id(0), use_nid_map(false),
+    curr_out_vn(0),
+    vn_starvation_vn(params.find<int>("vn_starvation_vn", -1)),
+    vn_max_starvation_cycles(params.find<uint64_t>("max_starvation_cycles", 0)),
     idle_start(0), is_idle(true),
+    waiting(true), have_packets(false), start_block(0),
     receiveFunctor(nullptr), sendFunctor(nullptr),
-    network_initialized(false),
     output(getSimulationOutput()),
+    network_initialized(false),
     sent(0)
 {
+    const std::string priority_order =
+        params.find<std::string>("vn_priority_order", "");
+    if ( priority_order.find_first_not_of(" \t\r\n") != std::string::npos ) {
+        params.find_array<int>("vn_priority_order", vn_priority_order);
+    }
+    {
+        std::lock_guard<std::mutex> latency_lock(g_packet_latency_mutex);
+        ++g_link_control_count;
+    }
     // Get the link bandwidth
     link_bw = params.find<UnitAlgebra>("link_bw");
     if ( !link_bw.hasUnits("B/s") && !link_bw.hasUnits("b/s") ) {
@@ -162,6 +178,9 @@ LinkControl::LinkControl(ComponentId_t cid, Params &params, int vns) :
     send_bit_count = registerStatistic<uint64_t>("send_bit_count");
     output_port_stalls = registerStatistic<uint64_t>("output_port_stalls");
     idle_time = registerStatistic<uint64_t>("idle_time");
+    vn_priority_high_grants = registerStatistic<uint64_t>("vn_priority_high_grants");
+    vn_priority_low_grants = registerStatistic<uint64_t>("vn_priority_low_grants");
+    vn_priority_starvation_grants = registerStatistic<uint64_t>("vn_priority_starvation_grants");
     // recv_bit_count = registerStatistic<uint64_t>("recv_bit_count");
 
     last_time = 0;
@@ -417,7 +436,13 @@ void LinkControl::finish(void)
         is_idle = false;
     }
 
-    if (!g_packet_latency_summary_printed && !g_packet_latencies_ns.empty()) {
+    std::lock_guard<std::mutex> latency_lock(g_packet_latency_mutex);
+    g_packet_latencies_ns.insert(
+        g_packet_latencies_ns.end(), packet_latencies_ns.begin(), packet_latencies_ns.end());
+    packet_latencies_ns.clear();
+    ++g_link_control_finished_count;
+    if (g_link_control_finished_count == g_link_control_count &&
+        !g_packet_latency_summary_printed && !g_packet_latencies_ns.empty()) {
         std::sort(g_packet_latencies_ns.begin(), g_packet_latencies_ns.end());
         unsigned long long sum = 0;
         for (auto v : g_packet_latencies_ns) sum += v;
@@ -429,7 +454,6 @@ void LinkControl::finish(void)
                       g_packet_latencies_ns.size(), avg, p95, p99, maxv);
         g_packet_latency_summary_printed = true;
     }
-
     // Clean up all the events left in the queues.  This will help
     // track down real memory leaks as all this events won't be in the
     // way.
@@ -650,7 +674,7 @@ void LinkControl::handle_input(Event* ev)
         SimTime_t lat = getCurrentSimTimeNano() - event->getInjectionTime();
         // recv_bit_count->addData(event->getSizeInBits());
         packet_latency->addData(lat);
-        g_packet_latencies_ns.push_back(static_cast<uint64_t>(lat));
+        packet_latencies_ns.push_back(static_cast<uint64_t>(lat));
         if ( receiveFunctor != nullptr ) {
             bool keep = (*receiveFunctor)(vn);
             if ( !keep) receiveFunctor = nullptr;
@@ -675,7 +699,48 @@ void LinkControl::handle_output(Event* ev)
     SimTime_t block_throttle = 0;
     RtrEvent* send_event = nullptr;
     have_packets = false;
-    for ( int i = curr_out_vn; i < used_vns; i++ ) {
+    bool starvation_bypass = false;
+    std::vector<int> queue_order;
+    queue_order.reserve(used_vns + 1);
+    if ( !vn_priority_order.empty() ) {
+        int starvation_queue = -1;
+        for ( int i = 0; i < used_vns; ++i ) {
+            if ( output_queues[i].vn == vn_starvation_vn ) {
+                starvation_queue = i;
+                break;
+            }
+        }
+        if ( starvation_queue >= 0 && vn_max_starvation_cycles != 0 &&
+             !output_queues[starvation_queue].queue.empty() ) {
+            const SimTime_t injection =
+                output_queues[starvation_queue].queue.front()->getInjectionTime();
+            const SimTime_t now = getCurrentSimTimeNano();
+            if ( now >= injection && now - injection >= vn_max_starvation_cycles ) {
+                queue_order.push_back(starvation_queue);
+                starvation_bypass = true;
+            }
+        }
+        for ( int priority_vn : vn_priority_order ) {
+            for ( int i = 0; i < used_vns; ++i ) {
+                if ( output_queues[i].vn == priority_vn &&
+                     std::find(queue_order.begin(), queue_order.end(), i) == queue_order.end() ) {
+                    queue_order.push_back(i);
+                    break;
+                }
+            }
+        }
+        for ( int i = 0; i < used_vns; ++i ) {
+            if ( std::find(queue_order.begin(), queue_order.end(), i) == queue_order.end() ) {
+                queue_order.push_back(i);
+            }
+        }
+    } else {
+        for ( int offset = 0; offset < used_vns; ++offset ) {
+            queue_order.push_back((curr_out_vn + offset) % used_vns);
+        }
+    }
+
+    for ( int i : queue_order ) {
         if ( output_queues[i].queue.empty() ) continue;
         have_packets = true;
         send_event = output_queues[i].queue.front();
@@ -698,31 +763,6 @@ void LinkControl::handle_output(Event* ev)
         output_queues[i].queue.pop();
         found = true;
         break;
-    }
-
-    if (!found)  {
-        for ( int i = 0; i < curr_out_vn; i++ ) {
-            if ( output_queues[i].queue.empty() ) continue;
-            have_packets = true;
-            send_event = output_queues[i].queue.front();
-            // Check to see if the needed VN has enough space
-            if ( router_credits[output_queues[i].vn] < send_event->getSizeInFlits() ) continue;
-            // Check to see if there is a congestion event
-            int target = send_event->getDest();
-            if ( congestion_state.count(target) == 1 ) {
-                // See if we can send yet
-                if ( getCurrentSimCycle() < congestion_state[target].throttle_time ) {
-                    if ( block_throttle < congestion_state[target].throttle_time ) block_throttle = congestion_state[target].throttle_time;
-                    continue;
-                }
-                found_has_throttle = true;
-            }
-
-            vn_to_send = i;
-            output_queues[i].queue.pop();
-            found = true;
-            break;
-        }
     }
     // If we found an event to send, go ahead and send it
     if ( found ) {
@@ -764,6 +804,16 @@ void LinkControl::handle_output(Event* ev)
         rtr_link->send(send_event);
         last_recv_time = getCurrentSimCycle();
         sent++;
+        if ( !vn_priority_order.empty() ) {
+            if ( output_queues[vn_to_send].vn == vn_starvation_vn ) {
+                vn_priority_low_grants->addData(1);
+                if ( starvation_bypass ) {
+                    vn_priority_starvation_grants->addData(1);
+                }
+            } else {
+                vn_priority_high_grants->addData(1);
+            }
+        }
 
         if ( send_event->getTraceType() == SimpleNetwork::Request::FULL ) {
             output.output("TRACE(%d): %" PRIu64 " ns: Sent an event to router from LinkControl"

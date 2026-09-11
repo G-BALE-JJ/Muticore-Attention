@@ -20,6 +20,7 @@ COLORS = {
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
 DEFAULT_STATS_ROOT = REPO_ROOT / "src/sst/elements/golem/tests/artifacts/stats"
+TESTS_DIR = Path(__file__).resolve().parents[1]
 
 
 def setup_style():
@@ -888,6 +889,10 @@ def main():
         "--out-dir",
         default=str(DEFAULT_STATS_ROOT / "analysis/comparison"),
     )
+    p.add_argument(
+        "--run-summary",
+        default=str(DEFAULT_STATS_ROOT / "run_summary.csv"),
+    )
     args = p.parse_args()
 
     setup_style()
@@ -899,11 +904,7 @@ def main():
     out_dir = out_root / tag
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    run_summary_idx = load_run_summary_index(
-        Path(
-            DEFAULT_STATS_ROOT / "run_summary.csv"
-        )
-    )
+    run_summary_idx = load_run_summary_index(Path(args.run_summary))
     base_run_id = _extract_run_id(base_dir)
     opt_run_id = _extract_run_id(opt_dir)
     base_row = run_summary_idx.get(base_run_id)

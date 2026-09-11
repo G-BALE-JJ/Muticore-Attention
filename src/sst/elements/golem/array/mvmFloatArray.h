@@ -44,6 +44,7 @@ public:
         {"arrayOutputSize",    "Length of output vector (implies array columns)"},
         {"inputOperandSize",   "Number of bytes in a single input value"},
         {"outputOperandSize",  "Number of bytes in a single output value"},
+        {"functionalCompute",  "Execute host-side numerical MACs (1) or timing only (0)", "1"},
     )
 
     MVMFloatArray(ComponentId_t id, Params& params,

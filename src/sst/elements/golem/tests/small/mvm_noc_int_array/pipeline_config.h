@@ -55,6 +55,14 @@
 #define GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE 0
 #endif
 
+#ifndef GOLEM_WORKER_START_BARRIER_ENABLE
+#define GOLEM_WORKER_START_BARRIER_ENABLE 1
+#endif
+
+#ifndef GOLEM_WORKER_START_GUARD_CYCLES
+#define GOLEM_WORKER_START_GUARD_CYCLES 32768
+#endif
+
 #ifndef GOLEM_A_REUSE_N_TILES
 #define GOLEM_A_REUSE_N_TILES 1
 #endif
@@ -66,6 +74,8 @@
 #ifndef GOLEM_DMA_SLOT_COUNT
 #define GOLEM_DMA_SLOT_COUNT 4
 #endif
+
+
 
 #ifndef GOLEM_GEMM_M
 #define GOLEM_GEMM_M GOLEM_ARRAY_OUTPUT_SIZE
@@ -129,6 +139,8 @@ constexpr bool GROUP_MANAGER_ENABLED = (GOLEM_GROUP_MANAGER_ENABLE != 0);
 constexpr bool CTRL_LINK_ENABLED = (GOLEM_CTRL_LINK_ENABLE != 0);
 constexpr bool CTRL_OVERLAP_AB_ENABLED = (GOLEM_CTRL_OVERLAP_AB != 0);
 constexpr bool WORKER_COMMAND_PROCESSOR_ENABLED = (GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE != 0);
+constexpr bool WORKER_START_BARRIER_ENABLED = (GOLEM_WORKER_START_BARRIER_ENABLE != 0);
+constexpr uint64_t WORKER_START_GUARD_CYCLES = static_cast<uint64_t>(GOLEM_WORKER_START_GUARD_CYCLES);
 constexpr int GROUP_MAX_INFLIGHT_PER_NODE = GOLEM_GROUP_MAX_INFLIGHT_PER_NODE;
 
 constexpr int TILE_M = GOLEM_ARRAY_OUTPUT_SIZE;
@@ -168,7 +180,10 @@ constexpr int ACTIVE_GEMM_CORES = TOTAL_GEMM_CORES - DEDICATED_MANAGER_CORES;
 // ============================
 constexpr uint64_t MAT_ROWS = static_cast<uint64_t>(TILE_M);
 constexpr uint64_t MAT_COLS = static_cast<uint64_t>(TILE_K);
-constexpr uint64_t ELEM_BYTES = sizeof(int32_t);
+#ifndef GOLEM_COMPILE_ELEM_BYTES
+#define GOLEM_COMPILE_ELEM_BYTES 4
+#endif
+constexpr uint64_t ELEM_BYTES = static_cast<uint64_t>(GOLEM_COMPILE_ELEM_BYTES);
 constexpr uint64_t MAT_ELEMS = MAT_ROWS * MAT_COLS;
 constexpr uint64_t VEC_ELEMS = MAT_COLS;
 constexpr uint64_t MAT_BYTES = MAT_ELEMS * ELEM_BYTES;
@@ -246,7 +261,9 @@ constexpr uint64_t INIT_VEC_SRC_MM = IDENTITY_BASE + TOTAL_GROUPS * MM_MAT_STRID
 // GEMM模式：A/B packed once, C remains one output tile per logical task.
 // A tile storage key: (m_tile, k_tile). B tile storage key: (n_tile, k_tile, n_col).
 // C tile storage key: (m_tile, n_tile), packed by macro-task slot plus reuse offset.
-constexpr uint64_t GEMM_VEC_STRIDE_MM = align_up_constexpr(GEMM_BLOCK_VEC_BYTES, MM_ALIGN);
+// B vectors are packed back-to-back.  Their payload width, rather than the
+// 256B request alignment, determines the address stride so FP16 uses all bytes.
+constexpr uint64_t GEMM_VEC_STRIDE_MM = GEMM_BLOCK_VEC_BYTES;
 constexpr uint64_t OFF_GEMM_MAT_BASE = 0x0;
 constexpr uint64_t GEMM_OUT_STRIDE_MM = align_up_constexpr(GEMM_BLOCK_OUT_TILE_BYTES, MM_ALIGN);
 constexpr uint64_t GEMM_BIAS_STRIDE_MM = align_up_constexpr(static_cast<uint64_t>(GEMM_N) * ELEM_BYTES, MM_ALIGN);
@@ -650,6 +667,9 @@ struct LocalLayout {
 };
 
 constexpr uint64_t LOCAL_TMP_OFFSET = 0x0800;
+constexpr uint64_t WORKER_START_READY_BASE = 0x1D00;
+constexpr uint64_t WORKER_START_RELEASE_CYCLE_OFF = 0x1F00;
+constexpr uint64_t WORKER_START_RELEASE_EPOCH_OFF = 0x1F08;
 constexpr uint64_t LOCAL_DATA_BASE = 0x2000;
 constexpr uint64_t LOCAL_ALIGN = 0x100;
 constexpr uint64_t LOCAL_MAT_BYTES_ALIGNED = align_up_constexpr(GEMM_BLOCK_MAT_BYTES, LOCAL_ALIGN);
@@ -710,3 +730,12 @@ static_assert(TOTAL_GEMM_CORES > 0, "TOTAL_GEMM_CORES must be positive");
 static_assert(ACTIVE_GEMM_CORES > 0, "ACTIVE_GEMM_CORES must be positive");
 static_assert(TOTAL_GEMM_TASKS > 0, "TOTAL_GEMM_TASKS must be positive");
 static_assert(LOCAL_SLOT_COUNT >= 4, "LOCAL_SLOT_COUNT must be at least 4 for existing slot aliases");
+static_assert(
+    WORKER_START_READY_BASE + static_cast<uint64_t>(ACTIVE_GEMM_CORES) * sizeof(uint64_t) <=
+        WORKER_START_RELEASE_CYCLE_OFF,
+    "worker start barrier ready slots overlap the release record"
+);
+static_assert(
+    WORKER_START_RELEASE_EPOCH_OFF + sizeof(uint64_t) <= LOCAL_DATA_BASE,
+    "worker start barrier overlaps local GEMM data"
+);

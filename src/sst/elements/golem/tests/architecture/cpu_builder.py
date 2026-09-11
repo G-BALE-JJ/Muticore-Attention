@@ -133,21 +133,24 @@ def _normalize_matmul_dtype(dtype: str) -> str:
         "float": "fp32",
         "float32": "fp32",
         "fp32": "fp32",
+        "half": "fp16",
+        "float16": "fp16",
+        "fp16": "fp16",
     }
     value = aliases.get(value, value)
-    if value not in {"int32", "fp32"}:
+    if value not in {"int32", "fp16", "fp32"}:
         raise ValueError(f"Unsupported GOLEM_MATMUL_DTYPE: {dtype}")
     return value
 
 
 def _default_rocc_type(dtype: str) -> str:
-    if dtype == "fp32":
+    if dtype in {"fp16", "fp32"}:
         return "golem.RoCCAnalogFloat"
     return "golem.RoCCAnalogInt"
 
 
 def _default_array_type(dtype: str) -> str:
-    if dtype == "fp32":
+    if dtype in {"fp16", "fp32"}:
         return "golem.MVMFloatArray"
     return "golem.MVMIntArray"
 
@@ -156,18 +159,86 @@ matmul_dtype = _normalize_matmul_dtype(os.getenv("GOLEM_MATMUL_DTYPE", "int32"))
 rocc_type = os.getenv("GOLEM_ROCC_TYPE", _default_rocc_type(matmul_dtype))
 array_type = os.getenv("GOLEM_ARRAY_TYPE", _default_array_type(matmul_dtype))
 gm_buffer_length = os.getenv("GOLEM_GM_BUFFER_LENGTH", "64KB")
-gm_link_bw = os.getenv("GOLEM_NOC_LINK_BW", "100GB/s")
+gm_link_bw = os.getenv(
+    "GOLEM_GM_LINK_BW", os.getenv("GOLEM_NOC_LINK_BW", "128GB/s")
+)
+gm_c_buffer_bytes = int(os.getenv("GOLEM_GM_C_BUFFER_BYTES", str(1024 * 1024)))
+gm_c_buffer_read_bpc = int(os.getenv("GOLEM_GM_C_BUFFER_READ_BPC", "256"))
+gm_c_buffer_write_bpc = int(os.getenv("GOLEM_GM_C_BUFFER_WRITE_BPC", "256"))
+gm_c_buffer_latency_cycles = int(os.getenv("GOLEM_GM_C_BUFFER_LATENCY_CYCLES", "1"))
+attention_tile_storage_banks = int(
+    os.getenv("GOLEM_ATTENTION_TILE_STORAGE_BANKS", "16")
+)
+attention_tile_storage_bank_bpc = int(
+    os.getenv("GOLEM_ATTENTION_TILE_STORAGE_BANK_BPC", "64")
+)
+final_c_write_enable = int(os.getenv("GOLEM_FINAL_C_WRITE_ENABLE", "1"))
+output_mode = os.getenv(
+    "GOLEM_OUTPUT_MODE", "hbm" if final_c_write_enable else "fusion"
+).strip().lower()
+fusion_dump_enable = int(os.getenv("GOLEM_FUSION_DUMP_ENABLE", "0"))
+fusion_dump_dir = os.getenv("GOLEM_FUSION_DUMP_DIR", "")
+dma_write_vn = int(os.getenv("GOLEM_DMA_WRITE_VN", "2"))
+noc_vn_priority_enable = int(os.getenv("GOLEM_NOC_VN_PRIORITY_ENABLE", "1"))
+noc_vn_priority_order = (
+    os.getenv("GOLEM_NOC_VN_PRIORITY_ORDER", "1,0,2")
+    if noc_vn_priority_enable
+    else ""
+)
+noc_vn_starvation_vn = int(os.getenv("GOLEM_NOC_VN_STARVATION_VN", "2"))
+noc_vn_max_starvation_cycles = int(
+    os.getenv("GOLEM_NOC_VN_MAX_STARVATION_CYCLES", "4096")
+)
 gm_dma_max_inflight = int(os.getenv("GOLEM_DMA_MAX_INFLIGHT", "256"))
 gm_dma_retry_ticks = int(os.getenv("GOLEM_DMA_READ_RETRY_TICKS", "96"))
 gm_dma_max_retries = int(os.getenv("GOLEM_DMA_READ_MAX_RETRIES", "8"))
 mvm_dump_enable = int(os.getenv("GOLEM_MVM_DUMP_ENABLE", "0"))
 mvm_dump_dir = os.getenv("GOLEM_MVM_DUMP_DIR", os.path.join(ARTIFACT_ROOT, "mvm_dumps"))
 mvm_dump_mode = os.getenv("GOLEM_MVM_DUMP_MODE", "overwrite")
+simulation_mode = os.getenv("GOLEM_SIM_MODE", "full-functional")
+if simulation_mode not in {"full-functional", "full-timing"}:
+    raise ValueError(f"Unsupported GOLEM_SIM_MODE: {simulation_mode}")
+functional_compute = int(simulation_mode == "full-functional")
+attention_fused = int(os.getenv("GOLEM_ATTENTION_FUSED", "0")) != 0
+attention_generic_gemm_enable = int(os.getenv(
+    "GOLEM_ATTENTION_GENERIC_GEMM_ENABLE", "1" if attention_fused else "0"
+))
 gm_dma_burst_bytes = int(os.getenv("GOLEM_DMA_BURST_BYTES", "64"))
 mvm_latency_ovec2gm = int(os.getenv("GOLEM_LATENCY_MVM_OVEC2GM", "10"))
 mvm_latency_gm2ivec = int(os.getenv("GOLEM_LATENCY_MVM_GM2IVEC", "10"))
 mvm_latency_gm2imat = int(os.getenv("GOLEM_LATENCY_MVM_GM2IMAT", "10"))
 array_clock = os.getenv("GOLEM_ARRAY_CLOCK", cpu_clock)
+array_buffer_base_latency_cycles = int(
+    os.getenv("GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES", "1")
+)
+array_buffer_bytes_per_cycle = int(
+    os.getenv("GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE", "64")
+)
+array_buffer_ports = int(os.getenv("GOLEM_ARRAY_BUFFER_PORTS", "1"))
+array_operand_context_banks = int(
+    os.getenv("GOLEM_ARRAY_OPERAND_CONTEXT_BANKS", "1")
+)
+array_buffer_queue_depth = int(
+    os.getenv("GOLEM_ARRAY_BUFFER_QUEUE_DEPTH", "64")
+)
+array_output_read_credits = int(
+    os.getenv("GOLEM_ARRAY_OUTPUT_READ_CREDITS", "1")
+)
+array_output_read_banks = int(
+    os.getenv("GOLEM_ARRAY_OUTPUT_READ_BANKS", "1")
+)
+matrix_broadcast_max_fanout = int(
+    os.getenv("GOLEM_MATRIX_BROADCAST_MAX_FANOUT", "16")
+)
+matrix_broadcast_bytes_per_cycle = int(
+    os.getenv("GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE", "64")
+)
+matrix_broadcast_base_latency_cycles = int(
+    os.getenv("GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES", "1")
+)
+matrix_broadcast_stage_latency_cycles = int(
+    os.getenv("GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES", "1")
+)
 rocc_verbose = int(os.getenv("GOLEM_ROCC_VERBOSE", "0"))
 gm_verbose = int(os.getenv("GOLEM_GM_VERBOSE", "0"))
 gm_dump_data = int(os.getenv("GOLEM_GM_DUMP_DATA", "0"))
@@ -178,7 +249,9 @@ ctrl_link_max_grants_per_schedule = os.getenv(
     "GOLEM_GROUP_MAX_GRANTS_PER_SCHEDULE", "1"
 )
 ctrl_link_verbose = os.getenv("GOLEM_CTRL_VERBOSE", "0")
-request_scheduler_enable = int(os.getenv("GOLEM_REQUEST_SCHEDULER_ENABLE", "1"))
+request_scheduler_enable = int(os.getenv(
+    "GOLEM_REQUEST_SCHEDULER_ENABLE", "0" if attention_fused else "1"
+))
 request_scheduler_queue_depth = os.getenv("GOLEM_REQUEST_SCHEDULER_QUEUE_DEPTH", "64")
 request_scheduler_initial_chunk_credit_env = os.getenv("GOLEM_DMA_NODE_CHUNK_CREDITS")
 request_scheduler_legacy_node_credit_env = os.getenv(
@@ -197,16 +270,50 @@ request_scheduler_issue_budget_per_tick = os.getenv(
     "GOLEM_SCHED_ISSUE_BUDGET_PER_TICK",
     "2",
 )
+request_scheduler_worker_credit_cap = os.getenv(
+    "GOLEM_SCHED_WORKER_CREDIT_CAP", "0"
+)
 wcp_prefetch_windows = os.getenv("GOLEM_WCP_PREFETCH_WINDOWS", "2")
+wcp_cross_macro_prefetch = os.getenv("GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE", "0")
 request_scheduler_submit_batch_size = os.getenv("GOLEM_SCHED_SUBMIT_BATCH_SIZE", "4")
 request_scheduler_done_batch_size = os.getenv("GOLEM_SCHED_DONE_BATCH_SIZE", "4")
 request_scheduler_verbose = os.getenv("GOLEM_REQUEST_SCHEDULER_VERBOSE", "0")
 request_scheduler_trace = os.getenv("GOLEM_REQUEST_SCHEDULER_TRACE", "0")
+request_scheduler_group_round_robin = os.getenv("GOLEM_DMA_GROUP_RR_ENABLE", "0")
+request_scheduler_tile_chunk_quantum = os.getenv("GOLEM_DMA_TILE_CHUNK_QUANTUM", "1")
 worker_command_processor_enable = int(
-    os.getenv("GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE", "0")
+    os.getenv("GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE",
+              str(attention_generic_gemm_enable))
+)
+request_scheduler_event_driven_worker_env = os.getenv(
+    "GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER", ""
+).strip()
+request_scheduler_event_driven_worker = (
+    int(request_scheduler_event_driven_worker_env)
+    if request_scheduler_event_driven_worker_env
+    else int(simulation_mode == "full-timing" and worker_command_processor_enable)
+)
+vanadis_rocc_wait_fastpath_env = os.getenv(
+    "GOLEM_VANADIS_ROCC_WAIT_FASTPATH", ""
+).strip()
+vanadis_rocc_wait_fastpath = (
+    int(vanadis_rocc_wait_fastpath_env)
+    if vanadis_rocc_wait_fastpath_env
+    else int(simulation_mode == "full-timing" and worker_command_processor_enable)
+)
+vanadis_rocc_wait_fastpath_threshold = int(
+    os.getenv("GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD", "256")
 )
 worker_command_processor_verbose = os.getenv(
     "GOLEM_WORKER_COMMAND_PROCESSOR_VERBOSE", "0"
+)
+wcp_gemm_proxy_queue_depth = os.getenv("GOLEM_WCP_GEMM_PROXY_QUEUE_DEPTH", "32")
+wcp_gemm_proxy_issue_width = os.getenv("GOLEM_WCP_GEMM_PROXY_ISSUE_WIDTH", "1")
+wcp_gemm_proxy_command_latency_cycles = os.getenv(
+    "GOLEM_WCP_GEMM_PROXY_COMMAND_LATENCY_CYCLES", "1"
+)
+wcp_gemm_proxy_completion_latency_cycles = os.getenv(
+    "GOLEM_WCP_GEMM_PROXY_COMPLETION_LATENCY_CYCLES", "1"
 )
 sfu_enable = int(os.getenv("GOLEM_SFU_ENABLE", "0")) != 0
 sfu_max_inflight = os.getenv("GOLEM_SFU_MAX_INFLIGHT", "8")
@@ -218,7 +325,27 @@ sfu_exp_lanes = os.getenv("GOLEM_SFU_EXP_LANES", "4")
 sfu_reduction_tree_latency = os.getenv("GOLEM_SFU_REDUCTION_TREE_LATENCY", "4")
 sfu_exp_latency = os.getenv("GOLEM_SFU_EXP_LATENCY", "8")
 sfu_reciprocal_latency = os.getenv("GOLEM_SFU_RECIPROCAL_LATENCY", "1")
-sfu_row_contexts = os.getenv("GOLEM_SFU_ROW_CONTEXTS", "4")
+attention_kv_pair_reuse = int(
+    os.getenv("GOLEM_ATTENTION_KV_PAIR_REUSE", "0")
+)
+attention_kv_query_group_size = int(
+    os.getenv("GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE", "2")
+)
+if attention_kv_query_group_size not in (1, 2, 4):
+    raise ValueError(
+        "GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE must be 1, 2, or 4"
+    )
+if attention_kv_pair_reuse and attention_kv_query_group_size == 1:
+    raise ValueError(
+        "K/V query reuse requires GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE 2 or 4"
+    )
+sfu_row_contexts = os.getenv(
+    "GOLEM_SFU_ROW_CONTEXTS", "16" if attention_kv_pair_reuse else "4"
+)
+if attention_kv_pair_reuse and int(sfu_row_contexts) < 16:
+    raise ValueError(
+        "K/V pair reuse requires GOLEM_SFU_ROW_CONTEXTS >= 16"
+    )
 sfu_scratchpad_bytes = os.getenv("GOLEM_SFU_SCRATCHPAD_BYTES", "65536")
 sfu_distributed_reduction_transport = os.getenv("GOLEM_SFU_DISTRIBUTED_REDUCTION_TRANSPORT", "shared")
 sfu_reduction_vn = os.getenv("GOLEM_SFU_REDUCTION_VN", "")
@@ -248,7 +375,7 @@ matmul_k = int(
 matmul_block_m = int(os.getenv("GOLEM_MATMUL_BLOCK_M", str(array_output_size)))
 matmul_block_n = int(os.getenv("GOLEM_MATMUL_BLOCK_N", str(num_arrays)))
 matmul_block_k = int(os.getenv("GOLEM_MATMUL_BLOCK_K", str(array_input_size)))
-matmul_elem_bytes = 4
+matmul_elem_bytes = 2 if matmul_dtype == "fp16" else 4
 
 
 def _env_int(name: str, default: int) -> int:
@@ -259,7 +386,9 @@ def _env_int(name: str, default: int) -> int:
 
 
 request_sched_slot0_bytes = matmul_block_m * matmul_block_k * matmul_elem_bytes
-request_sched_slot1_bytes = matmul_block_n * matmul_block_k * matmul_elem_bytes
+# B vectors are packed without padding; the DMA payload is the useful vector data.
+request_sched_vec_stride_bytes = matmul_block_k * matmul_elem_bytes
+request_sched_slot1_bytes = matmul_block_n * request_sched_vec_stride_bytes
 request_sched_credit_chunk_bytes_int = max(1, int(request_scheduler_node_credit_chunk_bytes))
 request_sched_slot0_chunks = max(
     1,
@@ -311,8 +440,9 @@ else:
 # - input-size semantics follow hardware array width; WCP expands logical block_k via micro-tiling
 array_num_cu = array_output_size
 runtime_array_input_size = array_input_size
+runtime_array_active_k = min(matmul_block_k, array_input_size)
 mvm_latency_compute_cycles = int(
-    math.ceil(runtime_array_input_size / array_mac_per_cu_per_cycle) + array_pipeline_depth
+    math.ceil(runtime_array_active_k / array_mac_per_cu_per_cycle) + array_pipeline_depth
 )
 array_latency_ns = (mvm_latency_compute_cycles / _parse_frequency_hz(array_clock)) * 1e9
 array_latency = f"{array_latency_ns:.6f}ns"
@@ -414,6 +544,8 @@ cpuParams = {
     "print_rob": False,
     "checkpointDir": checkpointDir,
     "checkpoint": checkpoint,
+    "rocc_wait_fastpath": vanadis_rocc_wait_fastpath,
+    "rocc_wait_fastpath_threshold": vanadis_rocc_wait_fastpath_threshold,
 }
 
 lsqParams = {
@@ -439,8 +571,9 @@ roccParams = {
 }
 
 roccarrayParams = {
-    "inputOperandSize": 4,
-    "outputOperandSize": 4,
+    "inputOperandSize": matmul_elem_bytes,
+    "outputOperandSize": matmul_elem_bytes,
+    "vectorStrideBytes": request_sched_vec_stride_bytes,
     "latency_mvm_ovec2gm": mvm_latency_ovec2gm,
     "latency_mvm_gm2ivec": mvm_latency_gm2ivec,
     "latency_mvm_gm2imat": mvm_latency_gm2imat,
@@ -456,14 +589,43 @@ roccarrayParams = {
     "attention_kv_double_buffer": int(
         os.getenv("GOLEM_ATTENTION_KV_DOUBLE_BUFFER", "0")
     ),
+    "attention_kv_second_lookahead": int(
+        os.getenv("GOLEM_ATTENTION_KV_SECOND_LOOKAHEAD", "1")
+    ),
+    "attention_kv_cross_query_prefetch": int(
+        os.getenv("GOLEM_ATTENTION_KV_CROSS_QUERY_PREFETCH", "0")
+    ),
+    "attention_kv_pair_reuse": attention_kv_pair_reuse,
+    "attention_kv_query_group_size": attention_kv_query_group_size,
     "attention_pv_v_tile_reuse": int(
         os.getenv("GOLEM_ATTENTION_PV_V_TILE_REUSE", "0")
+    ),
+    "attention_pv_v_tile_group_retention": int(
+        os.getenv("GOLEM_ATTENTION_PV_V_TILE_GROUP_RETENTION", "0")
+    ),
+    "attention_pv_v_tile_buffer_bytes": int(
+        os.getenv("GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES", "16384")
+    ),
+    "attention_pv_v_tile_buffer_hit_ticks": int(
+        os.getenv("GOLEM_ATTENTION_PV_V_TILE_BUFFER_HIT_TICKS", "1")
+    ),
+    "attention_pv_v_tile_buffer_bytes_per_cycle": int(
+        os.getenv("GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES_PER_CYCLE", "64")
+    ),
+    "attention_pv_v_tile_buffer_offset": int(
+        os.getenv("GOLEM_ATTENTION_PV_V_TILE_BUFFER_OFFSET", "0"), 0
     ),
     "attention_pv_input_pipeline": int(
         os.getenv("GOLEM_ATTENTION_PV_INPUT_PIPELINE", "0")
     ),
     "attention_pv_compact_input": int(
         os.getenv("GOLEM_ATTENTION_PV_COMPACT_INPUT", "0")
+    ),
+    "attention_pv_input_residency": int(
+        os.getenv("GOLEM_ATTENTION_PV_INPUT_RESIDENCY", "0")
+    ),
+    "attention_o_accumulator_cbuffer": int(
+        os.getenv("GOLEM_ATTENTION_O_ACCUMULATOR_CBUFFER", "0")
     ),
     "attention_pv_restore_pipeline": int(
         os.getenv("GOLEM_ATTENTION_PV_RESTORE_PIPELINE", "0")
@@ -477,27 +639,67 @@ roccarrayParams = {
     "attention_pv_matrix_softmax_overlap": int(
         os.getenv("GOLEM_ATTENTION_PV_MATRIX_SOFTMAX_OVERLAP", "0")
     ),
+    "attention_pv_active_k": int(
+        os.getenv("GOLEM_ATTENTION_PV_ACTIVE_K", "0")
+    ),
     "attention_qk_dataflow_transpose": int(
         os.getenv("GOLEM_ATTENTION_QK_DATAFLOW_TRANSPOSE", "0")
     ),
+    "attention_qk_early_compute": int(
+        os.getenv("GOLEM_ATTENTION_QK_EARLY_COMPUTE", "0")
+    ),
+    "attention_qk_input_pipeline": int(
+        os.getenv("GOLEM_ATTENTION_QK_INPUT_PIPELINE", "0")
+    ),
+    "attention_qk_readout_overlap": int(
+        os.getenv("GOLEM_ATTENTION_QK_READOUT_OVERLAP", "0")
+    ),
+    "attention_qk_readout_window": int(
+        os.getenv("GOLEM_ATTENTION_QK_READOUT_WINDOW", "2")
+    ),
+    "attention_qk_panel_row_burst": int(
+        os.getenv("GOLEM_ATTENTION_QK_PANEL_ROW_BURST", "0")
+    ),
+    "attention_cross_tile_operand_pipeline": int(
+        os.getenv("GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE", "0")
+    ),
+    "attention_operand_context_banks": array_operand_context_banks,
     "attention_qk_matrix_broadcast": int(
         os.getenv("GOLEM_ATTENTION_QK_MATRIX_BROADCAST", "0")
     ),
     "attention_pv_matrix_broadcast": int(
         os.getenv("GOLEM_ATTENTION_PV_MATRIX_BROADCAST", "0")
     ),
+    "attention_generic_gemm_enable": attention_generic_gemm_enable,
+    "attention_milestone_trace": int(
+        os.getenv("GOLEM_ATTENTION_MILESTONE_TRACE", "0")
+    ),
+    "attention_tile_trace": int(os.getenv("GOLEM_ATTENTION_TILE_TRACE", "0")),
 }
 
 arrayParams = {
     "arrayLatency": array_latency,
     "clock": array_clock,
     "modeledComputeCycles": mvm_latency_compute_cycles,
+    "arrayMacPerCuPerCycle": array_mac_per_cu_per_cycle,
+    "arrayPipelineDepth": array_pipeline_depth,
     "max_instructions": 8,
     "verbose": 0,
     "mmioAddr": 0,
     "numArrays": num_arrays,
     "arrayInputSize": runtime_array_input_size,
     "arrayOutputSize": array_output_size,
+    "arrayBufferBaseLatencyCycles": array_buffer_base_latency_cycles,
+    "arrayBufferBytesPerCycle": array_buffer_bytes_per_cycle,
+    "arrayBufferPorts": array_buffer_ports,
+    "operandContextBanks": array_operand_context_banks,
+    "arrayBufferQueueDepth": array_buffer_queue_depth,
+    "arrayOutputReadCredits": array_output_read_credits,
+    "arrayOutputReadBanks": array_output_read_banks,
+    "matrixBroadcastMaxFanout": matrix_broadcast_max_fanout,
+    "matrixBroadcastBytesPerCycle": matrix_broadcast_bytes_per_cycle,
+    "matrixBroadcastBaseLatencyCycles": matrix_broadcast_base_latency_cycles,
+    "matrixBroadcastStageLatencyCycles": matrix_broadcast_stage_latency_cycles,
     # "CrossSimJSONParameters" : crosssim_json_params
 }
 
@@ -545,7 +747,9 @@ if verbosity > 0:
         f"[GOLEM] MVM compute latency cycles={mvm_latency_compute_cycles} (array_clock={array_clock}, arrayLatency={array_latency})"
     )
     print(
-        f"[GOLEM] CU latency model: num_cu={array_num_cu}, mac_per_cu_per_cycle={array_mac_per_cu_per_cycle}, pipeline_depth={array_pipeline_depth}, block_k={runtime_array_input_size}"
+        f"[GOLEM] CU latency model: num_cu={array_num_cu}, mac_per_cu_per_cycle={array_mac_per_cu_per_cycle}, "
+        f"pipeline_depth={array_pipeline_depth}, physical_input_size={array_input_size}, "
+        f"logical_block_k={matmul_block_k}, active_k_per_micro_step={runtime_array_active_k}"
     )
     print(f"[GOLEM] GlobalMemory retry_tick_cpu_cycles={gm_retry_tick_cpu_cycles}")
     print(
@@ -638,12 +842,16 @@ class CPU_Builder:
         cpuId,
         add_l2_cache: bool = True,
         add_rocc_golem: bool = True,
+        rank=None,
+        thread=0,
     ):
         if pythonDebug:
             print(f"build {prefix} (L2: {add_l2_cache}, Golem: {add_rocc_golem})")
 
         # CPU
         cpu = sst.Component(prefix, vanadis_cpu_type)
+        if rank is not None:
+            cpu.setRank(rank, thread)
         cpu.addParams(cpuParams)
         cpu.addParam("core_id", cpuId)
         if enable_all_stats:
@@ -672,6 +880,8 @@ class CPU_Builder:
 
         # Processors to L1 bus (总是构建)
         processor_bus = sst.Component(prefix + ".processorBus", "memHierarchy.Bus")
+        if rank is not None:
+            processor_bus.setRank(rank, thread)
         processor_bus.addParams(busParams)
 
         # CPU.lsq mem interface (总是构建)
@@ -693,6 +903,11 @@ class CPU_Builder:
 
             cpu_rocc = cpu.setSubComponent("rocc", rocc_type, 0)
             cpu_rocc.addParams(roccParams)
+            # Keep the storage width explicit on the RoCC instance.  This is
+            # required for the legacy direct path, which serializes array
+            # outputs itself instead of going through the WCP capture path.
+            cpu_rocc.addParam("inputOperandSize", matmul_elem_bytes)
+            cpu_rocc.addParam("outputOperandSize", matmul_elem_bytes)
             cpu_rocc.addParam("core_id", cpuId)
             cpu_rocc.addParam("globalMemBase", GLOBAL_BASE)
             cpu_rocc.addParam("globalMemStride", GLOBAL_STRIDE)
@@ -722,10 +937,13 @@ class CPU_Builder:
 
             computeArray = cpu_rocc.setSubComponent("array", array_type)
             computeArray.addParams(arrayParams)
+            computeArray.addParam("inputOperandSize", matmul_elem_bytes)
+            computeArray.addParam("outputOperandSize", matmul_elem_bytes)
             computeArray.addParam("core_id", cpuId)
             computeArray.addParam("mvm_dump_enable", mvm_dump_enable)
             computeArray.addParam("mvm_dump_dir", mvm_dump_dir)
             computeArray.addParam("mvm_dump_mode", mvm_dump_mode)
+            computeArray.addParam("functionalCompute", functional_compute)
             if enable_all_stats:
                 computeArray.enableAllStatistics()
 
@@ -739,6 +957,10 @@ class CPU_Builder:
                 "link_bw": gm_link_bw,
                 "buffer_length": gm_buffer_length,
                 "num_vns": 3,  # 与 NoC 保持一致
+                "dma_write_vn": dma_write_vn,
+                "network_vn_priority_order": noc_vn_priority_order,
+                "network_vn_starvation_vn": noc_vn_starvation_vn,
+                "network_vn_max_starvation_cycles": noc_vn_max_starvation_cycles,
                 "identityWindowBase": hex(SPLIT_BASE),
                 "dma_read_max_inflight": gm_dma_max_inflight,
                 "dma_read_retry_ticks": gm_dma_retry_ticks,
@@ -787,6 +1009,8 @@ class CPU_Builder:
                         "exp_latency": sfu_exp_latency,
                         "reciprocal_latency": sfu_reciprocal_latency,
                         "row_contexts": sfu_row_contexts,
+                        "attention_kv_pair_reuse": attention_kv_pair_reuse,
+                        "attention_kv_query_group_size": attention_kv_query_group_size,
                         "scratchpad_bytes": sfu_scratchpad_bytes,
                         "distributed_reduction_transport": sfu_distributed_reduction_transport,
                         "verbose": sfu_verbose,
@@ -826,10 +1050,10 @@ class CPU_Builder:
                         "worker_slot": -1 if cpuId < 4 else (cpuId // 4) - 1,
                         "role": "manager" if cpuId < 4 else "worker",
                         "queue_depth": request_scheduler_queue_depth,
-                        "initial_node_chunk_credit": request_scheduler_initial_chunk_credit,
-                        "node_credit_chunk_bytes": request_scheduler_node_credit_chunk_bytes,
                         "panel_chunk_bytes": request_scheduler_panel_chunk_bytes,
+                        "worker_credit_cap": request_scheduler_worker_credit_cap,
                         "manager_issue_budget_per_tick": request_scheduler_issue_budget_per_tick,
+                        "tile_chunk_quantum": request_scheduler_tile_chunk_quantum,
                         "submit_batch_size": request_scheduler_submit_batch_size,
                         "done_batch_size": request_scheduler_done_batch_size,
                         "prefetch_windows": wcp_prefetch_windows,
@@ -848,9 +1072,10 @@ class CPU_Builder:
                         "slot1_bytes": request_sched_slot1_bytes,
                         "verbose": request_scheduler_verbose,
                         "trace_events": request_scheduler_trace,
+                        "event_driven_worker": request_scheduler_event_driven_worker,
+                        "group_round_robin": request_scheduler_group_round_robin,
                     }
                 )
-
             if worker_command_processor_enable:
                 workerCommandProcessor = cpu_rocc.setSubComponent(
                     "worker_command_processor", "golem.WorkerCommandProcessorLocal"
@@ -861,9 +1086,26 @@ class CPU_Builder:
                         "dtype_is_float": 1 if "Float" in rocc_type else 0,
                         "stage3_trace": os.getenv("GOLEM_WCP_STAGE3_TRACE", "0"),
                         "prefetch_windows": wcp_prefetch_windows,
+                        "cross_macro_prefetch": wcp_cross_macro_prefetch,
                         "window_k_tiles": os.getenv("GOLEM_DMA_WINDOW_K_TILES", "4"),
+                        "gemm_proxy_queue_depth": wcp_gemm_proxy_queue_depth,
+                        "gemm_proxy_issue_width": wcp_gemm_proxy_issue_width,
+                        "gemm_proxy_command_latency_cycles": wcp_gemm_proxy_command_latency_cycles,
+                        "gemm_proxy_completion_latency_cycles": wcp_gemm_proxy_completion_latency_cycles,
+                        "c_buffer_bytes": gm_c_buffer_bytes,
+                        "c_buffer_read_bytes_per_cycle": gm_c_buffer_read_bpc,
+                        "c_buffer_write_bytes_per_cycle": gm_c_buffer_write_bpc,
+                        "c_buffer_latency_cycles": gm_c_buffer_latency_cycles,
+                        "attention_tile_storage_banks": attention_tile_storage_banks,
+                        "attention_tile_storage_bank_bytes_per_cycle": attention_tile_storage_bank_bpc,
+                        "final_c_write_enable": final_c_write_enable,
+                        "output_mode": output_mode,
+                        "fusion_dump_enable": fusion_dump_enable,
+                        "fusion_dump_dir": fusion_dump_dir,
                     }
                 )
+                if enable_all_stats:
+                    workerCommandProcessor.enableAllStatistics()
 
             roccDcacheIf = cpu_rocc.setSubComponent(
                 "memory_interface", "memHierarchy.standardInterface"
@@ -878,6 +1120,8 @@ class CPU_Builder:
 
         # L1 Caches (总是构建)
         cpu_l1dcache = sst.Component(prefix + ".l1dcache", "memHierarchy.Cache")
+        if rank is not None:
+            cpu_l1dcache.setRank(rank, thread)
         cpu_l1dcache.addParams(l1dcacheParams)
         cpu_l1dcache.enableStatistics(["CacheHits", "CacheMisses"])
         l1dcache_2_cpu = cpu_l1dcache.setSubComponent(
@@ -885,6 +1129,8 @@ class CPU_Builder:
         )
 
         cpu_l1icache = sst.Component(prefix + ".l1icache", "memHierarchy.Cache")
+        if rank is not None:
+            cpu_l1icache.setRank(rank, thread)
         cpu_l1icache.addParams(l1icacheParams)
         cpu_l1icache.enableStatistics(["CacheHits", "CacheMisses"])
         l1icache_2_cpu = cpu_l1icache.setSubComponent(
@@ -893,11 +1139,15 @@ class CPU_Builder:
 
         # TLBs (总是构建)
         dtlbWrapper = sst.Component(prefix + ".dtlb", "mmu.tlb_wrapper")
+        if rank is not None:
+            dtlbWrapper.setRank(rank, thread)
         dtlbWrapper.addParams(tlbWrapperParams)
         dtlb = dtlbWrapper.setSubComponent("tlb", "mmu." + tlbType)
         dtlb.addParams(tlbParams)
 
         itlbWrapper = sst.Component(prefix + ".itlb", "mmu.tlb_wrapper")
+        if rank is not None:
+            itlbWrapper.setRank(rank, thread)
         itlbWrapper.addParams(tlbWrapperParams)
         itlbWrapper.addParam("exe", True)
         itlb = itlbWrapper.setSubComponent("tlb", "mmu." + tlbType)
@@ -919,10 +1169,14 @@ class CPU_Builder:
 
             # L1 to L2 bus
             cache_bus = sst.Component(prefix + ".bus", "memHierarchy.Bus")
+            if rank is not None:
+                cache_bus.setRank(rank, thread)
             cache_bus.addParams(busParams)
 
             # L2 cache
             cpu_l2cache = sst.Component(prefix + ".l2cache", "memHierarchy.Cache")
+            if rank is not None:
+                cpu_l2cache.setRank(rank, thread)
             cpu_l2cache.addParams(l2cacheParams)
             cpu_l2cache.enableStatistics(["CacheHits", "CacheMisses"])
 

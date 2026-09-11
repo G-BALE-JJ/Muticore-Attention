@@ -35,6 +35,13 @@ PATTERN = re.compile(
     r"strict_max_e2e_rtt_cycles=(?P<strict_max_e2e_rtt_cycles>\d+) "
     r"request_avg_submit_ready_cycles=(?P<request_avg_submit_ready_cycles>\d+) "
     r"request_max_submit_ready_cycles=(?P<request_max_submit_ready_cycles>\d+) )?"
+    r"(?:write_rtt_samples=(?P<write_rtt_samples>\d+) "
+    r"write_rtt_cycles_sum=(?P<write_rtt_cycles_sum>\d+) "
+    r"write_avg_rtt_cycles=(?P<write_avg_rtt_cycles>\d+) "
+    r"write_max_rtt_cycles=(?P<write_max_rtt_cycles>\d+) "
+    r"write_first_issue_cycle=(?P<write_first_issue_cycle>\d+) "
+    r"write_last_issue_cycle=(?P<write_last_issue_cycle>\d+) "
+    r"write_last_complete_cycle=(?P<write_last_complete_cycle>\d+) )?"
     r"send_retry_q_max=(?P<send_retry_q_max>\d+)"
 )
 
@@ -98,6 +105,13 @@ FIELDS = [
     "strict_max_e2e_rtt_cycles",
     "request_avg_submit_ready_cycles",
     "request_max_submit_ready_cycles",
+    "write_rtt_samples",
+    "write_rtt_cycles_sum",
+    "write_avg_rtt_cycles",
+    "write_max_rtt_cycles",
+    "write_first_issue_cycle",
+    "write_last_issue_cycle",
+    "write_last_complete_cycle",
     "send_retry_q_max",
 ]
 
@@ -110,6 +124,11 @@ STRICT_ACTIVE_FIELDS = {
     "strict_e2e_rtt_cycles_sum": "strict_e2e_rtt_samples",
     "strict_avg_e2e_rtt_cycles": "strict_e2e_rtt_samples",
     "strict_max_e2e_rtt_cycles": "strict_e2e_rtt_samples",
+    "write_avg_rtt_cycles": "write_rtt_samples",
+    "write_max_rtt_cycles": "write_rtt_samples",
+    "write_first_issue_cycle": "write_rtt_samples",
+    "write_last_issue_cycle": "write_rtt_samples",
+    "write_last_complete_cycle": "write_rtt_samples",
 }
 
 STRICT_WEIGHTED_AVG_FIELDS = {
@@ -118,6 +137,7 @@ STRICT_WEIGHTED_AVG_FIELDS = {
         "strict_e2e_rtt_cycles_sum",
         "strict_e2e_rtt_samples",
     ),
+    "write_avg_rtt_cycles": ("write_rtt_cycles_sum", "write_rtt_samples"),
 }
 
 
@@ -215,6 +235,13 @@ def parse_logs(log_paths):
                 rec["strict_max_e2e_rtt_cycles"] = 0
                 rec["request_avg_submit_ready_cycles"] = 0
                 rec["request_max_submit_ready_cycles"] = 0
+                rec["write_rtt_samples"] = 0
+                rec["write_rtt_cycles_sum"] = 0
+                rec["write_avg_rtt_cycles"] = 0
+                rec["write_max_rtt_cycles"] = 0
+                rec["write_first_issue_cycle"] = 0
+                rec["write_last_issue_cycle"] = 0
+                rec["write_last_complete_cycle"] = 0
             fill_strict_defaults(rec)
             latest[rec["core"]] = rec
     for core, strict in strict_latest.items():

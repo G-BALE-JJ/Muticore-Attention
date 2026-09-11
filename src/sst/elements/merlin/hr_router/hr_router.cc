@@ -268,6 +268,12 @@ hr_router::hr_router(ComponentId_t cid, Params& params) :
         pc_params.insert("vn_remap_shm", vn_remap_shm);
         pc_params.insert("vn_remap_shm_size", std::to_string(vn_remap_shm_size));
         pc_params.insert("num_vns", std::to_string(num_vns));
+        pc_params.insert("arbitration.vn_priority_order",
+                         params.find<std::string>("vn_priority_order", ""));
+        pc_params.insert("arbitration.vn_starvation_vn",
+                         params.find<std::string>("vn_starvation_vn", "-1"));
+        pc_params.insert("arbitration.max_starvation_cycles",
+                         params.find<std::string>("vn_max_starvation_cycles", "0"));
 
         ports[i] = loadAnonymousSubComponent<PortInterface>
             ("merlin.portcontrol","portcontrol", i, ComponentInfo::SHARE_PORTS | ComponentInfo::SHARE_STATS | ComponentInfo::INSERT_STATS,

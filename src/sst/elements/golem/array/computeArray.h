@@ -24,10 +24,12 @@
 #include <sst/core/timeConverter.h>
 #include <algorithm>
 #include <cinttypes>
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace SST {
@@ -36,16 +38,20 @@ namespace Golem {
 class ArrayEvent : public SST::Event {
 public:
     ArrayEvent() {} // For serialization only
-    ArrayEvent(uint32_t array) : SST::Event(), arrayID(array) {}
+    ArrayEvent(uint32_t array, uint32_t operandBank = 0) :
+        SST::Event(), arrayID(array), operandBank_(operandBank) {}
 
     uint32_t getArrayID() { return arrayID; };
+    uint32_t getOperandBank() const { return operandBank_; }
 
 protected:
     uint32_t arrayID;
+    uint32_t operandBank_ = 0;
 
     void serialize_order(SST::Core::Serialization::serializer& ser) override {
         Event::serialize_order(ser);
         SST_SER(arrayID);
+        SST_SER(operandBank_);
     }
     ImplementSerializable(SST::Golem::ArrayEvent);
 };
@@ -82,6 +88,8 @@ public:
         {"clock", "Array clock frequency", "1GHz"},
         {"arrayLatency", "Latency of array operation", "100ns"},
         {"modeledComputeCycles", "Modeled compute latency in array clock cycles", "1"},
+        {"arrayMacPerCuPerCycle", "Active input columns processed per compute unit per array cycle", "1"},
+        {"arrayPipelineDepth", "Fixed compute pipeline latency added to active-column execution", "0"},
         {"numArrays", "Number of arrays", "1"},
         {"arrayInputSize", "Input size of arrays", "1"},
         {"arrayOutputSize", "Output size of arrays", "1"},
@@ -91,6 +99,29 @@ public:
         {"arrayBufferBytesPerCycle", "Bytes transferred per array-buffer port per cycle", "64"},
         {"arrayBufferPorts", "Number of array-buffer transfer ports", "1"},
         {"arrayBufferQueueDepth", "Maximum queued plus active array-buffer transfers", "64"},
+        {"arrayOutputReadCredits", "Maximum output reads in flight", "1"},
+        {"arrayOutputReadBanks", "Number of independent output-read banks", "1"},
+        {"operandContextBanks", "Number of matrix/input operand contexts per physical array", "1"},
+        {"matrixBroadcastMaxFanout", "Maximum number of array matrix banks reached by one broadcast", "16"},
+        {"matrixBroadcastBytesPerCycle", "Ingress bytes delivered per cycle by the matrix broadcast tree", "64"},
+        {"matrixBroadcastBaseLatencyCycles", "Base setup latency for a matrix broadcast", "1"},
+        {"matrixBroadcastStageLatencyCycles", "Additional startup latency per binary fanout-tree stage", "1"},
+    )
+
+    SST_ELI_DOCUMENT_STATISTICS(
+        {"matrix_broadcast_requests", "Accepted matrix broadcast transfers", "broadcasts", 1},
+        {"matrix_broadcast_rejected", "Matrix broadcasts rejected by fanout or queue limits", "broadcasts", 1},
+        {"matrix_broadcast_ingress_bytes", "Matrix payload bytes entering the broadcast fabric", "bytes", 1},
+        {"matrix_broadcast_sink_bytes", "Aggregate matrix bytes written across destination array banks", "bytes", 1},
+        {"matrix_broadcast_transfer_cycles", "Aggregate modeled matrix broadcast occupancy", "cycles", 1},
+        {"matrix_broadcast_fanout", "Destination array count per accepted matrix broadcast", "arrays", 1},
+        {"active_k_launches", "Array launches using fewer than the physical input columns", "launches", 1},
+        {"active_k_columns", "Aggregate active input columns across active-K launches", "columns", 1},
+        {"active_k_compute_cycles", "Aggregate modeled compute cycles across active-K launches", "cycles", 1},
+        {"active_k_full_width_cycles_avoided", "Aggregate modeled compute cycles avoided relative to full-width launches", "cycles", 1},
+        {"output_read_credit_stalls", "Output reads blocked by credit or bank ownership", "stalls", 1},
+        {"output_read_bank_conflicts", "Output reads blocked by a busy output bank", "conflicts", 1},
+        {"output_read_max_in_flight", "Maximum concurrent output reads", "reads", 1},
     )
 
     ComputeArray(ComponentId_t id, Params& params,
@@ -107,8 +138,18 @@ public:
         if (modeledComputeCycles == 0) {
             modeledComputeCycles = 1;
         }
+        arrayMacPerCuPerCycle =
+            std::max(params.find<double>("arrayMacPerCuPerCycle", 1.0), 0.000001);
+        arrayPipelineDepth = params.find<uint64_t>("arrayPipelineDepth", 0);
 
         numArrays = params.find<uint64_t>("numArrays", 1);
+        const uint32_t requestedOperandContextBanks =
+            params.find<uint32_t>("operandContextBanks", 1);
+        if (requestedOperandContextBanks == 0 || requestedOperandContextBanks > 2) {
+            out.fatal(CALL_INFO, -1,
+                "operandContextBanks must be one or two for the bounded array model\n");
+        }
+        operandContextBanks = requestedOperandContextBanks;
         inputArraySize = params.find<uint64_t>("arrayInputSize", 1);
         outputArraySize = params.find<uint64_t>("arrayOutputSize", 1);
         inputOperandSize = params.find<uint64_t>("inputOperandSize", 1);
@@ -122,13 +163,52 @@ public:
             std::max<uint64_t>(params.find<uint64_t>("arrayBufferPorts", 1), 1);
         arrayBufferQueueDepth_ =
             std::max<uint64_t>(params.find<uint64_t>("arrayBufferQueueDepth", 64), 1);
+        arrayOutputReadCredits_ =
+            std::max<uint64_t>(params.find<uint64_t>("arrayOutputReadCredits", 1), 1);
+        arrayOutputReadBanks_ =
+            std::max<uint64_t>(params.find<uint64_t>("arrayOutputReadBanks", 1), 1);
+        outputReadBankInFlight_.assign(arrayOutputReadBanks_, 0);
+        matrixBroadcastMaxFanout_ =
+            std::max<uint64_t>(params.find<uint64_t>("matrixBroadcastMaxFanout", 16), 1);
+        matrixBroadcastBytesPerCycle_ =
+            std::max<uint64_t>(params.find<uint64_t>("matrixBroadcastBytesPerCycle", 64), 1);
+        matrixBroadcastBaseLatencyCycles_ =
+            std::max<uint64_t>(params.find<uint64_t>("matrixBroadcastBaseLatencyCycles", 1), 1);
+        matrixBroadcastStageLatencyCycles_ =
+            params.find<uint64_t>("matrixBroadcastStageLatencyCycles", 1);
         bufferLink_ = configureSelfLink(
             "BufferSelf", *tc,
             new Event::Handler2<ComputeArray, &ComputeArray::handleBufferEvent>(this));
         bufferLink_->setDefaultTimeBase(*clockTC);
+        statMatrixBroadcastRequests_ =
+            registerStatistic<uint64_t>("matrix_broadcast_requests");
+        statMatrixBroadcastRejected_ =
+            registerStatistic<uint64_t>("matrix_broadcast_rejected");
+        statMatrixBroadcastIngressBytes_ =
+            registerStatistic<uint64_t>("matrix_broadcast_ingress_bytes");
+        statMatrixBroadcastSinkBytes_ =
+            registerStatistic<uint64_t>("matrix_broadcast_sink_bytes");
+        statMatrixBroadcastTransferCycles_ =
+            registerStatistic<uint64_t>("matrix_broadcast_transfer_cycles");
+        statMatrixBroadcastFanout_ =
+            registerStatistic<uint64_t>("matrix_broadcast_fanout");
+        statActiveKLaunches_ = registerStatistic<uint64_t>("active_k_launches");
+        statActiveKColumns_ = registerStatistic<uint64_t>("active_k_columns");
+        statActiveKComputeCycles_ =
+            registerStatistic<uint64_t>("active_k_compute_cycles");
+        statActiveKFullWidthCyclesAvoided_ =
+            registerStatistic<uint64_t>("active_k_full_width_cycles_avoided");
+        statOutputReadCreditStalls_ =
+            registerStatistic<uint64_t>("output_read_credit_stalls");
+        statOutputReadBankConflicts_ =
+            registerStatistic<uint64_t>("output_read_bank_conflicts");
+        statOutputReadMaxInFlight_ =
+            registerStatistic<uint64_t>("output_read_max_in_flight");
     }
 
     virtual ~ComputeArray() {}
+
+    bool hasPendingBufferTransfers() const { return !bufferRequests_.empty(); }
 
     virtual void init(unsigned int phase) override {}
     virtual void setup() override {}
@@ -136,15 +216,51 @@ public:
         out.output(
             "GOLEM_ARRAY_BUFFER_STATS core=%d requests=%" PRIu64
             " bytes=%" PRIu64 " rejected=%" PRIu64
-            " high_water=%" PRIu64 " transfer_cycles=%" PRIu64 "\n",
+            " high_water=%" PRIu64 " transfer_cycles=%" PRIu64
+            " matrix_broadcast_requests=%" PRIu64
+            " matrix_broadcast_rejected=%" PRIu64
+            " matrix_broadcast_ingress_bytes=%" PRIu64
+            " matrix_broadcast_sink_bytes=%" PRIu64
+            " matrix_broadcast_transfer_cycles=%" PRIu64
+            " matrix_broadcast_max_fanout=%" PRIu64
+            " output_read_credits=%" PRIu64
+            " output_read_banks=%" PRIu64
+            " output_read_max_in_flight=%" PRIu64
+            " output_read_credit_stalls=%" PRIu64
+            " output_read_bank_conflicts=%" PRIu64
+            " active_k_launches=%" PRIu64
+            " active_k_columns=%" PRIu64
+            " active_k_compute_cycles=%" PRIu64
+            " active_k_full_width_cycles_avoided=%" PRIu64 "\n",
             arrayCoreId_, arrayBufferRequests_, arrayBufferBytes_, arrayBufferRejected_,
-            arrayBufferHighWater_, arrayBufferTransferCycles_);
+            arrayBufferHighWater_, arrayBufferTransferCycles_,
+            matrixBroadcastRequests_, matrixBroadcastRejected_,
+            matrixBroadcastIngressBytes_, matrixBroadcastSinkBytes_,
+            matrixBroadcastTransferCycles_, matrixBroadcastObservedMaxFanout_,
+            arrayOutputReadCredits_, arrayOutputReadBanks_, outputReadMaxInFlight_,
+            outputReadCreditStalls_, outputReadBankConflicts_,
+            activeKLaunches_, activeKColumns_, activeKComputeCycles_,
+            activeKFullWidthCyclesAvoided_);
     }
     virtual void emergencyShutdown() override {}
 
     virtual void beginComputation(uint32_t arrayID) = 0;
+    virtual void beginComputationBank(uint32_t arrayID, uint32_t operandBank) {
+        if (operandBank == 0) beginComputation(arrayID);
+    }
+    virtual void beginComputationActive(uint32_t arrayID, uint32_t activeColumns) {
+        if (activeColumns == inputArraySize) beginComputation(arrayID);
+    }
+    virtual void beginComputationActiveBank(
+            uint32_t arrayID, uint32_t operandBank, uint32_t activeColumns) {
+        if (operandBank == 0) beginComputationActive(arrayID, activeColumns);
+    }
     virtual void handleSelfEvent(Event* ev) = 0;
     virtual SimTime_t getArrayLatency(uint32_t arrayID) = 0;
+    virtual SimTime_t getArrayLatencyActive(
+            uint32_t arrayID, uint32_t activeColumns) {
+        return activeColumns == inputArraySize ? getArrayLatency(arrayID) : 0;
+    }
     virtual void setMatrixItem(int32_t arrayID, int32_t index, double value) = 0;
     virtual void setVectorItem(int32_t arrayID, int32_t index, double value) = 0;
     virtual void compute(uint32_t arrayID) = 0;
@@ -161,16 +277,82 @@ public:
                                     size_t elemBytes,
                                     uint64_t tag,
                                     BufferCallback callback) = 0;
+    virtual bool programMatrixBankAsync(
+            uint32_t arrayID, uint32_t operandBank,
+            const std::vector<double>& matrix, size_t elemBytes,
+            uint64_t tag, BufferCallback callback) {
+        return operandBank == 0 && programMatrixAsync(
+            arrayID, matrix, elemBytes, tag, std::move(callback));
+    }
     virtual bool programMatrixGroupAsync(const std::vector<uint32_t>& arrayIDs,
                                          const std::vector<double>& matrix,
                                          size_t elemBytes,
                                          uint64_t tag,
                                          BufferCallback callback) = 0;
+    virtual bool programMatrixGroupBankAsync(
+            const std::vector<uint32_t>& arrayIDs, uint32_t operandBank,
+            const std::vector<double>& matrix, size_t elemBytes,
+            uint64_t tag, BufferCallback callback) {
+        return operandBank == 0 && programMatrixGroupAsync(
+            arrayIDs, matrix, elemBytes, tag, std::move(callback));
+    }
     virtual bool programInputAsync(uint32_t arrayID,
                                    const std::vector<double>& input,
                                    size_t elemBytes,
                                    uint64_t tag,
                                    BufferCallback callback) = 0;
+    virtual bool programInputBankAsync(
+            uint32_t arrayID, uint32_t operandBank,
+            const std::vector<double>& input, size_t elemBytes,
+            uint64_t tag, BufferCallback callback) {
+        return operandBank == 0 && programInputAsync(
+            arrayID, input, elemBytes, tag, std::move(callback));
+    }
+    virtual bool programMatrixActiveAsync(
+            uint32_t arrayID, const std::vector<double>& matrix,
+            uint32_t activeColumns, size_t elemBytes, uint64_t tag,
+            BufferCallback callback) {
+        if (activeColumns != inputArraySize) return false;
+        return programMatrixAsync(
+            arrayID, matrix, elemBytes, tag, std::move(callback));
+    }
+    virtual bool programMatrixActiveBankAsync(
+            uint32_t arrayID, uint32_t operandBank,
+            const std::vector<double>& matrix, uint32_t activeColumns,
+            size_t elemBytes, uint64_t tag, BufferCallback callback) {
+        return operandBank == 0 && programMatrixActiveAsync(
+            arrayID, matrix, activeColumns, elemBytes, tag, std::move(callback));
+    }
+    virtual bool programMatrixGroupActiveAsync(
+            const std::vector<uint32_t>& arrayIDs,
+            const std::vector<double>& matrix, uint32_t activeColumns,
+            size_t elemBytes, uint64_t tag, BufferCallback callback) {
+        if (activeColumns != inputArraySize) return false;
+        return programMatrixGroupAsync(
+            arrayIDs, matrix, elemBytes, tag, std::move(callback));
+    }
+    virtual bool programMatrixGroupActiveBankAsync(
+            const std::vector<uint32_t>& arrayIDs, uint32_t operandBank,
+            const std::vector<double>& matrix, uint32_t activeColumns,
+            size_t elemBytes, uint64_t tag, BufferCallback callback) {
+        return operandBank == 0 && programMatrixGroupActiveAsync(
+            arrayIDs, matrix, activeColumns, elemBytes, tag, std::move(callback));
+    }
+    virtual bool programInputActiveAsync(
+            uint32_t arrayID, const std::vector<double>& input,
+            uint32_t activeColumns, size_t elemBytes, uint64_t tag,
+            BufferCallback callback) {
+        if (activeColumns != inputArraySize) return false;
+        return programInputAsync(
+            arrayID, input, elemBytes, tag, std::move(callback));
+    }
+    virtual bool programInputActiveBankAsync(
+            uint32_t arrayID, uint32_t operandBank,
+            const std::vector<double>& input, uint32_t activeColumns,
+            size_t elemBytes, uint64_t tag, BufferCallback callback) {
+        return operandBank == 0 && programInputActiveAsync(
+            arrayID, input, activeColumns, elemBytes, tag, std::move(callback));
+    }
     virtual bool programOperandsAsync(uint32_t arrayID,
                                       const std::vector<double>& matrix,
                                       const std::vector<double>& input,
@@ -190,16 +372,129 @@ public:
     // Optional override: configure output buffer behavior (e.g., accumulate vs overwrite)
     virtual void configureOutputMode(uint32_t, uint64_t) {}
 
+    virtual bool supportsActiveColumns() const { return false; }
+
+    bool validateActiveColumnRequest(uint32_t activeColumns) const {
+        return activeColumns > 0 && activeColumns <= inputArraySize &&
+            (activeColumns == inputArraySize || supportsActiveColumns());
+    }
+
+    bool validateActiveMatrixRequest(
+            uint32_t arrayID, size_t matrixElements,
+            uint32_t activeColumns, size_t elemBytes) const {
+        return arrayID < numArrays && validateActiveColumnRequest(activeColumns) &&
+            matrixElements ==
+                static_cast<size_t>(activeColumns) * outputArraySize &&
+            elemBytes > 0;
+    }
+
+    bool validateActiveInputRequest(
+            uint32_t arrayID, size_t inputElements,
+            uint32_t activeColumns, size_t elemBytes) const {
+        return arrayID < numArrays && validateActiveColumnRequest(activeColumns) &&
+            inputElements == activeColumns && elemBytes > 0;
+    }
+
+    bool validateActiveLaunchRequest(
+            uint32_t arrayID, uint32_t activeColumns) const {
+        return arrayID < numArrays && validateActiveColumnRequest(activeColumns);
+    }
+
+    bool validateMatrixBroadcastRequest(
+            const std::vector<uint32_t>& arrayIDs, size_t matrixElements,
+            size_t elemBytes, uint32_t activeColumns = 0) {
+        const uint32_t columns = activeColumns == 0 ? inputArraySize : activeColumns;
+        const std::unordered_set<uint32_t> uniqueIDs(
+            arrayIDs.begin(), arrayIDs.end());
+        const bool valid = !arrayIDs.empty() &&
+            arrayIDs.size() <= matrixBroadcastMaxFanout_ &&
+            uniqueIDs.size() == arrayIDs.size() &&
+            validateActiveColumnRequest(columns) &&
+            matrixElements == static_cast<size_t>(columns) * outputArraySize &&
+            elemBytes > 0 &&
+            std::all_of(
+                arrayIDs.begin(), arrayIDs.end(),
+                [this](uint32_t id) { return id < numArrays; });
+        if (!valid) {
+            matrixBroadcastRejected_ += 1;
+            statMatrixBroadcastRejected_->addData(1);
+        }
+        return valid;
+    }
+
 protected:
     bool enqueueBufferTransfer(size_t bytes, uint64_t tag,
                                std::function<void()> completion) {
+        const uint64_t transferCycles = arrayBufferBaseLatencyCycles_ +
+            (bytes + arrayBufferBytesPerCycle_ - 1) / arrayBufferBytesPerCycle_;
+        return enqueueModeledBufferTransfer(
+            bytes, transferCycles, tag, std::move(completion));
+    }
+
+    bool enqueueOutputReadTransfer(uint32_t arrayID, size_t bytes, uint64_t tag,
+                                   std::function<void()> completion) {
+        const uint32_t bank = arrayOutputReadBanks_ == 0 ? 0 :
+            arrayID % arrayOutputReadBanks_;
+        const uint64_t transferCycles = arrayBufferBaseLatencyCycles_ +
+            (bytes + arrayBufferBytesPerCycle_ - 1) / arrayBufferBytesPerCycle_;
+        return enqueueModeledBufferTransfer(
+            bytes, transferCycles, tag, std::move(completion), true, bank);
+    }
+
+    bool enqueueMatrixBroadcastTransfer(size_t bytes, size_t fanout, uint64_t tag,
+                                        std::function<void()> completion) {
+        const uint64_t treeStages = ceilLog2(fanout);
+        const uint64_t transferCycles = matrixBroadcastBaseLatencyCycles_ +
+            (bytes + matrixBroadcastBytesPerCycle_ - 1) /
+                matrixBroadcastBytesPerCycle_ +
+            treeStages * matrixBroadcastStageLatencyCycles_;
+        if (!enqueueModeledBufferTransfer(
+                bytes, transferCycles, tag, std::move(completion))) {
+            matrixBroadcastRejected_ += 1;
+            statMatrixBroadcastRejected_->addData(1);
+            return false;
+        }
+        const uint64_t sinkBytes = static_cast<uint64_t>(bytes) * fanout;
+        matrixBroadcastRequests_ += 1;
+        matrixBroadcastIngressBytes_ += bytes;
+        matrixBroadcastSinkBytes_ += sinkBytes;
+        matrixBroadcastTransferCycles_ += transferCycles;
+        matrixBroadcastObservedMaxFanout_ =
+            std::max<uint64_t>(matrixBroadcastObservedMaxFanout_, fanout);
+        statMatrixBroadcastRequests_->addData(1);
+        statMatrixBroadcastIngressBytes_->addData(bytes);
+        statMatrixBroadcastSinkBytes_->addData(sinkBytes);
+        statMatrixBroadcastTransferCycles_->addData(transferCycles);
+        statMatrixBroadcastFanout_->addData(fanout);
+        return true;
+    }
+
+    static uint64_t ceilLog2(uint64_t value) {
+        uint64_t stages = 0;
+        while (value > 1) {
+            value = (value + 1) / 2;
+            stages += 1;
+        }
+        return stages;
+    }
+
+private:
+    bool enqueueModeledBufferTransfer(size_t bytes, uint64_t transferCycles,
+                                      uint64_t tag,
+                                      std::function<void()> completion,
+                                      bool outputRead = false,
+                                      uint32_t outputBank = 0) {
         if (!completion || bufferRequests_.size() >= arrayBufferQueueDepth_) {
             arrayBufferRejected_ += 1;
             return false;
         }
         const uint64_t requestId = nextBufferRequestId_++;
         bufferRequests_.emplace(
-            requestId, BufferRequest{requestId, tag, bytes, std::move(completion)});
+            requestId,
+            BufferRequest{
+                requestId, tag, bytes, transferCycles, std::move(completion),
+                outputRead, outputBank
+            });
         bufferQueue_.push_back(requestId);
         arrayBufferRequests_ += 1;
         arrayBufferBytes_ += bytes;
@@ -209,6 +504,7 @@ protected:
         return true;
     }
 
+protected:
     SST::Output out;
     SST::Link* selfLink = nullptr;
     SST::Event::HandlerBase* tileHandler = nullptr;
@@ -217,34 +513,85 @@ protected:
     TimeConverter* clockTC = nullptr;
     TimeConverter* latencyTC = nullptr;
     uint64_t modeledComputeCycles = 1;
+    double arrayMacPerCuPerCycle = 1.0;
+    uint64_t arrayPipelineDepth = 0;
 
     uint64_t numArrays;
+    uint32_t operandContextBanks = 1;
     uint64_t inputArraySize;
     uint64_t outputArraySize;
     uint64_t inputOperandSize;
     uint64_t outputOperandSize;
+
+    SimTime_t modeledActiveComputeCycles(uint32_t activeColumns) const {
+        return static_cast<SimTime_t>(
+            std::ceil(static_cast<double>(activeColumns) / arrayMacPerCuPerCycle)) +
+            arrayPipelineDepth;
+    }
+
+    void recordActiveKLaunch(uint32_t activeColumns, SimTime_t activeCycles) {
+        if (activeColumns >= inputArraySize) return;
+        activeKLaunches_ += 1;
+        activeKColumns_ += activeColumns;
+        activeKComputeCycles_ += activeCycles;
+        const uint64_t avoided = modeledComputeCycles > activeCycles ?
+            modeledComputeCycles - activeCycles : 0;
+        activeKFullWidthCyclesAvoided_ += avoided;
+        statActiveKLaunches_->addData(1);
+        statActiveKColumns_->addData(activeColumns);
+        statActiveKComputeCycles_->addData(activeCycles);
+        statActiveKFullWidthCyclesAvoided_->addData(avoided);
+    }
 
 private:
     struct BufferRequest {
         uint64_t requestId = 0;
         uint64_t tag = 0;
         size_t bytes = 0;
+        uint64_t transferCycles = 0;
         std::function<void()> completion;
+        bool outputRead = false;
+        uint32_t outputBank = 0;
     };
 
     void tryIssueBufferTransfers() {
         while (arrayBufferInFlight_ < arrayBufferPorts_ && !bufferQueue_.empty()) {
-            const uint64_t requestId = bufferQueue_.front();
-            bufferQueue_.pop_front();
+            auto selected = bufferQueue_.end();
+            for (auto it = bufferQueue_.begin(); it != bufferQueue_.end(); ++it) {
+                const auto request = bufferRequests_.find(*it);
+                if (request == bufferRequests_.end()) continue;
+                if (request->second.outputRead) {
+                    if (outputReadInFlight_ >= arrayOutputReadCredits_) {
+                        outputReadCreditStalls_ += 1;
+                        statOutputReadCreditStalls_->addData(1);
+                        continue;
+                    }
+                    if (request->second.outputBank >= outputReadBankInFlight_.size() ||
+                        outputReadBankInFlight_[request->second.outputBank] != 0) {
+                        outputReadBankConflicts_ += 1;
+                        statOutputReadBankConflicts_->addData(1);
+                        continue;
+                    }
+                }
+                selected = it;
+                break;
+            }
+            if (selected == bufferQueue_.end()) break;
+            const uint64_t requestId = *selected;
+            bufferQueue_.erase(selected);
             const auto it = bufferRequests_.find(requestId);
             if (it == bufferRequests_.end()) {
                 continue;
             }
-            const uint64_t transferCycles = arrayBufferBaseLatencyCycles_ +
-                (it->second.bytes + arrayBufferBytesPerCycle_ - 1) /
-                    arrayBufferBytesPerCycle_;
+            const uint64_t transferCycles = it->second.transferCycles;
             arrayBufferTransferCycles_ += transferCycles;
             arrayBufferInFlight_ += 1;
+            if (it->second.outputRead) {
+                outputReadInFlight_ += 1;
+                outputReadBankInFlight_[it->second.outputBank] += 1;
+                outputReadMaxInFlight_ = std::max(outputReadMaxInFlight_, outputReadInFlight_);
+                statOutputReadMaxInFlight_->addData(outputReadMaxInFlight_);
+            }
             bufferLink_->send(transferCycles, new ArrayBufferEvent(requestId));
         }
     }
@@ -257,6 +604,13 @@ private:
         }
         const auto it = bufferRequests_.find(bufferEvent->requestId());
         if (it != bufferRequests_.end()) {
+            if (it->second.outputRead) {
+                if (outputReadInFlight_ > 0) outputReadInFlight_ -= 1;
+                if (it->second.outputBank < outputReadBankInFlight_.size() &&
+                    outputReadBankInFlight_[it->second.outputBank] > 0) {
+                    outputReadBankInFlight_[it->second.outputBank] -= 1;
+                }
+            }
             auto completion = std::move(it->second.completion);
             bufferRequests_.erase(it);
             if (completion) {
@@ -275,6 +629,10 @@ private:
     uint64_t arrayBufferBytesPerCycle_ = 64;
     uint64_t arrayBufferPorts_ = 1;
     uint64_t arrayBufferQueueDepth_ = 64;
+    uint64_t matrixBroadcastMaxFanout_ = 16;
+    uint64_t matrixBroadcastBytesPerCycle_ = 64;
+    uint64_t matrixBroadcastBaseLatencyCycles_ = 1;
+    uint64_t matrixBroadcastStageLatencyCycles_ = 1;
     uint64_t arrayBufferInFlight_ = 0;
     uint64_t nextBufferRequestId_ = 1;
     uint64_t arrayBufferRequests_ = 0;
@@ -282,7 +640,37 @@ private:
     uint64_t arrayBufferRejected_ = 0;
     uint64_t arrayBufferHighWater_ = 0;
     uint64_t arrayBufferTransferCycles_ = 0;
+    uint64_t arrayOutputReadCredits_ = 1;
+    uint64_t arrayOutputReadBanks_ = 1;
+    uint64_t outputReadInFlight_ = 0;
+    uint64_t outputReadMaxInFlight_ = 0;
+    uint64_t outputReadCreditStalls_ = 0;
+    uint64_t outputReadBankConflicts_ = 0;
+    std::vector<uint32_t> outputReadBankInFlight_;
+    uint64_t matrixBroadcastRequests_ = 0;
+    uint64_t matrixBroadcastRejected_ = 0;
+    uint64_t matrixBroadcastIngressBytes_ = 0;
+    uint64_t matrixBroadcastSinkBytes_ = 0;
+    uint64_t matrixBroadcastTransferCycles_ = 0;
+    uint64_t matrixBroadcastObservedMaxFanout_ = 0;
+    uint64_t activeKLaunches_ = 0;
+    uint64_t activeKColumns_ = 0;
+    uint64_t activeKComputeCycles_ = 0;
+    uint64_t activeKFullWidthCyclesAvoided_ = 0;
     int arrayCoreId_ = -1;
+    Statistic<uint64_t>* statMatrixBroadcastRequests_ = nullptr;
+    Statistic<uint64_t>* statMatrixBroadcastRejected_ = nullptr;
+    Statistic<uint64_t>* statMatrixBroadcastIngressBytes_ = nullptr;
+    Statistic<uint64_t>* statMatrixBroadcastSinkBytes_ = nullptr;
+    Statistic<uint64_t>* statMatrixBroadcastTransferCycles_ = nullptr;
+    Statistic<uint64_t>* statMatrixBroadcastFanout_ = nullptr;
+    Statistic<uint64_t>* statActiveKLaunches_ = nullptr;
+    Statistic<uint64_t>* statActiveKColumns_ = nullptr;
+    Statistic<uint64_t>* statActiveKComputeCycles_ = nullptr;
+    Statistic<uint64_t>* statActiveKFullWidthCyclesAvoided_ = nullptr;
+    Statistic<uint64_t>* statOutputReadCreditStalls_ = nullptr;
+    Statistic<uint64_t>* statOutputReadBankConflicts_ = nullptr;
+    Statistic<uint64_t>* statOutputReadMaxInFlight_ = nullptr;
     std::deque<uint64_t> bufferQueue_;
     std::unordered_map<uint64_t, BufferRequest> bufferRequests_;
 };

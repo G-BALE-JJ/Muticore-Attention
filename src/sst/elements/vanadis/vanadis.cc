@@ -100,6 +100,9 @@ VANADIS_COMPONENT::VANADIS_COMPONENT(SST::ComponentId_t id, SST::Params& params)
     print_rob  = params.find<bool>("print_rob", true);
 
     enable_simt = params.find<bool>("enable_simt", false); // for future use
+    rocc_wait_fastpath = params.find<bool>("rocc_wait_fastpath", false);
+    rocc_wait_fastpath_threshold = params.find<uint64_t>("rocc_wait_fastpath_threshold", 256);
+    rocc_wait_stall_cycles = 0;
 
     const uint16_t int_reg_count = params.find<uint16_t>("physical_integer_registers", 128);
     const uint16_t fp_reg_count  = params.find<uint16_t>("physical_fp_registers", 128);
@@ -394,6 +397,7 @@ VANADIS_COMPONENT::VANADIS_COMPONENT(SST::ComponentId_t id, SST::Params& params)
     stat_ins_issued           = registerStatistic<uint64_t>("instructions_issued", "1");
     stat_loads_issued         = registerStatistic<uint64_t>("loads_issued", "1");
     stat_stores_issued        = registerStatistic<uint64_t>("stores_issued", "1");
+    stat_rocc_wait_fastpath_cycles = registerStatistic<uint64_t>("rocc_wait_fastpath_cycles", "1");
     stat_branch_mispredicts   = registerStatistic<uint64_t>("branch_mispredicts", "1");
     stat_branches             = registerStatistic<uint64_t>("branches", "1");
     stat_cycles               = registerStatistic<uint64_t>("cycles", "1");
@@ -749,8 +753,6 @@ VANADIS_COMPONENT::performIssue(const uint64_t cycle, int hwThr, uint32_t& rob_s
 void
 VANADIS_COMPONENT::performExecute(const uint64_t cycle)
 {
-    static uint64_t rocc_unmatched_resp = 0;
-
     #ifdef VANADIS_BUILD_DEBUG
     const uint32_t verbose_level = output->getVerboseLevel();
     #endif
@@ -803,6 +805,14 @@ VANADIS_COMPONENT::performExecute(const uint64_t cycle)
 
     // Tick the load/store queue
     lsq->tick((uint64_t)cycle);
+
+    performRoCCExecute(cycle);
+}
+
+void
+VANADIS_COMPONENT::performRoCCExecute(const uint64_t cycle)
+{
+    static uint64_t rocc_unmatched_resp = 0;
 
     // // Tick the RoCC Interfaces
     // for (int i = 0; i < roccs_.size(); i++) {
@@ -1431,6 +1441,29 @@ VANADIS_COMPONENT::tick(SST::Cycle_t cycle)
     ins_retired_this_cycle = 0;
     ins_decoded_this_cycle = 0;
 
+    bool rocc_wait_blocked = false;
+    if ( rocc_wait_fastpath ) {
+        for ( auto* rocc : roccs_ ) {
+            rocc_wait_blocked = rocc_wait_blocked || rocc->isCPUWaitBlocked();
+        }
+    }
+    if ( rocc_wait_blocked && rocc_wait_stall_cycles >= rocc_wait_fastpath_threshold ) {
+        performRoCCExecute(cycle);
+        stat_ins_retired->addData(0);
+        stat_ins_issued->addData(0);
+        stat_ins_decoded->addData(0);
+        uint64_t rob_total_count = 0;
+        for ( uint32_t i = 0; i < hw_threads; ++i ) {
+            rob_total_count += rob[i]->size();
+        }
+        stat_rob_entries->addData(rob_total_count);
+        stat_int_phys_regs_in_use->addData(int_register_stack->capacity() - int_register_stack->unused());
+        stat_fp_phys_regs_in_use->addData(fp_register_stack->capacity() - fp_register_stack->unused());
+        stat_rocc_wait_fastpath_cycles->addData(1);
+        current_cycle++;
+        return current_cycle >= max_cycle;
+    }
+
 
     if ( UNLIKELY( nullptr != m_checkpointing ) ) {
         bool should_process = false;
@@ -1643,6 +1676,20 @@ VANADIS_COMPONENT::tick(SST::Cycle_t cycle)
 
     stat_int_phys_regs_in_use->addData(int_register_stack->capacity() - int_register_stack->unused());
     stat_fp_phys_regs_in_use->addData(fp_register_stack->capacity() - fp_register_stack->unused());
+
+    rocc_wait_blocked = false;
+    if ( rocc_wait_fastpath ) {
+        for ( auto* rocc : roccs_ ) {
+            rocc_wait_blocked = rocc_wait_blocked || rocc->isCPUWaitBlocked();
+        }
+    }
+    if ( rocc_wait_blocked && ins_issued_this_cycle == 0 &&
+         ins_retired_this_cycle == 0 && ins_decoded_this_cycle == 0 &&
+         lsq->storeSize() == 0 && lsq->loadSize() == 0 ) {
+        rocc_wait_stall_cycles++;
+    } else {
+        rocc_wait_stall_cycles = 0;
+    }
 
     if ( current_cycle >= max_cycle ) {
         output->verbose(CALL_INFO, 16, 0, "Reached maximum cycle %" PRIu64 ". Core stops processing.\n", current_cycle);

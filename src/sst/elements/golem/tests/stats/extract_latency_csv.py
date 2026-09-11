@@ -57,7 +57,11 @@ PATTERN = re.compile(
     r"(?:task_loop=(?P<task_loop>\d+)\s+)?"
     r"(?:submit_pack=(?P<submit_pack>\d+)\s+)?"
     r"(?:finish_publish=(?P<finish_publish>\d+)\s+)?"
+    r"(?:c_buffer_reads=(?P<c_buffer_reads>\d+)\s+)?"
+    r"(?:c_buffer_writes=(?P<c_buffer_writes>\d+)\s+)?"
+    r"(?:c_buffer_read_wait=(?P<c_buffer_read_wait>\d+)\s+)?"
     r"total=(?P<total>\d+)"
+    r"(?:\s+descriptor_start_cycle=(?P<descriptor_start_cycle>\d+))?"
     r"(?:\s+start_cycle=(?P<start_cycle>\d+)\s+end_cycle=(?P<end_cycle>\d+))?"
 )
 
@@ -95,7 +99,11 @@ FIELDS = [
     "nloop",
     "submit_pack",
     "finish_publish",
+    "c_buffer_reads",
+    "c_buffer_writes",
+    "c_buffer_read_wait",
     "total",
+    "descriptor_start_cycle",
     "start_cycle",
     "end_cycle",
 ]
@@ -167,6 +175,10 @@ def parse_logs(log_paths):
             rec.setdefault("nloop", 0)
             rec.setdefault("submit_pack", 0)
             rec.setdefault("finish_publish", 0)
+            rec.setdefault("c_buffer_reads", 0)
+            rec.setdefault("c_buffer_writes", 0)
+            rec.setdefault("c_buffer_read_wait", 0)
+            rec.setdefault("descriptor_start_cycle", 0)
             rec.setdefault("start_cycle", 0)
             rec.setdefault("end_cycle", 0)
             if task_loop is not None and rec["task_desc"] == 0 and rec["nloop"] == 0:
@@ -216,6 +228,9 @@ def write_debug_summary_csv(records, path: Path):
         "nloop",
         "submit_pack",
         "finish_publish",
+        "c_buffer_reads",
+        "c_buffer_writes",
+        "c_buffer_read_wait",
         "total",
     ]
     with path.open("w", newline="") as f:
@@ -310,13 +325,32 @@ def write_summary_csv(records, path: Path, hardware_context):
         array_utilization_pct = (
             100.0 * avg_throughput / peak_throughput if peak_throughput > 0 else 0.0
         )
-        valid_windows = [
+        wcp_valid_windows = [
             (r["start_cycle"], r["end_cycle"])
             for r in records
             if r.get("start_cycle", 0) > 0 and r.get("end_cycle", 0) >= r.get("start_cycle", 0)
         ]
-        gemm_system_start_cycle = min((s for s, _ in valid_windows), default=0)
-        gemm_system_end_cycle = max((e for _, e in valid_windows), default=0)
+        descriptor_start_cycles = [
+            r["descriptor_start_cycle"]
+            for r in records
+            if r.get("descriptor_start_cycle", 0) > 0
+        ]
+        wcp_start_cycles = [s for s, _ in wcp_valid_windows]
+        gemm_descriptor_start_cycle = min(descriptor_start_cycles, default=0)
+        gemm_descriptor_start_skew_cycles = (
+            max(descriptor_start_cycles) - min(descriptor_start_cycles)
+            if descriptor_start_cycles
+            else 0
+        )
+        gemm_wcp_start_min_cycle = min(wcp_start_cycles, default=0)
+        gemm_wcp_start_max_cycle = max(wcp_start_cycles, default=0)
+        gemm_wcp_start_skew_cycles = (
+            gemm_wcp_start_max_cycle - gemm_wcp_start_min_cycle
+            if wcp_start_cycles
+            else 0
+        )
+        gemm_system_start_cycle = gemm_descriptor_start_cycle or gemm_wcp_start_min_cycle
+        gemm_system_end_cycle = max((e for _, e in wcp_valid_windows), default=0)
         gemm_system_latency_cycles = (
             gemm_system_end_cycle - gemm_system_start_cycle + 1
             if gemm_system_start_cycle > 0 and gemm_system_end_cycle >= gemm_system_start_cycle
@@ -347,6 +381,11 @@ def write_summary_csv(records, path: Path, hardware_context):
             ("worker_avg_total_cycles", mean_total),
             ("worker_p95_total_cycles", _p95(total_values)),
             ("worker_max_total_cycles", max(total_values) if total_values else 0),
+            ("gemm_descriptor_start_cycle", gemm_descriptor_start_cycle),
+            ("gemm_descriptor_start_skew_cycles", gemm_descriptor_start_skew_cycles),
+            ("gemm_wcp_start_min_cycle", gemm_wcp_start_min_cycle),
+            ("gemm_wcp_start_max_cycle", gemm_wcp_start_max_cycle),
+            ("gemm_wcp_start_skew_cycles", gemm_wcp_start_skew_cycles),
             ("gemm_system_start_cycle", gemm_system_start_cycle),
             ("gemm_system_end_cycle", gemm_system_end_cycle),
             ("gemm_system_latency_cycles", gemm_system_latency_cycles),

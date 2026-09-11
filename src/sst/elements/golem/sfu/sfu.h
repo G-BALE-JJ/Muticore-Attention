@@ -318,6 +318,8 @@ public:
         {"reciprocal_latency", "Row Engine reciprocal latency in accelerator cycles", "1"},
         {"rsqrt_latency", "Attention scale RSQRT latency in accelerator cycles", "8"},
         {"row_contexts", "Row contexts per physical Row Engine", "4"},
+        {"attention_kv_pair_reuse", "Retain online Softmax state for grouped Attention query blocks", "0"},
+        {"attention_kv_query_group_size", "Interleaved Attention query blocks: 2 or 4", "2"},
         {"scratchpad_bytes", "Row Engine scratchpad capacity", "65536"},
         {"distributed_reduction_transport", "Distributed softmax reduction transport: shared, modeled_noc, or explicit_noc", "shared"},
         {"verbose", "Verbosity", "0"})

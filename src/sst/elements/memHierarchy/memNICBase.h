@@ -19,11 +19,16 @@
 #include <string>
 #include <unordered_map>
 #include <queue>
+#include <deque>
 #include <map>
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdlib>
 #include <cctype>
+#include <limits>
+#include <tuple>
+#include <vector>
 
 #include <sst/core/event.h>
 #include <sst/core/output.h>
@@ -52,12 +57,27 @@ class MemNICBase : public MemLinkBase {
         { "range_check",                 "(int) Enable initial check for overlapping memory ranges. 0=Disabled 1=Enabled", "1"},\
         { "golem_dma_response_vn",       "(int) VN for Golem DMA completion responses. If unset, derives VN1 when num_vns >= 2, otherwise VN0.", ""},\
         { "golem_dma_response_drain_limit", "(int) Max queued Golem DMA responses drained per opportunity. 0 means unlimited.", "0"},\
-        { "golem_dma_response_priority_enable", "(int) Prioritize queued Golem DMA responses by semantic kind.", "0"}
+        { "golem_dma_response_priority_enable", "(int) Prioritize queued Golem DMA responses by semantic kind.", "0"},\
+        { "golem_dma_credit_cap",         "(int) Shared Golem DMA read credits owned by this memory-node NIC. 0 disables admission control.", "0"},\
+        { "golem_dma_credit_chunk_bytes", "(int) Bytes represented by one Golem DMA read credit.", "16384"},\
+        { "golem_dma_admission_limit", "(int) Max DMA reads admitted from the ingress queue per NIC clock. 0 means unlimited.", "0"},\
+        { "golem_dma_window_priority_enable", "(int) Prioritize older DMA windows and round-robin workers before HBM admission.", "0"},\
+        { "golem_dma_window_reorder_cycles", "(int) Cycles to collect requests for window-aware admission.", "512"},\
+        { "golem_dma_tile_chunk_quantum", "(int) Same-window/tile/worker chunks admitted before round-robin advances.", "1"},\
+        { "golem_dma_response_tile_priority_enable", "(int) Reorder ready DMA responses to complete the next worker tile first.", "0"},\
+        { "golem_dma_response_reorder_cycles", "(int) Minimum response collection interval before tile-aware dequeue.", "0"},\
+        { "golem_dma_response_max_starvation_cycles", "(int) Maximum ready-response age before FIFO fallback. 0 disables fallback.", "65536"},\
+        { "golem_dma_admission_max_starvation_cycles", "(int) Maximum ingress age before oldest-admissible fallback. 0 disables fallback.", "4096"},\
+        { "golem_dma_write_response_vn", "(int) VN used for Golem DMA write completions. Defaults to VN2 when available.", "2"},\
+        { "network_vn_priority_order", "Comma-separated VN injection priority order. Empty preserves round-robin.", ""},\
+        { "network_vn_starvation_vn", "VN allowed to bypass injection priority after a bounded wait.", "-1"},\
+        { "network_vn_max_starvation_cycles", "Maximum injection queue age before starvation bypass. 0 disables bypass.", "0"}
 
         SST_ELI_REGISTER_SUBCOMPONENT_DERIVED_API(SST::MemHierarchy::MemNICBase, SST::MemHierarchy::MemLinkBase)
 
         /* Constructor */
         MemNICBase(ComponentId_t id, Params &params, TimeConverter* tc) : MemLinkBase(id, params, tc) {
+            golem_dma_clock_factor_ = tc ? std::max<SimTime_t>(1, tc->getFactor()) : 1;
             build(params);
         }
 
@@ -528,6 +548,576 @@ class MemNICBase : public MemLinkBase {
             return static_cast<int>((core << 20) | (slot << 12) | (node << 4) | seq);
         }
 
+        struct GolemDmaBridgeInfo {
+            uint64_t returnAddr = 0;
+            int returnEndpoint = -1;
+            uint64_t completionFlagAddr = 0;
+            uint64_t completionValue = 0;
+            uint64_t requestId = 0;
+            uint32_t size = 0;
+            uint32_t creditUnits = 0;
+            bool isWrite = false;
+            uint64_t hostAddr = 0;
+            uint64_t ingressCycle = 0;
+            SST::Golem::DmaRequestKind dmaRequestKind = SST::Golem::DmaRequestKind::Unknown;
+            SST::Golem::DmaConsumerMetadata dmaConsumer;
+        };
+
+        struct GolemDmaIngressRequest {
+            uint64_t arrivalCycle = 0;
+            uint64_t sourceEndpoint = 0;
+            std::string sourceName;
+            uint64_t addr = 0;
+            uint32_t size = 0;
+            uint64_t returnAddr = 0;
+            int returnEndpoint = -1;
+            uint64_t completionFlagAddr = 0;
+            uint64_t completionValue = 0;
+            uint64_t requestId = 0;
+            uint32_t creditUnits = 0;
+            bool creditBlocked = false;
+            SST::Golem::DmaRequestKind dmaRequestKind = SST::Golem::DmaRequestKind::Unknown;
+            SST::Golem::DmaConsumerMetadata dmaConsumer;
+        };
+
+        struct GolemDmaResponseRequest {
+            SST::Interfaces::SimpleNetwork::Request* request = nullptr;
+            uint64_t readyCycle = 0;
+            uint64_t requestId = 0;
+            uint64_t returnAddr = 0;
+            size_t length = 0;
+            uint64_t ingressCycle = 0;
+            uint32_t creditUnits = 0;
+            SST::Golem::DmaRequestKind dmaRequestKind = SST::Golem::DmaRequestKind::Unknown;
+            SST::Golem::DmaConsumerMetadata dmaConsumer;
+        };
+
+        struct GolemDmaConsumerProgress {
+            uint32_t queryBlock = 0;
+            uint32_t tile = 0;
+        };
+
+        struct GolemDmaBundleKey {
+            uint64_t jobId = 0;
+            uint32_t worker = 0;
+            uint32_t queryBlock = 0;
+            uint32_t tile = 0;
+
+            bool operator==(const GolemDmaBundleKey& other) const {
+                return jobId == other.jobId && worker == other.worker &&
+                    queryBlock == other.queryBlock && tile == other.tile;
+            }
+        };
+
+        struct GolemDmaBundleKeyHash {
+            size_t operator()(const GolemDmaBundleKey& key) const {
+                size_t value = std::hash<uint64_t>{}(key.jobId);
+                const auto combine = [&value](uint32_t part) {
+                    value ^= std::hash<uint32_t>{}(part) +
+                        static_cast<size_t>(0x9e3779b9U) + (value << 6) + (value >> 2);
+                };
+                combine(key.worker);
+                combine(key.queryBlock);
+                combine(key.tile);
+                return value;
+            }
+        };
+
+        static GolemDmaBundleKey golemDmaBundleKey(uint64_t requestId) {
+            return GolemDmaBundleKey{
+                0, golemDmaWorkerId(requestId), golemDmaWindowId(requestId),
+                golemDmaTileIndex(requestId)};
+        }
+
+        static GolemDmaBundleKey golemDmaBundleKey(
+                uint64_t requestId, const SST::Golem::DmaConsumerMetadata& consumer) {
+            if (consumer.valid == 0) return golemDmaBundleKey(requestId);
+            return GolemDmaBundleKey{
+                consumer.jobId, consumer.worker, consumer.targetQueryBlock,
+                consumer.targetTile};
+        }
+
+        void updateGolemDmaConsumerProgress(
+                const SST::Golem::DmaConsumerMetadata& consumer) {
+            if (consumer.valid == 0) return;
+            auto& current = golem_dma_consumer_progress_[
+                std::make_pair(consumer.jobId, consumer.worker)];
+            if (std::tie(current.queryBlock, current.tile) <
+                std::tie(consumer.consumerQueryBlock, consumer.consumerTile)) {
+                current.queryBlock = consumer.consumerQueryBlock;
+                current.tile = consumer.consumerTile;
+            }
+        }
+
+        uint8_t golemDmaConsumerDistance(
+                const SST::Golem::DmaConsumerMetadata& consumer) const {
+            if (consumer.valid == 0) return 3;
+            uint32_t queryBlock = consumer.consumerQueryBlock;
+            uint32_t tile = consumer.consumerTile;
+            auto progress = golem_dma_consumer_progress_.find(
+                std::make_pair(consumer.jobId, consumer.worker));
+            if (progress != golem_dma_consumer_progress_.end()) {
+                queryBlock = progress->second.queryBlock;
+                tile = progress->second.tile;
+            }
+            if (consumer.targetQueryBlock < queryBlock) return 0;
+            if (consumer.targetQueryBlock > queryBlock) return 3;
+            if (consumer.targetTile <= tile) return 0;
+            return static_cast<uint8_t>(std::min<uint32_t>(consumer.targetTile - tile, 3));
+        }
+
+        void releaseGolemDmaCredits(uint32_t creditUnits, uint64_t requestId) {
+            if (creditUnits == 0) return;
+            if (creditUnits > golem_dma_credit_cap_ - golem_dma_credit_available_) {
+                dbg.fatal(CALL_INFO, -1,
+                          "%s Golem DMA credit release overflow req=%" PRIu64
+                          " units=%u available=%u cap=%u.\n",
+                          getName().c_str(), requestId, creditUnits,
+                          golem_dma_credit_available_, golem_dma_credit_cap_);
+            }
+            golem_dma_credit_available_ += creditUnits;
+            golem_dma_credit_released_requests_++;
+        }
+
+        uint64_t golemDmaResponseNowCycle() const {
+            return getCurrentSimCycle() / golem_dma_clock_factor_;
+        }
+
+        MemEvent* createGolemDmaRead(const GolemDmaIngressRequest& ingress) {
+            auto* me = new MemEvent(ingress.sourceName, ingress.addr, ingress.addr, Command::GetS, ingress.size);
+            me->setFlag(MemEventBase::F_NONCACHEABLE);
+            GolemDmaBridgeInfo info;
+            info.returnAddr = ingress.returnAddr;
+            info.returnEndpoint = ingress.returnEndpoint;
+            info.completionFlagAddr = ingress.completionFlagAddr;
+            info.completionValue = ingress.completionValue;
+            info.requestId = ingress.requestId;
+            info.size = ingress.size;
+            info.creditUnits = ingress.creditUnits;
+            info.isWrite = false;
+            info.hostAddr = ingress.addr;
+            info.ingressCycle = ingress.arrivalCycle / golem_dma_clock_factor_;
+            info.dmaRequestKind = ingress.dmaRequestKind;
+            info.dmaConsumer = ingress.dmaConsumer;
+            golem_dma_pending.emplace(me->getID(), info);
+            golem_dma_response_pending_by_bundle_[
+                golemDmaBundleKey(info.requestId, info.dmaConsumer)]++;
+            return me;
+        }
+
+        uint32_t golemDmaCreditUnits(uint32_t bytes) const {
+            const uint32_t chunk = std::max<uint32_t>(golem_dma_credit_chunk_bytes_, 1u);
+            return std::max<uint32_t>(1u, (bytes + chunk - 1u) / chunk);
+        }
+
+        static uint8_t golemDmaWorkerId(uint64_t requestId) {
+            return static_cast<uint8_t>((requestId >> 56) & 0xffULL);
+        }
+
+        static uint32_t golemDmaWindowId(uint64_t requestId) {
+            constexpr uint32_t tileBits = 8;
+            return static_cast<uint32_t>((requestId & 0xffffffffULL) >> tileBits);
+        }
+
+        static uint8_t golemDmaRequestSlot(uint64_t requestId) {
+            return static_cast<uint8_t>((requestId >> 48) & 0xffULL);
+        }
+
+        static uint8_t golemDmaTileIndex(uint64_t requestId) {
+            return static_cast<uint8_t>(requestId & 0xffULL);
+        }
+
+        bool hasGolemDmaIngress() const {
+            return !golem_dma_ingress_queue_.empty();
+        }
+
+        bool golemDmaIngressCanProgress(uint64_t currentCycle) const {
+            if (golem_dma_window_priority_enable_ != 0 && !golem_dma_ingress_queue_.empty()) {
+                const bool hasConsumerMetadata = std::any_of(
+                    golem_dma_ingress_queue_.begin(), golem_dma_ingress_queue_.end(),
+                    [](const GolemDmaIngressRequest& ingress) {
+                        return ingress.dmaConsumer.valid != 0;
+                    });
+                if (hasConsumerMetadata) {
+                    uint64_t firstArrival = std::numeric_limits<uint64_t>::max();
+                    for (const auto& ingress : golem_dma_ingress_queue_) {
+                        firstArrival = std::min(firstArrival, ingress.arrivalCycle);
+                    }
+                    if (currentCycle <= firstArrival + golem_dma_window_reorder_cycles_) {
+                        return true;
+                    }
+                    return std::any_of(
+                        golem_dma_ingress_queue_.begin(), golem_dma_ingress_queue_.end(),
+                        [this](const GolemDmaIngressRequest& ingress) {
+                            return ingress.creditUnits <= golem_dma_credit_available_;
+                        });
+                }
+                uint32_t oldestWindow = std::numeric_limits<uint32_t>::max();
+                uint64_t firstArrival = std::numeric_limits<uint64_t>::max();
+                for (const auto& ingress : golem_dma_ingress_queue_) {
+                    const uint32_t window = golemDmaWindowId(ingress.requestId);
+                    if (window < oldestWindow) {
+                        oldestWindow = window;
+                        firstArrival = ingress.arrivalCycle;
+                    } else if (window == oldestWindow) {
+                        firstArrival = std::min(firstArrival, ingress.arrivalCycle);
+                    }
+                }
+                if (currentCycle <= firstArrival + golem_dma_window_reorder_cycles_) {
+                    return true;
+                }
+                for (const auto& ingress : golem_dma_ingress_queue_) {
+                    if (golemDmaWindowId(ingress.requestId) == oldestWindow &&
+                        ingress.creditUnits <= golem_dma_credit_available_) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            for (const auto& ingress : golem_dma_ingress_queue_) {
+                if (ingress.arrivalCycle >= currentCycle || ingress.creditUnits <= golem_dma_credit_available_) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        std::vector<MemEventBase*> admitGolemDmaIngress(uint64_t currentCycle) {
+            std::vector<MemEventBase*> admitted;
+            if (golem_dma_ingress_queue_.empty()) {
+                return admitted;
+            }
+            const bool hasConsumerMetadata = std::any_of(
+                golem_dma_ingress_queue_.begin(), golem_dma_ingress_queue_.end(),
+                [](const GolemDmaIngressRequest& ingress) {
+                    return ingress.dmaConsumer.valid != 0;
+                });
+            if (golem_dma_window_priority_enable_ != 0 && hasConsumerMetadata) {
+                while (!golem_dma_ingress_queue_.empty() &&
+                       (golem_dma_admission_limit_ == 0 ||
+                        admitted.size() < golem_dma_admission_limit_)) {
+                    size_t chosen = golem_dma_ingress_queue_.size();
+                    bool starvationFallback = false;
+
+                    if (golem_dma_admission_max_starvation_cycles_ != 0) {
+                        for (size_t idx = 0; idx < golem_dma_ingress_queue_.size(); ++idx) {
+                            const auto& ingress = golem_dma_ingress_queue_[idx];
+                            if (ingress.creditUnits > golem_dma_credit_available_ ||
+                                currentCycle < ingress.arrivalCycle +
+                                    golem_dma_admission_max_starvation_cycles_) {
+                                continue;
+                            }
+                            if (chosen == golem_dma_ingress_queue_.size() ||
+                                std::tie(ingress.arrivalCycle, ingress.requestId) <
+                                    std::tie(golem_dma_ingress_queue_[chosen].arrivalCycle,
+                                             golem_dma_ingress_queue_[chosen].requestId)) {
+                                chosen = idx;
+                            }
+                        }
+                        starvationFallback = chosen != golem_dma_ingress_queue_.size();
+                    }
+
+                    if (!starvationFallback && golem_dma_bundle_active_) {
+                        for (size_t idx = 0; idx < golem_dma_ingress_queue_.size(); ++idx) {
+                            const auto& ingress = golem_dma_ingress_queue_[idx];
+                            if (ingress.creditUnits <= golem_dma_credit_available_ &&
+                                golemDmaBundleKey(ingress.requestId, ingress.dmaConsumer) ==
+                                    golem_dma_bundle_key_) {
+                                chosen = idx;
+                                break;
+                            }
+                        }
+                        if (chosen == golem_dma_ingress_queue_.size()) {
+                            golem_dma_bundle_active_ = false;
+                            golem_dma_bundle_admitted_ = 0;
+                        }
+                    }
+
+                    if (chosen == golem_dma_ingress_queue_.size()) {
+                        uint16_t bestWorkerDistance = std::numeric_limits<uint16_t>::max();
+                        for (size_t idx = 0; idx < golem_dma_ingress_queue_.size(); ++idx) {
+                            const auto& ingress = golem_dma_ingress_queue_[idx];
+                            if (ingress.creditUnits > golem_dma_credit_available_) continue;
+                            const uint8_t distance = golemDmaConsumerDistance(ingress.dmaConsumer);
+                            const uint16_t workerDistance = ingress.dmaConsumer.valid != 0
+                                ? static_cast<uint16_t>(static_cast<uint8_t>(
+                                      ingress.dmaConsumer.worker - golem_dma_worker_cursor_))
+                                : std::numeric_limits<uint8_t>::max();
+                            if (chosen == golem_dma_ingress_queue_.size() ||
+                                std::make_tuple(distance, workerDistance,
+                                                ingress.dmaConsumer.targetQueryBlock,
+                                                ingress.dmaConsumer.targetTile,
+                                                ingress.arrivalCycle, ingress.requestId) <
+                                    std::make_tuple(
+                                        golemDmaConsumerDistance(
+                                            golem_dma_ingress_queue_[chosen].dmaConsumer),
+                                        bestWorkerDistance,
+                                        golem_dma_ingress_queue_[chosen].dmaConsumer.targetQueryBlock,
+                                        golem_dma_ingress_queue_[chosen].dmaConsumer.targetTile,
+                                        golem_dma_ingress_queue_[chosen].arrivalCycle,
+                                        golem_dma_ingress_queue_[chosen].requestId)) {
+                                chosen = idx;
+                                bestWorkerDistance = workerDistance;
+                            }
+                        }
+                        if (chosen != golem_dma_ingress_queue_.size()) {
+                            const auto& ingress = golem_dma_ingress_queue_[chosen];
+                            golem_dma_bundle_active_ = true;
+                            golem_dma_bundle_key_ = golemDmaBundleKey(
+                                ingress.requestId, ingress.dmaConsumer);
+                            golem_dma_bundle_admitted_ = 0;
+                            golem_dma_bundle_turns_++;
+                        }
+                    }
+
+                    if (chosen == golem_dma_ingress_queue_.size()) {
+                        for (auto& ingress : golem_dma_ingress_queue_) {
+                            if (ingress.creditUnits > golem_dma_credit_available_ &&
+                                !ingress.creditBlocked) {
+                                ingress.creditBlocked = true;
+                                golem_dma_credit_blocked_requests_++;
+                            }
+                        }
+                        break;
+                    }
+
+                    GolemDmaIngressRequest ingress = std::move(
+                        golem_dma_ingress_queue_[chosen]);
+                    golem_dma_ingress_queue_.erase(
+                        golem_dma_ingress_queue_.begin() +
+                        static_cast<std::ptrdiff_t>(chosen));
+                    const uint8_t distance = golemDmaConsumerDistance(ingress.dmaConsumer);
+                    const uint64_t waitCycles = currentCycle - ingress.arrivalCycle;
+                    golem_dma_consumer_distance_wait_cycles_[distance] += waitCycles;
+                    golem_dma_consumer_distance_admissions_[distance]++;
+                    if (ingress.creditBlocked) {
+                        golem_dma_credit_blocked_cycles_ += waitCycles;
+                    }
+                    if (starvationFallback) golem_dma_tile_starvation_++;
+                    golem_dma_credit_available_ -= ingress.creditUnits;
+                    golem_dma_credit_admitted_requests_++;
+                    golem_dma_credit_max_used_ = std::max<uint32_t>(
+                        golem_dma_credit_max_used_,
+                        golem_dma_credit_cap_ - golem_dma_credit_available_);
+                    golem_dma_bundle_admitted_++;
+                    golem_dma_bundle_admissions_++;
+                    if (golem_dma_bundle_admitted_ >= golem_dma_tile_chunk_quantum_ ||
+                        starvationFallback) {
+                        if (ingress.dmaConsumer.valid != 0) {
+                            golem_dma_worker_cursor_ = static_cast<uint8_t>(
+                                ingress.dmaConsumer.worker + 1u);
+                        }
+                        golem_dma_bundle_active_ = false;
+                        golem_dma_bundle_admitted_ = 0;
+                    }
+                    admitted.push_back(createGolemDmaRead(ingress));
+                }
+                return admitted;
+            }
+            if (golem_dma_window_priority_enable_ != 0) {
+                while (!golem_dma_ingress_queue_.empty() &&
+                       (golem_dma_admission_limit_ == 0 ||
+                        admitted.size() < golem_dma_admission_limit_)) {
+                    uint32_t oldestWindow = std::numeric_limits<uint32_t>::max();
+                    uint64_t firstArrival = std::numeric_limits<uint64_t>::max();
+                    for (const auto& ingress : golem_dma_ingress_queue_) {
+                        const uint32_t window = golemDmaWindowId(ingress.requestId);
+                        if (window < oldestWindow) {
+                            oldestWindow = window;
+                            firstArrival = ingress.arrivalCycle;
+                        } else if (window == oldestWindow) {
+                            firstArrival = std::min(firstArrival, ingress.arrivalCycle);
+                        }
+                    }
+
+                    // The bounded collection interval lets a late worker's window N
+                    // overtake already queued window N+1 requests.
+                    if (currentCycle <= firstArrival + golem_dma_window_reorder_cycles_) {
+                        break;
+                    }
+
+                    size_t chosen = golem_dma_ingress_queue_.size();
+                    if (golem_dma_bundle_active_ && golem_dma_bundle_window_ != oldestWindow) {
+                        golem_dma_bundle_active_ = false;
+                        golem_dma_bundle_admitted_ = 0;
+                    }
+
+                    if (golem_dma_bundle_active_) {
+                        bool matchingQueued = false;
+                        for (size_t idx = 0; idx < golem_dma_ingress_queue_.size(); ++idx) {
+                            const auto& ingress = golem_dma_ingress_queue_[idx];
+                            if (golemDmaWindowId(ingress.requestId) != golem_dma_bundle_window_ ||
+                                golemDmaWorkerId(ingress.requestId) != golem_dma_bundle_worker_ ||
+                                golemDmaTileIndex(ingress.requestId) != golem_dma_bundle_tile_) {
+                                continue;
+                            }
+                            matchingQueued = true;
+                            if (ingress.creditUnits > golem_dma_credit_available_) {
+                                continue;
+                            }
+                            if (chosen == golem_dma_ingress_queue_.size()) {
+                                chosen = idx;
+                                continue;
+                            }
+                            const auto& incumbent = golem_dma_ingress_queue_[chosen];
+                            if (std::make_tuple(golemDmaRequestSlot(ingress.requestId), ingress.addr,
+                                                ingress.arrivalCycle, ingress.requestId)
+                                < std::make_tuple(golemDmaRequestSlot(incumbent.requestId), incumbent.addr,
+                                                  incumbent.arrivalCycle, incumbent.requestId)) {
+                                chosen = idx;
+                            }
+                        }
+                        if (chosen == golem_dma_ingress_queue_.size() && !matchingQueued) {
+                            golem_dma_worker_cursor_ = static_cast<uint8_t>(golem_dma_bundle_worker_ + 1u);
+                            golem_dma_bundle_active_ = false;
+                            golem_dma_bundle_admitted_ = 0;
+                            continue;
+                        }
+                    } else {
+                        uint16_t bestDistance = std::numeric_limits<uint16_t>::max();
+                        for (size_t idx = 0; idx < golem_dma_ingress_queue_.size(); ++idx) {
+                            const auto& ingress = golem_dma_ingress_queue_[idx];
+                            if (golemDmaWindowId(ingress.requestId) != oldestWindow ||
+                                ingress.creditUnits > golem_dma_credit_available_) {
+                                continue;
+                            }
+                            const uint8_t worker = golemDmaWorkerId(ingress.requestId);
+                            const uint16_t distance = static_cast<uint8_t>(worker - golem_dma_worker_cursor_);
+                            if (chosen == golem_dma_ingress_queue_.size() || distance < bestDistance) {
+                                chosen = idx;
+                                bestDistance = distance;
+                                continue;
+                            }
+                            if (distance == bestDistance) {
+                                const auto& incumbent = golem_dma_ingress_queue_[chosen];
+                                if (std::make_tuple(golemDmaTileIndex(ingress.requestId),
+                                                    golemDmaRequestSlot(ingress.requestId),
+                                                    ingress.arrivalCycle, ingress.addr, ingress.requestId)
+                                    < std::make_tuple(golemDmaTileIndex(incumbent.requestId),
+                                                      golemDmaRequestSlot(incumbent.requestId),
+                                                      incumbent.arrivalCycle, incumbent.addr,
+                                                      incumbent.requestId)) {
+                                    chosen = idx;
+                                }
+                            }
+                        }
+                        if (chosen != golem_dma_ingress_queue_.size()) {
+                            const auto& ingress = golem_dma_ingress_queue_[chosen];
+                            golem_dma_bundle_active_ = true;
+                            golem_dma_bundle_window_ = golemDmaWindowId(ingress.requestId);
+                            golem_dma_bundle_worker_ = golemDmaWorkerId(ingress.requestId);
+                            golem_dma_bundle_tile_ = golemDmaTileIndex(ingress.requestId);
+                            golem_dma_bundle_admitted_ = 0;
+                            golem_dma_bundle_turns_++;
+                        }
+                    }
+
+                    if (chosen == golem_dma_ingress_queue_.size()) {
+                        for (auto& ingress : golem_dma_ingress_queue_) {
+                            if (golemDmaWindowId(ingress.requestId) == oldestWindow &&
+                                ingress.creditUnits > golem_dma_credit_available_ &&
+                                !ingress.creditBlocked) {
+                                ingress.creditBlocked = true;
+                                golem_dma_credit_blocked_requests_++;
+                            }
+                        }
+                        break;
+                    }
+
+                    GolemDmaIngressRequest ingress = std::move(golem_dma_ingress_queue_[chosen]);
+                    if (chosen != 0) {
+                        golem_dma_window_priority_reorders_++;
+                    }
+                    golem_dma_ingress_queue_.erase(
+                        golem_dma_ingress_queue_.begin() + static_cast<std::ptrdiff_t>(chosen));
+                    golem_dma_credit_available_ -= ingress.creditUnits;
+                    golem_dma_credit_admitted_requests_++;
+                    golem_dma_credit_max_used_ = std::max<uint32_t>(
+                        golem_dma_credit_max_used_, golem_dma_credit_cap_ - golem_dma_credit_available_);
+                    golem_dma_bundle_admitted_++;
+                    golem_dma_bundle_admissions_++;
+                    if (golem_dma_bundle_admitted_ >= golem_dma_tile_chunk_quantum_) {
+                        golem_dma_worker_cursor_ = static_cast<uint8_t>(golem_dma_bundle_worker_ + 1u);
+                        golem_dma_bundle_active_ = false;
+                        golem_dma_bundle_admitted_ = 0;
+                    }
+                    admitted.push_back(createGolemDmaRead(ingress));
+                }
+                return admitted;
+            }
+
+            std::sort(golem_dma_ingress_queue_.begin(), golem_dma_ingress_queue_.end(),
+                [](const GolemDmaIngressRequest& lhs, const GolemDmaIngressRequest& rhs) {
+                    return std::tie(lhs.arrivalCycle, lhs.requestId, lhs.sourceEndpoint, lhs.addr,
+                                    lhs.returnEndpoint, lhs.returnAddr, lhs.completionFlagAddr,
+                                    lhs.completionValue)
+                         < std::tie(rhs.arrivalCycle, rhs.requestId, rhs.sourceEndpoint, rhs.addr,
+                                    rhs.returnEndpoint, rhs.returnAddr, rhs.completionFlagAddr,
+                                    rhs.completionValue);
+                });
+
+            std::vector<GolemDmaIngressRequest> waiting;
+            waiting.reserve(golem_dma_ingress_queue_.size());
+            for (auto& ingress : golem_dma_ingress_queue_) {
+                if (golem_dma_admission_limit_ != 0 && admitted.size() >= golem_dma_admission_limit_) {
+                    waiting.push_back(std::move(ingress));
+                    continue;
+                }
+                // Defer one owner clock so every request delivered in the same
+                // cycle participates in the deterministic ordering above.
+                if (ingress.arrivalCycle >= currentCycle) {
+                    waiting.push_back(std::move(ingress));
+                    continue;
+                }
+                if (ingress.creditUnits > golem_dma_credit_available_) {
+                    if (!ingress.creditBlocked) {
+                        ingress.creditBlocked = true;
+                        golem_dma_credit_blocked_requests_++;
+                    }
+                    waiting.push_back(std::move(ingress));
+                    continue;
+                }
+                golem_dma_credit_available_ -= ingress.creditUnits;
+                golem_dma_credit_admitted_requests_++;
+                golem_dma_credit_max_used_ = std::max<uint32_t>(
+                    golem_dma_credit_max_used_, golem_dma_credit_cap_ - golem_dma_credit_available_);
+                admitted.push_back(createGolemDmaRead(ingress));
+            }
+            golem_dma_ingress_queue_.swap(waiting);
+            return admitted;
+        }
+
+        void emitGolemDmaCreditSummary() const {
+            if (golem_dma_credit_cap_ == 0) {
+                return;
+            }
+            fprintf(stdout,
+                    "[memNICBase bridge] CREDIT_OWNER_SUMMARY name=%s group=%u cap=%u available=%u"
+                    " chunk_bytes=%u admitted=%" PRIu64 " released=%" PRIu64
+                    " blocked_requests=%" PRIu64 " max_used=%u max_queue=%zu pending=%zu"
+                    " window_priority=%u reorder_cycles=%u priority_reorders=%" PRIu64
+                    " tile_quantum=%u bundle_turns=%" PRIu64 " bundle_admissions=%" PRIu64
+                    " response_tile_priority=%u response_reorder_cycles=%u response_quantum=%u"
+                    " response_reorders=%" PRIu64 " response_bundle_turns=%" PRIu64
+                    " response_sent=%" PRIu64 " response_max_queue=%zu"
+                    " response_hold_mean=%" PRIu64 " response_hold_max=%" PRIu64 "\n",
+                    getName().c_str(), info.id, golem_dma_credit_cap_, golem_dma_credit_available_,
+                    golem_dma_credit_chunk_bytes_, golem_dma_credit_admitted_requests_,
+                    golem_dma_credit_released_requests_, golem_dma_credit_blocked_requests_,
+                    golem_dma_credit_max_used_, golem_dma_credit_max_queue_,
+                    golem_dma_ingress_queue_.size(), golem_dma_window_priority_enable_,
+                    golem_dma_window_reorder_cycles_, golem_dma_window_priority_reorders_,
+                    golem_dma_tile_chunk_quantum_, golem_dma_bundle_turns_,
+                    golem_dma_bundle_admissions_,
+                    golem_dma_response_tile_priority_enable_,
+                    golem_dma_response_reorder_cycles_, golem_dma_tile_chunk_quantum_,
+                    golem_dma_response_reorders_, golem_dma_response_bundle_turns_,
+                    golem_dma_response_sent_, golem_dma_response_max_queue_,
+                    golem_dma_response_sent_ == 0 ? 0 :
+                        golem_dma_response_hold_cycles_sum_ / golem_dma_response_sent_,
+                    golem_dma_response_hold_cycles_max_);
+        }
+
         // Drain a send queue
         static uint8_t golemDmaResponsePriority(SST::Interfaces::SimpleNetwork::Request* req) {
             auto* nd = dynamic_cast<SST::Golem::NetworkDataEvent*>(req->inspectPayload());
@@ -547,20 +1137,6 @@ class MemNICBase : public MemLinkBase {
                 size_t selectedOffset = 0;
                 const size_t selectedQueueSize = queue->size();
                 SST::Interfaces::SimpleNetwork::Request* head = queue->front();
-                if (golem_dma_response_priority_enable && queue == &golem_dma_send_queue_) {
-                    uint8_t bestPriority = golemDmaResponsePriority(head);
-                    for (size_t offset = 0; offset < selectedQueueSize; ++offset) {
-                        auto* candidate = queue->front();
-                        const uint8_t candidatePriority = golemDmaResponsePriority(candidate);
-                        if (candidatePriority < bestPriority) {
-                            head = candidate;
-                            bestPriority = candidatePriority;
-                            selectedOffset = offset;
-                        }
-                        queue->pop();
-                        queue->push(candidate);
-                    }
-                }
 #ifdef __SST_DEBUG_OUTPUT__
                 MemEventBase* ev = (static_cast<MemRtrEvent*>(head->inspectPayload()))->inspectEvent();
                 std::string debugEvStr = ev ? ev->getBriefString() : "";
@@ -624,9 +1200,198 @@ class MemNICBase : public MemLinkBase {
             }
         }
 
-        MemRtrEvent* doRecv(SST::Interfaces::SimpleNetwork* linkcontrol) {
-            drainQueue(&golem_dma_send_queue_, linkcontrol, golem_dma_response_drain_limit);
-            SST::Interfaces::SimpleNetwork::Request* req = linkcontrol->recv(0);
+        void drainGolemDmaResponseQueue(SST::Interfaces::SimpleNetwork* linkcontrol, size_t maxSends = 0) {
+            size_t sends = 0;
+            while (!golem_dma_send_queue_.empty() && (maxSends == 0 || sends < maxSends)) {
+                size_t chosen = golem_dma_send_queue_.size();
+                const uint64_t currentCycle = golemDmaResponseNowCycle();
+                bool starvationFallback = false;
+
+                auto eligible = [&](const GolemDmaResponseRequest& item) {
+                    return golem_dma_response_tile_priority_enable_ == 0 ||
+                           currentCycle >= item.readyCycle + golem_dma_response_reorder_cycles_;
+                };
+
+                if (golem_dma_response_tile_priority_enable_ != 0 &&
+                    golem_dma_response_max_starvation_cycles_ != 0) {
+                    for (size_t idx = 0; idx < golem_dma_send_queue_.size(); ++idx) {
+                        const auto& item = golem_dma_send_queue_[idx];
+                        if (currentCycle < item.readyCycle +
+                                golem_dma_response_max_starvation_cycles_) {
+                            continue;
+                        }
+                        if (chosen == golem_dma_send_queue_.size() ||
+                            std::tie(item.readyCycle, item.requestId) <
+                                std::tie(golem_dma_send_queue_[chosen].readyCycle,
+                                         golem_dma_send_queue_[chosen].requestId)) {
+                            chosen = idx;
+                        }
+                    }
+                    starvationFallback = chosen != golem_dma_send_queue_.size();
+                }
+
+                if (!starvationFallback && golem_dma_response_tile_priority_enable_ != 0 &&
+                    golem_dma_response_bundle_active_) {
+                    for (size_t idx = 0; idx < golem_dma_send_queue_.size(); ++idx) {
+                        const auto& item = golem_dma_send_queue_[idx];
+                        if (eligible(item) &&
+                            golemDmaBundleKey(item.requestId, item.dmaConsumer) ==
+                                golem_dma_response_bundle_key_) {
+                            chosen = idx;
+                            break;
+                        }
+                    }
+                    if (chosen == golem_dma_send_queue_.size()) {
+                        golem_dma_response_bundle_active_ = false;
+                        golem_dma_response_bundle_sent_ = 0;
+                    }
+                }
+
+                if (chosen == golem_dma_send_queue_.size()) {
+                    for (size_t idx = 0; idx < golem_dma_send_queue_.size(); ++idx) {
+                        const auto& item = golem_dma_send_queue_[idx];
+                        if (!eligible(item)) {
+                            continue;
+                        }
+                        if (golem_dma_response_tile_priority_enable_ == 0) {
+                            if (chosen == golem_dma_send_queue_.size() ||
+                                (golem_dma_response_priority_enable &&
+                                 golemDmaResponsePriority(item.request) <
+                                     golemDmaResponsePriority(
+                                         golem_dma_send_queue_[chosen].request))) {
+                                chosen = idx;
+                            }
+                            if (!golem_dma_response_priority_enable) {
+                                break;
+                            }
+                            continue;
+                        }
+                        if (chosen == golem_dma_send_queue_.size()) {
+                            chosen = idx;
+                            continue;
+                        }
+                        const auto& incumbent = golem_dma_send_queue_[chosen];
+                        const auto itemKey = golemDmaBundleKey(
+                            item.requestId, item.dmaConsumer);
+                        const auto incumbentKey = golemDmaBundleKey(
+                            incumbent.requestId, incumbent.dmaConsumer);
+                        const uint32_t itemPending = golem_dma_response_pending_by_bundle_[itemKey];
+                        const uint32_t incumbentPending = golem_dma_response_pending_by_bundle_[incumbentKey];
+                        const uint16_t itemDistance = static_cast<uint8_t>(
+                            (item.dmaConsumer.valid != 0 ? item.dmaConsumer.worker :
+                             golemDmaWorkerId(item.requestId)) -
+                            golem_dma_response_worker_cursor_);
+                        const uint16_t incumbentDistance = static_cast<uint8_t>(
+                            (incumbent.dmaConsumer.valid != 0 ? incumbent.dmaConsumer.worker :
+                             golemDmaWorkerId(incumbent.requestId)) -
+                            golem_dma_response_worker_cursor_);
+                        if (std::make_tuple(golemDmaConsumerDistance(item.dmaConsumer),
+                                            itemPending,
+                                            itemDistance, golemDmaRequestSlot(item.requestId),
+                                            item.returnAddr, item.readyCycle)
+                            < std::make_tuple(golemDmaConsumerDistance(incumbent.dmaConsumer),
+                                              incumbentPending,
+                                              incumbentDistance, golemDmaRequestSlot(incumbent.requestId),
+                                              incumbent.returnAddr, incumbent.readyCycle)) {
+                            chosen = idx;
+                        }
+                    }
+                    if (chosen == golem_dma_send_queue_.size()) {
+                        break;
+                    }
+                    if (golem_dma_response_tile_priority_enable_ != 0) {
+                        golem_dma_response_bundle_active_ = true;
+                        golem_dma_response_bundle_key_ = golemDmaBundleKey(
+                            golem_dma_send_queue_[chosen].requestId,
+                            golem_dma_send_queue_[chosen].dmaConsumer);
+                        golem_dma_response_bundle_sent_ = 0;
+                        golem_dma_response_bundle_turns_++;
+                    }
+                }
+
+                auto& item = golem_dma_send_queue_[chosen];
+                auto* head = item.request;
+                const uint64_t requestId = item.requestId;
+                const uint64_t returnAddr = item.returnAddr;
+                const size_t responseLength = item.length;
+                const uint64_t readyCycle = item.readyCycle;
+                const auto dmaRequestKind = item.dmaRequestKind;
+                const int traceId = head->getTraceID();
+                const unsigned responseVn = static_cast<unsigned>(head->vn);
+                const uint8_t sentWorker = golemDmaWorkerId(requestId);
+                const uint32_t metadataWorker = item.dmaConsumer.worker;
+                const bool hasConsumerMetadata = item.dmaConsumer.valid != 0;
+                const uint8_t consumerDistance = golemDmaConsumerDistance(item.dmaConsumer);
+                const uint32_t responseCreditUnits = item.creditUnits;
+                const int vn = static_cast<int>(head->vn);
+                auto enqueueIt = golem_dma_read_response_enqueue_ticks_.find(head);
+                if (!linkcontrol->spaceToSend(vn, head->size_in_bits) || !linkcontrol->send(head, vn)) {
+                    break;
+                }
+                if (chosen != 0) {
+                    golem_dma_response_reorders_++;
+                    if (golem_dma_response_priority_enable &&
+                        golem_dma_response_tile_priority_enable_ == 0) {
+                        golem_dma_response_priority_reorders_++;
+                    }
+                }
+                const uint64_t holdCycles = currentCycle - readyCycle;
+                golem_dma_response_hold_cycles_sum_ += holdCycles;
+                golem_dma_response_hold_cycles_max_ = std::max(
+                    golem_dma_response_hold_cycles_max_, holdCycles);
+                if (enqueueIt != golem_dma_read_response_enqueue_ticks_.end()) {
+                    golem_dma_response_distance_wait_cycles_[consumerDistance] +=
+                        readyCycle >= item.ingressCycle ? readyCycle - item.ingressCycle : 0;
+                    golem_dma_response_distance_queue_wait_cycles_[consumerDistance] += holdCycles;
+                    golem_dma_response_distance_responses_[consumerDistance]++;
+                    const uint64_t waitTicks = getCurrentSimCycle() - enqueueIt->second;
+                    golem_dma_read_response_queue_wait_ticks_ += waitTicks;
+                    golem_dma_read_response_queue_wait_max_ticks_ = std::max(
+                        golem_dma_read_response_queue_wait_max_ticks_, waitTicks);
+                    golem_dma_read_response_drained_++;
+                    golem_dma_read_response_enqueue_ticks_.erase(enqueueIt);
+                }
+                if (golem_dma_trace && requestId != 0) {
+                    fprintf(stderr, "[memNICBase bridge] TRACE_REQ_RESP_CHUNK_SEND cycle=%" PRIu64
+                                    " req=%" PRIu64 " trace_id=%d addr=0x%" PRIx64
+                                    " len=%zu kind=%u queued=1 vn=%u\n",
+                            currentCycle, requestId, traceId, returnAddr, responseLength,
+                            static_cast<unsigned>(dmaRequestKind), responseVn);
+                }
+                golem_dma_send_queue_.erase(
+                    golem_dma_send_queue_.begin() + static_cast<std::ptrdiff_t>(chosen));
+                golem_dma_response_sent_++;
+                releaseGolemDmaCredits(responseCreditUnits, requestId);
+                if (starvationFallback) golem_dma_tile_starvation_++;
+                sends++;
+
+                if (golem_dma_response_tile_priority_enable_ != 0) {
+                    golem_dma_response_bundle_sent_++;
+                    if (golem_dma_response_bundle_sent_ >= golem_dma_tile_chunk_quantum_) {
+                        golem_dma_response_worker_cursor_ = static_cast<uint8_t>(
+                            (hasConsumerMetadata ? metadataWorker : sentWorker) + 1u);
+                        golem_dma_response_bundle_active_ = false;
+                        golem_dma_response_bundle_sent_ = 0;
+                    }
+                }
+            }
+        }
+
+        MemRtrEvent* doRecv(SST::Interfaces::SimpleNetwork* linkcontrol, int preferredVn = -1) {
+            drainGolemDmaResponseQueue(linkcontrol, golem_dma_response_drain_limit);
+            SST::Interfaces::SimpleNetwork::Request* req = nullptr;
+            const uint32_t startVn = preferredVn >= 0 &&
+                                             static_cast<uint32_t>(preferredVn) < golem_network_num_vns_
+                                         ? static_cast<uint32_t>(preferredVn)
+                                         : golem_recv_vn_cursor_;
+            for (uint32_t offset = 0; offset < golem_network_num_vns_; ++offset) {
+                const uint32_t vn = (startVn + offset) % golem_network_num_vns_;
+                req = linkcontrol->recv(static_cast<int>(vn));
+                if (req != nullptr) {
+                    golem_recv_vn_cursor_ = (vn + 1) % golem_network_num_vns_;
+                    break;
+                }
+            }
             if (req != nullptr) {
                 Event* payload = req->takePayload();
 
@@ -652,19 +1417,40 @@ class MemNICBase : public MemLinkBase {
                                 getCurrentSimCycle(), req->src, srcName.c_str(), addr, size,
                                 nd->getReturnEndpoint(), nd->getReturnAddr(), nd->getRequestId());
                         }
-                        me = new MemEvent(srcName, addr, addr, Command::GetS, size);
-                        me->setFlag(MemEventBase::F_NONCACHEABLE);
-                        GolemDmaBridgeInfo info;
-                        info.returnAddr = nd->getReturnAddr();
-                        info.returnEndpoint = nd->getReturnEndpoint();
-                        info.completionFlagAddr = nd->getCompletionFlagAddr();
-                        info.completionValue = nd->getCompletionValue();
-                        info.requestId = nd->getRequestId();
-                        info.size = size;
-                        info.isWrite = false;
-                        info.hostAddr = addr;
-                        info.dmaRequestKind = nd->getDmaRequestKind();
-                        golem_dma_pending.emplace(me->getID(), info);
+                        GolemDmaIngressRequest ingress;
+                        ingress.arrivalCycle = getCurrentSimCycle();
+                        ingress.sourceEndpoint = req->src;
+                        ingress.sourceName = srcName;
+                        ingress.addr = addr;
+                        ingress.size = size;
+                        ingress.returnAddr = nd->getReturnAddr();
+                        ingress.returnEndpoint = nd->getReturnEndpoint();
+                        ingress.completionFlagAddr = nd->getCompletionFlagAddr();
+                        ingress.completionValue = nd->getCompletionValue();
+                        ingress.requestId = nd->getRequestId();
+                        ingress.dmaRequestKind = nd->getDmaRequestKind();
+                        ingress.dmaConsumer = nd->getDmaConsumerMetadata();
+                        updateGolemDmaConsumerProgress(ingress.dmaConsumer);
+                        if (golem_dma_credit_cap_ != 0 ||
+                            golem_dma_window_priority_enable_ != 0) {
+                            ingress.creditUnits = golem_dma_credit_cap_ != 0
+                                ? golemDmaCreditUnits(size) : 0;
+                            if (ingress.creditUnits > golem_dma_credit_cap_) {
+                                dbg.fatal(CALL_INFO, -1,
+                                          "%s Golem DMA request req=%" PRIu64 " needs %u credits, cap is %u.\n",
+                                          getName().c_str(), ingress.requestId, ingress.creditUnits,
+                                          golem_dma_credit_cap_);
+                            }
+                            golem_dma_ingress_queue_.push_back(std::move(ingress));
+                            golem_dma_credit_max_queue_ = std::max(
+                                golem_dma_credit_max_queue_, golem_dma_ingress_queue_.size());
+                        } else {
+                            me = createGolemDmaRead(ingress);
+                        }
+                    } else if (nd->getType() ==
+                               SST::Golem::NetworkDataEvent::DMA_CONSUMER_PROGRESS) {
+                        updateGolemDmaConsumerProgress(nd->getDmaConsumerMetadata());
+                        golem_dma_consumer_progress_messages_++;
                     } else if (nd->getType() == SST::Golem::NetworkDataEvent::DMA_WRITE) {
                         std::vector<uint8_t> data = nd->getData();
                         me = new MemEvent(srcName, addr, addr, Command::Write, data);
@@ -718,20 +1504,8 @@ class MemNICBase : public MemLinkBase {
             return nullptr;
         }
 
-        struct GolemDmaBridgeInfo {
-            uint64_t returnAddr = 0;
-            int returnEndpoint = -1;
-            uint64_t completionFlagAddr = 0;
-            uint64_t completionValue = 0;
-            uint64_t requestId = 0;
-            uint32_t size = 0;
-            bool isWrite = false;
-            uint64_t hostAddr = 0;
-            SST::Golem::DmaRequestKind dmaRequestKind = SST::Golem::DmaRequestKind::Unknown;
-        };
-
         std::map<SST::Event::id_type, GolemDmaBridgeInfo> golem_dma_pending;
-        std::queue<SST::Interfaces::SimpleNetwork::Request*> golem_dma_send_queue_;
+        std::deque<GolemDmaResponseRequest> golem_dma_send_queue_;
         std::unordered_map<SST::Interfaces::SimpleNetwork::Request*, uint64_t>
             golem_dma_read_response_enqueue_ticks_;
         uint64_t golem_dma_read_response_attempted_ = 0;
@@ -756,7 +1530,15 @@ class MemNICBase : public MemLinkBase {
             auto it = golem_dma_pending.find(ev->getResponseToID());
             if (it == golem_dma_pending.end()) return false;
 
-            const GolemDmaBridgeInfo& info = it->second;
+            const GolemDmaBridgeInfo info = it->second;
+            if (!info.isWrite && info.requestId != 0) {
+                const auto bundleKey = golemDmaBundleKey(
+                    info.requestId, info.dmaConsumer);
+                auto pendingIt = golem_dma_response_pending_by_bundle_.find(bundleKey);
+                if (pendingIt != golem_dma_response_pending_by_bundle_.end() && pendingIt->second != 0) {
+                    pendingIt->second--;
+                }
+            }
 
             const uint64_t dest = info.returnEndpoint >= 0 ? static_cast<uint64_t>(info.returnEndpoint) : lookupNetworkAddress(ev->getDst());
 
@@ -767,6 +1549,17 @@ class MemNICBase : public MemLinkBase {
                     linkcontrol->spaceToSend(vn, req->size_in_bits) &&
                     linkcontrol->send(req, vn)) {
                     if (!info.isWrite) golem_dma_read_response_immediate_++;
+                    if (!info.isWrite) {
+                        const uint64_t readyCycle = golemDmaResponseNowCycle();
+                        const uint8_t distance = golemDmaConsumerDistance(info.dmaConsumer);
+                        golem_dma_response_distance_wait_cycles_[distance] +=
+                            readyCycle >= info.ingressCycle ? readyCycle - info.ingressCycle : 0;
+                        golem_dma_response_distance_responses_[distance]++;
+                        if (info.dmaConsumer.valid != 0 && distance == 0) {
+                            golem_dma_response_late_ready_++;
+                        }
+                    }
+                    releaseGolemDmaCredits(info.creditUnits, info.requestId);
                     if (golem_dma_trace && info.requestId != 0) {
                         fprintf(stderr, "[memNICBase bridge] TRACE_REQ_RESP_CHUNK_SEND cycle=%" PRIu64
                                         " req=%" PRIu64 " trace_id=%d addr=0x%" PRIx64
@@ -777,7 +1570,28 @@ class MemNICBase : public MemLinkBase {
                     return false;
                 } else {
                     dbg.debug(_L2_, "%s failed to send bridged DMA response (buffer full), queueing retry.\n", getName().c_str());
-                    golem_dma_send_queue_.push(req);
+                    auto* response = dynamic_cast<SST::Golem::NetworkDataEvent*>(req->inspectPayload());
+                    GolemDmaResponseRequest queued;
+                    queued.request = req;
+                    queued.readyCycle = golemDmaResponseNowCycle();
+                    queued.requestId = response != nullptr ? response->getRequestId() : 0;
+                    queued.returnAddr = response != nullptr ? response->getAddr() : 0;
+                    queued.length = response != nullptr ? response->getLength() : 0;
+                    queued.ingressCycle = info.ingressCycle;
+                    queued.creditUnits = info.creditUnits;
+                    queued.dmaRequestKind = response != nullptr
+                        ? response->getDmaRequestKind()
+                        : SST::Golem::DmaRequestKind::Unknown;
+                    queued.dmaConsumer = response != nullptr
+                        ? response->getDmaConsumerMetadata()
+                        : SST::Golem::DmaConsumerMetadata();
+                    if (queued.dmaConsumer.valid != 0 &&
+                        golemDmaConsumerDistance(queued.dmaConsumer) == 0) {
+                        golem_dma_response_late_ready_++;
+                    }
+                    golem_dma_send_queue_.push_back(queued);
+                    golem_dma_response_max_queue_ = std::max(
+                        golem_dma_response_max_queue_, golem_dma_send_queue_.size());
                     if (!info.isWrite) {
                         golem_dma_read_response_enqueued_++;
                         golem_dma_read_response_enqueue_ticks_[req] =
@@ -801,7 +1615,7 @@ class MemNICBase : public MemLinkBase {
                 auto* req = new SST::Interfaces::SimpleNetwork::Request();
                 req->src = this->info.addr;
                 req->dest = dest;
-                req->vn = golem_dma_response_vn;
+                req->vn = golem_dma_write_response_vn;
                 auto* respEv = new SST::Golem::NetworkDataEvent(
                     SST::Golem::NetworkDataEvent::DMA_WRITE_COMPLETE,
                     info.hostAddr,
@@ -838,7 +1652,7 @@ class MemNICBase : public MemLinkBase {
                     info.returnEndpoint,
                     info.completionFlagAddr,
                     info.completionValue,
-                    info.requestId, info.dmaRequestKind);
+                    info.requestId, info.dmaRequestKind, info.dmaConsumer);
                 req->size_in_bits = (sizeof(info.returnAddr) + sizeof(size_t) + data.size()) * 8;
                 req->givePayload(respEv);
                 if (golem_dma_trace && info.requestId != 0) {
@@ -868,7 +1682,18 @@ class MemNICBase : public MemLinkBase {
                 " immediate=%" PRIu64 " enqueued=%" PRIu64
                 " drained=%" PRIu64 " high_water=%" PRIu64
                 " queue_wait_ticks=%" PRIu64 " queue_wait_max_ticks=%" PRIu64
-                " priority_reorders=%" PRIu64 " pending=%zu\n",
+                " priority_reorders=%" PRIu64 " pending=%zu"
+                " response_wait_d0=%" PRIu64 " response_wait_d1=%" PRIu64
+                " response_wait_d2=%" PRIu64 " response_wait_far=%" PRIu64
+                " queue_wait_d0=%" PRIu64 " queue_wait_d1=%" PRIu64
+                " queue_wait_d2=%" PRIu64 " queue_wait_far=%" PRIu64
+                " responses_d0=%" PRIu64 " responses_d1=%" PRIu64
+                " responses_d2=%" PRIu64 " responses_far=%" PRIu64
+                " admission_wait_d0=%" PRIu64 " admission_wait_d1=%" PRIu64
+                " admission_wait_d2=%" PRIu64 " admission_wait_far=%" PRIu64
+                " credit_blocked=%" PRIu64 " credit_blocked_cycles=%" PRIu64
+                " late_ready=%" PRIu64 " tile_starvation=%" PRIu64
+                " consumer_progress=%" PRIu64 "\n",
                 getName().c_str(), golem_dma_read_response_attempted_,
                 golem_dma_read_response_immediate_,
                 golem_dma_read_response_enqueued_,
@@ -877,7 +1702,27 @@ class MemNICBase : public MemLinkBase {
                 golem_dma_read_response_queue_wait_ticks_,
                 golem_dma_read_response_queue_wait_max_ticks_,
                 golem_dma_response_priority_reorders_,
-                golem_dma_read_response_enqueue_ticks_.size());
+                golem_dma_read_response_enqueue_ticks_.size(),
+                golem_dma_response_distance_wait_cycles_[0],
+                golem_dma_response_distance_wait_cycles_[1],
+                golem_dma_response_distance_wait_cycles_[2],
+                golem_dma_response_distance_wait_cycles_[3],
+                golem_dma_response_distance_queue_wait_cycles_[0],
+                golem_dma_response_distance_queue_wait_cycles_[1],
+                golem_dma_response_distance_queue_wait_cycles_[2],
+                golem_dma_response_distance_queue_wait_cycles_[3],
+                golem_dma_response_distance_responses_[0],
+                golem_dma_response_distance_responses_[1],
+                golem_dma_response_distance_responses_[2],
+                golem_dma_response_distance_responses_[3],
+                golem_dma_consumer_distance_wait_cycles_[0],
+                golem_dma_consumer_distance_wait_cycles_[1],
+                golem_dma_consumer_distance_wait_cycles_[2],
+                golem_dma_consumer_distance_wait_cycles_[3],
+                golem_dma_credit_blocked_requests_,
+                golem_dma_credit_blocked_cycles_,
+                golem_dma_response_late_ready_, golem_dma_tile_starvation_,
+                golem_dma_consumer_progress_messages_);
         }
 
         /*** Data Members ***/
@@ -899,10 +1744,64 @@ class MemNICBase : public MemLinkBase {
         // Other parameters
         std::unordered_set<uint32_t> sourceIDs, destIDs; // IDs which this endpoint cares about
         uint32_t range_check = true; // Enable overlapping range check
+        uint32_t golem_network_num_vns_ = 1;
+        uint32_t golem_recv_vn_cursor_ = 0;
         uint32_t golem_dma_response_vn = 0;
+        uint32_t golem_dma_write_response_vn = 0;
         uint32_t golem_dma_trace = 0;
         uint32_t golem_dma_response_priority_enable = 0;
         size_t golem_dma_response_drain_limit = 0;
+        uint32_t golem_dma_credit_cap_ = 0;
+        uint32_t golem_dma_credit_available_ = 0;
+        uint32_t golem_dma_credit_chunk_bytes_ = 16384;
+        size_t golem_dma_admission_limit_ = 0;
+        uint32_t golem_dma_credit_max_used_ = 0;
+        size_t golem_dma_credit_max_queue_ = 0;
+        uint64_t golem_dma_credit_admitted_requests_ = 0;
+        uint64_t golem_dma_credit_released_requests_ = 0;
+        uint64_t golem_dma_credit_blocked_requests_ = 0;
+        uint64_t golem_dma_credit_blocked_cycles_ = 0;
+        uint32_t golem_dma_window_priority_enable_ = 0;
+        uint32_t golem_dma_window_reorder_cycles_ = 512;
+        uint32_t golem_dma_tile_chunk_quantum_ = 1;
+        uint8_t golem_dma_worker_cursor_ = 0;
+        uint64_t golem_dma_window_priority_reorders_ = 0;
+        bool golem_dma_bundle_active_ = false;
+        uint32_t golem_dma_bundle_window_ = 0;
+        uint8_t golem_dma_bundle_worker_ = 0;
+        uint8_t golem_dma_bundle_tile_ = 0;
+        uint32_t golem_dma_bundle_admitted_ = 0;
+        uint64_t golem_dma_bundle_turns_ = 0;
+        uint64_t golem_dma_bundle_admissions_ = 0;
+        GolemDmaBundleKey golem_dma_bundle_key_;
+        uint32_t golem_dma_response_tile_priority_enable_ = 0;
+        uint32_t golem_dma_response_reorder_cycles_ = 0;
+        uint32_t golem_dma_response_max_starvation_cycles_ = 65536;
+        uint32_t golem_dma_admission_max_starvation_cycles_ = 4096;
+        SimTime_t golem_dma_clock_factor_ = 1;
+        uint8_t golem_dma_response_worker_cursor_ = 0;
+        bool golem_dma_response_bundle_active_ = false;
+        GolemDmaBundleKey golem_dma_response_bundle_key_;
+        uint32_t golem_dma_response_bundle_sent_ = 0;
+        size_t golem_dma_response_max_queue_ = 0;
+        uint64_t golem_dma_response_reorders_ = 0;
+        uint64_t golem_dma_response_bundle_turns_ = 0;
+        uint64_t golem_dma_response_sent_ = 0;
+        uint64_t golem_dma_response_hold_cycles_sum_ = 0;
+        uint64_t golem_dma_response_hold_cycles_max_ = 0;
+        std::array<uint64_t, 4> golem_dma_response_distance_wait_cycles_{};
+        std::array<uint64_t, 4> golem_dma_response_distance_queue_wait_cycles_{};
+        std::array<uint64_t, 4> golem_dma_response_distance_responses_{};
+        std::array<uint64_t, 4> golem_dma_consumer_distance_wait_cycles_{};
+        std::array<uint64_t, 4> golem_dma_consumer_distance_admissions_{};
+        uint64_t golem_dma_response_late_ready_ = 0;
+        uint64_t golem_dma_tile_starvation_ = 0;
+        uint64_t golem_dma_consumer_progress_messages_ = 0;
+        std::map<std::pair<uint64_t, uint32_t>, GolemDmaConsumerProgress>
+            golem_dma_consumer_progress_;
+        std::unordered_map<GolemDmaBundleKey, uint32_t, GolemDmaBundleKeyHash>
+            golem_dma_response_pending_by_bundle_;
+        std::vector<GolemDmaIngressRequest> golem_dma_ingress_queue_;
 
     private:
         static uint32_t envFlagDefault(const char* name, uint32_t defaultValue) {
@@ -943,29 +1842,57 @@ class MemNICBase : public MemLinkBase {
             // range_check current is off(0) or on(1) but is using a uint32_t to 
             // allow for future selection of different algorithms.
             range_check=params.find<uint32_t>("range_check", 1);
-            const uint32_t num_vns = params.find<uint32_t>("num_vns", 1);
+            golem_network_num_vns_=std::max<uint32_t>(params.find<uint32_t>("num_vns", 1), 1u);
             bool golem_dma_response_vn_found = false;
             golem_dma_response_vn = params.find<uint32_t>(
                 "golem_dma_response_vn", 0, golem_dma_response_vn_found);
             if (!golem_dma_response_vn_found) {
-                golem_dma_response_vn = num_vns >= 2 ? 1 : 0;
+                golem_dma_response_vn = golem_network_num_vns_ >= 2 ? 1 : 0;
             }
-            if (golem_dma_response_vn >= num_vns) {
+            if (golem_dma_response_vn >= golem_network_num_vns_) {
                 dbg.fatal(CALL_INFO, -1,
                         "%s invalid golem_dma_response_vn=%" PRIu32
                         "; value must be less than num_vns=%" PRIu32 ".\n",
-                        getName().c_str(), golem_dma_response_vn, num_vns);
+                        getName().c_str(), golem_dma_response_vn, golem_network_num_vns_);
             }
-            golem_dma_trace=params.find<uint32_t>("golem_dma_trace", envFlagDefault("GOLEM_DMA_TRACE", 0));
-            golem_dma_response_drain_limit=params.find<size_t>("golem_dma_response_drain_limit", 0);
             golem_dma_response_priority_enable=params.find<uint32_t>(
                 "golem_dma_response_priority_enable",
                 envFlagDefault("GOLEM_DMA_RESPONSE_PRIORITY_ENABLE", 0));
+            golem_dma_write_response_vn=params.find<uint32_t>(
+                "golem_dma_write_response_vn", golem_network_num_vns_ >= 3 ? 2u : 0u);
+            if (golem_dma_write_response_vn >= golem_network_num_vns_) {
+                dbg.fatal(CALL_INFO, -1,
+                          "%s, Error: golem_dma_write_response_vn=%u must be smaller than num_vns=%u.\n",
+                          getName().c_str(), golem_dma_write_response_vn, golem_network_num_vns_);
+            }
+            golem_dma_trace=params.find<uint32_t>("golem_dma_trace", envFlagDefault("GOLEM_DMA_TRACE", 0));
+            golem_dma_response_drain_limit=params.find<size_t>("golem_dma_response_drain_limit", 0);
+            golem_dma_credit_cap_=params.find<uint32_t>("golem_dma_credit_cap", 0);
+            golem_dma_credit_available_=golem_dma_credit_cap_;
+            golem_dma_credit_chunk_bytes_=params.find<uint32_t>("golem_dma_credit_chunk_bytes", 16384);
+            golem_dma_admission_limit_=params.find<size_t>("golem_dma_admission_limit", 0);
+            golem_dma_window_priority_enable_=params.find<uint32_t>("golem_dma_window_priority_enable", 0);
+            golem_dma_window_reorder_cycles_=params.find<uint32_t>("golem_dma_window_reorder_cycles", 512);
+            golem_dma_tile_chunk_quantum_=std::max<uint32_t>(
+                params.find<uint32_t>("golem_dma_tile_chunk_quantum", 1), 1u);
+            golem_dma_response_tile_priority_enable_=params.find<uint32_t>(
+                "golem_dma_response_tile_priority_enable", 0);
+            golem_dma_response_reorder_cycles_=params.find<uint32_t>(
+                "golem_dma_response_reorder_cycles", 0);
+            golem_dma_response_max_starvation_cycles_=params.find<uint32_t>(
+                "golem_dma_response_max_starvation_cycles", 65536);
+            golem_dma_admission_max_starvation_cycles_=params.find<uint32_t>(
+                "golem_dma_admission_max_starvation_cycles", 4096);
+            if (golem_dma_credit_cap_ != 0 && golem_dma_credit_chunk_bytes_ == 0) {
+                dbg.fatal(CALL_INFO, -1,
+                          "%s, Error: golem_dma_credit_chunk_bytes must be positive when credit ownership is enabled.\n",
+                          getName().c_str());
+            }
             if (golem_dma_trace) {
                 fprintf(stderr,
                         "[memNICBase bridge] resolved golem_dma_response_vn=%" PRIu32
                         " num_vns=%" PRIu32 " explicit=%u\n",
-                        golem_dma_response_vn, num_vns,
+                        golem_dma_response_vn, golem_network_num_vns_,
                         golem_dma_response_vn_found ? 1U : 0U);
             }
 

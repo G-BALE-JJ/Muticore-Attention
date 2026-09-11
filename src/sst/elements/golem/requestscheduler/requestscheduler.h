@@ -133,6 +133,7 @@ public:
     RequestSchedulerAPI(ComponentId_t id, SST::Params& params) : SST::SubComponent(id) {}
     virtual ~RequestSchedulerAPI() = default;
 
+    virtual void bindGlobalMemory(GlobalMemoryAPI* globalMemory) = 0;
     virtual uint64_t submitWindowTransaction(const WcpWindowTransaction& txn) = 0;
     virtual bool isTileReady(uint64_t txnId, uint32_t localTileIdx) const = 0;
     virtual bool getTileKStepReadiness(
@@ -167,11 +168,10 @@ public:
         {"gm_size", "Local GM size", "0"},
         {"ctrl_latency", "Control link latency", "2ns"},
         {"queue_depth", "Manager queue depth", "64"},
-        {"initial_node_credit", "Initial per-node transfer outstanding credit", "2"},
-        {"initial_node_chunk_credit", "Initial per-node byte-window credit", "0"},
-        {"node_credit_chunk_bytes", "Bytes represented by one node credit unit", "512"},
         {"panel_chunk_bytes", "Scheduler issue chunk size for one logical A/B panel", "2048"},
+        {"worker_credit_cap", "Optional per-worker outstanding panel cap; 0 derives it from slot/window capacity", "0"},
         {"manager_issue_budget_per_tick", "Max manager-issued read requests per scheduler tick", "2"},
+        {"tile_chunk_quantum", "A/B chunk rounds issued for one worker tile before group round-robin advances", "1"},
         {"prefetch_windows", "WCP prefetch windows; 2D worker issue credit is derived from active+prefetch windows", "1"},
         {"local_slot_count", "WCP local panel slot count used to derive worker credits", "2"},
         {"a_reuse_n_tiles", "A reuse fanout used to derive worker credits", "1"},
@@ -182,6 +182,8 @@ public:
         {"infer_submit_bytes", "Infer submit bytes from request slot instead of mailbox bytes", "0"},
         {"slot0_bytes", "Inferred bytes for slot0 requests", "0"},
         {"slot1_bytes", "Inferred bytes for slot1 requests", "0"},
+        {"event_driven_worker", "Skip idle worker scheduler scans until direct work or DMA completion", "0"},
+        {"group_round_robin", "Manager issues one chunk per group worker in round-robin order", "0"},
         {"link_bw", "Bandwidth of the router link", "50GB/s"},
         {"buffer_length", "Network buffer length", "64KB"},
         {"verbose", "Verbosity", "0"})
@@ -203,6 +205,7 @@ public:
     void init(unsigned int phase) override;
     void setup() override;
     void finish() override;
+    void bindGlobalMemory(GlobalMemoryAPI* globalMemory) override;
 
     uint64_t submitWindowTransaction(const WcpWindowTransaction& txn) override;
     bool isTileReady(uint64_t txnId, uint32_t localTileIdx) const override;
@@ -291,17 +294,12 @@ private:
     void refillWorkerWindows();
     void tryIssue();
     bool issueTransfer(const PendingTransfer& req);
-    void initGlobalNodeFlow();
-    bool acquireNodeBudget(const PendingTransfer& req, uint32_t nodeNeed);
-    void releaseNodeCredits(uint16_t targetNode, uint32_t units);
-    void refundNodeBudget(uint16_t targetNode, uint32_t units);
     uint32_t computeWorkerResidentK() const;
     uint32_t computeWorkerCreditCap() const;
     uint32_t computeWorkerSoftIssueCap() const;
     uint64_t composeWindowRequestId(uint8_t slot, uint16_t targetNode, uint64_t txnId,
                                     uint32_t tileIdx) const;
     uint32_t chunkBytesForTransfer(const PendingTransfer& req) const;
-    uint32_t nodeCreditUnitsForBytes(uint32_t bytes) const;
     size_t managerPendingCount() const;
     void traceSubmitAtManager(uint64_t requestId, uint8_t workerSlot, uint16_t targetNode);
     void traceIssueAtManager(uint64_t requestId);
@@ -321,12 +319,11 @@ private:
     uint32_t groupId_;
     int32_t workerSlot_;
     uint32_t queueDepth_;
-    uint32_t initialNodeCredit_;
-    uint32_t nodeCreditChunkBytes_;
     uint32_t panelChunkBytes_;
     uint32_t workerCreditCap_;
     uint32_t workerSoftIssueCap_;
     uint32_t managerIssueBudgetPerTick_;
+    uint32_t tileChunkQuantum_;
     uint32_t submitBatchSize_;
     uint32_t doneBatchSize_;
     uint32_t prefetchWindowDepth_;
@@ -336,6 +333,9 @@ private:
     uint32_t numMemoryNodes_;
     bool inferSubmitBytes_;
     bool traceEvents_;
+    bool eventDrivenWorker_;
+    bool groupRoundRobin_;
+    bool workerNeedsService_;
     uint32_t slot0Bytes_;
     uint32_t slot1Bytes_;
     std::string ctrlLatency_;
@@ -353,9 +353,10 @@ private:
     std::deque<PendingTransfer> workerSubmitQ_;
     std::vector<std::vector<std::deque<PendingTransfer>>> nodeWorkerQueues_;
     std::vector<uint32_t> workerCredits_;
-    std::unordered_map<uint64_t, uint32_t> issuedNodeCreditUnits_;
     size_t nodeIssueCursor_;
     std::vector<size_t> nodeWorkerIssueCursor_;
+    size_t groupWorkerIssueCursor_;
+    std::vector<size_t> workerNodeIssueCursor_;
     bool submitSeen_;
     bool doneSeen_;
     uint32_t windowKtiles_;

@@ -14,11 +14,16 @@ PROG4=mvm_pipeline_mainmem
 PROG5=test_atomic_16cores_pthread
 PROG6=test_hbm2
 PROG7=test_noc_dma
+PROG7_OUT?=$(ARCH)/$(PROG7)
 PROG8=test_pipeline_mailbox_pthread
 PROG9=test_pipeline_mailbox_software
 PROG10=test_pipeline_mailbox_enhanced
 
+.PHONY: all clean $(PROG7)
+
 all: $(PROG7)
+
+$(PROG7): $(PROG7_OUT)
 
 $(PROG1) : $(PROG1).cpp
 	$(CXX) $(CFLAGS) $(LDFLAGS) -o $(ARCH)/$@ $<
@@ -35,8 +40,9 @@ $(PROG5) : $(PROG5).cpp
 $(PROG6) : $(PROG6).cpp
 	$(CXX) $(CFLAGS) $(LDFLAGS_STATIC) -o $(ARCH)/$@ $<
 
-$(PROG7) : $(PROG7).cpp golem_matmul_runtime.cpp
-	$(CXX) $(CFLAGS) $(LDFLAGS_STATIC) -o $(ARCH)/$@ $(PROG7).cpp golem_matmul_runtime.cpp
+$(PROG7_OUT) : $(PROG7).cpp golem_matmul_runtime.cpp
+	mkdir -p $(dir $@)
+	$(CXX) $(CFLAGS) $(LDFLAGS_STATIC) -o $@ $(PROG7).cpp golem_matmul_runtime.cpp
 
 $(PROG8) : $(PROG8).cpp
 	$(CXX) $(CFLAGS) $(LDFLAGS_STATIC) -o $(ARCH)/$@ $<
@@ -48,4 +54,4 @@ $(PROG10) : $(PROG10).cpp
 	$(CXX) $(CFLAGS) $(LDFLAGS_STATIC) $(EXTRA_CFLAGS) -o $(ARCH)/$@ $<
 
 clean:
-	rm -rf $(ARCH)/$(PROG7)
+	rm -f $(PROG7_OUT)

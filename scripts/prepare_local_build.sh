@@ -11,6 +11,7 @@ Defaults:
   BUILD_ROOT          ./build/sst-elements
   SST_CORE_PREFIX     /local/sstcore
   SST_DRAMSIM3_PREFIX /local/packages/dramsim3
+  SST_RAMULATOR2_PREFIX ./deps/ramulator2-2.1
 
 The prepared tree copies this worktree into BUILD_ROOT so generated files stay
 inside the local build tree.
@@ -29,6 +30,7 @@ BUILD_ROOT="${1:-$WORKTREE_ROOT/build/sst-elements}"
 INSTALL_PREFIX="$WORKTREE_ROOT/install"
 SST_CORE_PREFIX="${SST_CORE_PREFIX:-/local/sstcore}"
 SST_DRAMSIM3_PREFIX="${SST_DRAMSIM3_PREFIX:-/local/packages/dramsim3}"
+SST_RAMULATOR2_PREFIX="${SST_RAMULATOR2_PREFIX:-$WORKTREE_ROOT/deps/ramulator2-2.1}"
 
 if [[ ! -d "$ELEMENTS_SOURCE/golem" || ! -f "$WORKTREE_ROOT/autogen.sh" || ! -f "$WORKTREE_ROOT/configure.ac" ]]; then
 	echo "[ERROR] This must be run from a full SST source layout with src/sst/elements." >&2
@@ -63,6 +65,7 @@ rsync -a \
 	--exclude='.git/' \
 	--exclude='build/' \
 	--exclude='install/' \
+	--exclude='deps/' \
 	--exclude='autom4te.cache/' \
 	--exclude='config.log' \
 	--exclude='config.status' \
@@ -95,7 +98,7 @@ cat <<EOF
 Use it when you want to build:
   cd "$BUILD_ROOT"
   ./autogen.sh
-  ./configure --prefix="$INSTALL_PREFIX" --with-sst-core="$SST_CORE_PREFIX" --with-dramsim3="$SST_DRAMSIM3_PREFIX"
+  ./configure --prefix="$INSTALL_PREFIX" --with-sst-core="$SST_CORE_PREFIX" --with-dramsim3="$SST_DRAMSIM3_PREFIX" --with-ramulator2="$SST_RAMULATOR2_PREFIX"
   make -j
   make install
 

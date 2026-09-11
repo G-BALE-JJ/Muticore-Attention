@@ -30,6 +30,9 @@ static golem_dtype_t read_dtype_env_or_default(const char* name, golem_dtype_t d
     if (std::strcmp(raw, "fp32") == 0 || std::strcmp(raw, "float32") == 0 || std::strcmp(raw, "float") == 0) {
         return GOLEM_DTYPE_FP32;
     }
+    if (std::strcmp(raw, "fp16") == 0 || std::strcmp(raw, "float16") == 0 || std::strcmp(raw, "half") == 0) {
+        return GOLEM_DTYPE_FP16;
+    }
     return default_value;
 }
 

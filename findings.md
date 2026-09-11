@@ -26,3 +26,75 @@
 - 独立审查指出通用 SST 参数污染、stale rank stats、冻结字段遗漏、4-rank 回归缺口和路由器验证缺口；收尾阶段逐项收紧。
 - 真实 CSV 可观测 20 个 CPU 顶层组件和全部 28 个 `rtr_*`；OS/dirctrl/memory 没有 CSV 统计行，因此架构在实际构图时另行原子导出完整 placement manifest，运行后统一校验 200 个顶层组件。
 - E3 单 rank、2-rank、4-rank 冻结回归均通过：131072 项、0 mismatch、最大误差 `1.596650653161967e-09`，完成与 wait 均为 3561012 cycles。
+- E3 runner 的 `stats/run_summary.csv` 已记录完整测试墙钟时间；纳入本轮分析的样本为 rank1 `94/97s`、rank2 `49/48s`、rank4 `34/34/33s`，中位数加速比保持 `1.00x/1.97x/2.81x`。
+- E4 单 rank 实测通过：262144 项、0 mismatch、最大误差 `1.1813748100435173e-09`，completion/wait 均为 `14169968` cycles，墙钟 `383s`。
+- E4 2-rank 三次功能运行均 PASS，墙钟为 `410/247/189s`，中位数相对单-rank 加速 `1.55x`；大范围波动说明主机负载对完整 runner 计时影响显著。
+- E4 4-rank 三次功能运行均 PASS，墙钟为 `165/140/145s`，中位数相对单-rank 加速 `2.64x`；当前 4-rank 已有可观收益，但仍需空闲主机重复测量后再决定 tile-level MPI。
+- Attention MPI 当前受 4 个 manager band 限制，支持的 rank 仅为 1/2/4；其显式 `sst.self` placement 保证 manager/worker 共置，但也阻止了 GEMM 式更细的自动组件切分。
+- 细粒度 MPI 的推荐切分单位是 query tile 或 query sub-band，而不是单条 GEMM 指令：需要保持每个 query 的 online Softmax 状态、PV 累积和输出 DMA 的唯一归属。
+- 多头 Attention 可先通过 head-independent 扩展复用当前数据流；MoE 则会引入动态 router、token dispatch、expert GEMM、gather 和负载均衡，必须作为独立架构阶段推进。
+- 以缩短 wall time 为唯一目标时，tile-level MPI 只有在 E4 8-rank 相比稳定 4-rank 中位数至少降低 20% 时才值得继续；否则应保留 4-rank group-level 方案，优先优化 PV 和 MPI 等待开销。
+- 最新 E4 MPI2/MPI4 统计中，按 `attention_worker_tile_total_ticks` 聚合的 rank 工作量差异分别约 0.03% 和小于 0.1%；当前 group-level query 分区已经均衡，tile-level MPI 的主要理论收益并不成立。
+- E4 的 host wall time 样本为 rank1 `369-388s`、rank2 `189-410s`、rank4 `140-165s`，波动远大于 rank 工作量差异；后续性能结论必须采用受控主机或多次中位数。
+- E3 单变量实验显示 `--pv-input-pipeline` 退化到 `52s`，不应启用；`--pv-restore-pipeline`、`--pv-output-pipeline`、`--kv-double-buffer` 有小幅改善；`--pv-v-tile-reuse` 最优。
+- E4 `--pv-v-tile-reuse` 两次为 `118/119s`，相对原始 4-rank 中位数 `145s` 改善约 18.3%；该候选接近但未超过原先 20% promotion 门槛，且改变 simulated cycles，因此保持独立优化基线。
+- E4 `--pv-v-tile-reuse` 在 1/2/4-rank 的 wall time 分别为 `342/187/118.5s`（4-rank 为两次中位数），相对原始中位数加速约 `1.12x/1.32x/1.23x`；全部 rank 的模拟 completion 为 `13237937 cycles`。
+- Attention 中类似 `vPayload` 的抽象还包括 `qPayload`、`arrayPayload`、`transferBytes`、`attentionPvOutputWriteBytes`、`readOutputBytes` 和 `outputScales`；其中前两类可能代表数据暂存，后几类主要是异步回调/协议 payload，不应直接等同于硬件 SRAM。
+- `qLocal/kLocal/vLocal`、`kLocalBuffers/vLocalBuffers`、`spLocal`、`oLocal` 使用 GlobalMemory/Local GM 地址和异步读写，属于已有硬件资源模型；`KV double buffer` 的地址切换比 `vPayload` 更接近真实双缓冲，但预取状态仍部分保存在模拟器状态中。
+- 当前架构可信度审计优先级：P0 为 `vPayload` 的容量/tag/读延迟/竞争建模；P1 为 Q/array staging 与各 pipeline 的额外 buffer/端口语义；P2 为仅用于回调生命周期的 byte vector，不需要单独 SST component。
+- VTileBuffer 第一阶段已落地为 RoCC worker 内的固定容量/tag 资源语义，而非独立 SST component；16KiB 默认容量刚好覆盖 E3/E4 的 16KiB V tile（32 keys x 128 dims x FP32）。命中只发生在同一 key tile 的后续 PV panel，容量不足走 Local GM，避免把软件向量误当作无限硬件 SRAM。
+- VTileBuffer 第二阶段使用 RoCC 既有周期进度回调实现命中延迟：`vTileBufferWaiting` 在命中后阻塞至 `waitUntilTick`，再以 one-shot bypass 进入矩阵编程。该模型暂未加入多端口竞争，后续应以独立 baseline 测量其影响。
+- E3 VTileBuffer 时序回归在主机环境通过：1-rank/4-rank 均为 131072 项、0 mismatch、completion `3328883 cycles`，统计一致为 14336 hits、2048 misses、32MiB Local GM reads、224MiB buffer reuse 和 14336 wait cycles；wall time 为 88s/32s（2.75x）。
+- VTileBuffer 统计已纳入正式 scale verifier，而不再仅靠源码字符串检查；16KiB 容量时每 worker 期望 896 hits/128 misses，8KiB 容量时期望 0 hits/1024 misses，reuse 关闭时五项统计均应为零。
+- VTileBuffer 为每个 Attention worker 划出 Local GM 保留区：panel 0 通过既有异步写通路写入，但 hit 不读回该区域；`attention_pv_v_tile_buffer_offset`、容量和窗口边界仍有运行时检查。
+- E3 4-rank staging 对照通过：关闭 reuse 为 `3.65572 ms / 3,561,012 cycles / 33 s`，`vPayload` staging 为 `3.45646 ms / 3,361,773 cycles / 32 s`；模拟 cycles 降低约 `5.60%`，本次 wall time 降低约 `3.03%`。该结果不是 Local GM direct-hit 收益。
+- 当前实现使用 RoCC `vPayload` 作为 hit 数据源，Local GM 保留区只是 write-only backing；真正的 Local GM direct-hit 结果单独记录为约 `0.95%` cycle 退化。
+- 受控 E3 4-rank 重复测量完成：baseline 三次均为 `33 s / 3,561,012 cycles`，`vPayload` staging 三次为 `32/32/31 s / 3,361,773 cycles`；wall time 中位数收益稳定为 `3.03%`，cycles 三次完全稳定。
+- 因此 buffer 应继续作为独立可选优化，cycle 收益已足够明确，但 wall time 绝对收益只有约 1 秒；下一步优先验证 E4 和 Local GM 端口竞争，不立即推进 tile-level MPI。
+- E4 4-rank 受控重复测量完成：baseline 为 `125/126/125 s`、`14,169,968 cycles`，`vPayload` staging 为 `120/121/120 s`、`13,373,920 cycles`；wall time 中位数降低 `4.0%`，completion cycles 降低 `5.62%`，两组均 PASS 且 verifier 通过。
+- E3/E4 均显示约 5.6% 的稳定模拟周期收益，wall time 收益为 3.0%/4.0%；这足以进入端口竞争建模，但不足以证明需要 tile-level MPI。
+- 端口敏感性首测已完成：E3 4-rank buffer 配置从 1 read port 切换到 2 read ports 后，completion 从 `3,361,773` 降至 `3,358,735 cycles`（约 `0.09%`），wall time 均为 `32 s`，verifier PASS。项目已有 GlobalMemory 的真实 Local GM 端口/队列模型，无需新增重复的 buffer 私有端口抽象。
+- E4 端口敏感性复核通过：2 read ports 的 buffer 配置为 `13,359,788 cycles / 119 s`，默认 1 read port 为 `13,373,920 cycles / 120 s`，cycle 差异约 `0.11%`。E3/E4 均低于 1%，因此不再开发更复杂的 VTileBuffer 多端口模型；下一阶段转向 Attention 功能扩展。
+- VTileBuffer hit 已改为真实调用 Local GM `localReadAsync()` 后再进行阵列编程；E3 4-rank 功能验证 PASS，但 completion 为 `3,594,923 cycles / 34 s`，比 baseline `3,561,012 cycles / 33 s` 增加约 `0.95%`。这证明原先约 `5.6%` 的收益来自 `vPayload` 的低延迟 staging，而不是普通 Local GM 读回；硬件化版本应作为真实性基线，不能直接替代性能候选。
+- 根据项目目标，已恢复 `vPayload` staging hit 作为当前推荐运行路径；Local GM direct-hit 的实现代码已撤回，测试结果保留在本文件和 `baseline/pv_optimization.json` 作为硬件真实性实验记录。恢复后 E3 completion 为 `3,361,773 cycles`，与既有 staging 结果一致。
+- RTX 5060 复核后的 FP32 Scope A 中位延迟为 E3 `0.103712 ms`、E4 `0.340032 ms`；按 1 GHz 统一换算分别为 `103,712` 和 `340,032` normalized cycles。相对当前 SST FP32 baseline，GPU 分别快约 `34.3x` 和 `41.7x`。
+- GPU Scope A 与 SST accelerator completion 的主边界基本可比：两者均包含设备/架构内的输入读取、QK、scale、Softmax、PV 和输出写回，但均不包含 host 侧输入生成与 H2D。GPU cache/register 与 SST HBM/Local GM 的差异属于架构行为，不是计时遗漏。
+- GPU FP32 math 可以用同一 stream 的连续 CUDA Events 分解为 QK、scale、Softmax、PV 和 output；fused FP16/BF16 在 CUPTI 不可用时只能保持端到端数据，不能伪造内部阶段。
+- `accelerator_completion_cycles` 当前由 verifier 以默认 1 GHz 对 SST timebase interval 换算；它适合作为统一延迟单位，但不是 RTX 原生 cycle，也不能在未核对 `VANADIS_CPU_CLOCK`、array clock 与 verifier 参数时解释为某个 SST 组件的原生周期。
+- 后续数据流方向有研究依据：FlashAttention 的 IO-aware tiling、online Softmax、FlashAttention-2 的单 head work partitioning，以及 FLAT 的空间加速器 fusion/tiling。K/V 跨 query 驻留、QK/PV 阵列分离和跨 tile 重叠仍是本项目待实验验证的架构假设。
+- 当前直线路线已修订为：测量口径审计 -> GPU/SST 双侧阶段分解 -> 理想化上界 -> 消除人工串行 -> 证据驱动的数据流重构 -> 资源平衡 -> GPU gate。多头 Attention 和 MoE 均后移。
+- Phase A/B 初查确认现有 E3/E4 lifecycle 已包含 slowest worker 的完整 tile pipeline breakdown，且 tile phase sum 与 `attention_worker_tile_total_ticks` 精确守恒；无需新增重复的 RoCC phase counter。
+- 现有 system frontier 是端到端非重叠区间，但 `dispatch_to_final_qk` 包含此前所有 online QK/Softmax/PV tile，不能把 frontier 的最后 QK/Softmax/PV 间隔解释为算子总耗时。GPU 对照必须同时报告 frontier latency 与 slowest-worker 累计 work breakdown，并禁止将并行 worker 的累计值相加作为端到端延迟。
+- 时钟口径存在需要显式固化的默认值分叉：archive 脚本 CPU clock 默认 `2.0GHz`，通用 runner 派生 array/memctrl clock 默认 `2.3GHz`，而 Attention verifier 当前默认用 `1.0GHz` 把 SST timebase interval 转为所谓 cycles。该字段实际是 1 GHz normalized latency，不是 model-native CPU/array cycles。
+- 更精确的构图来源是：20 个 Vanadis CPU、RoCC、SFU 与 Local GM 由共享 `cpu_builder.py` 建立，未显式设置时取 `2.3GHz`；archive 局部 `cpu_clock=2.0GHz` 用于 NodeOS L1 等外围组件；通用 runner 在进入 SST 前导出 array/memctrl `2.3GHz`。Phase A 应记录这种历史混合时钟配置，但本阶段不能为“统一命名”而改变冻结 baseline 的模型时序。
+- Phase A 采用只记录、不改频率的兼容方案：旧 `accelerator_clock_hz/cycles` 字段保留，但新增 `clock_contract` 明确 model clocks 与 normalization clock，并新增毫秒结果；因此不会因口径清理破坏既有 E3/E4 baseline。
+- GPU 分段脚本将 clean Scope A 与带内部 Event marker 的 stage chain 分开测量；stage chain 在同一 CUDA stream 上连续记录 QK/scale/Softmax/PV，只在末尾同步，且 PV interval 包含 device output writeback，不额外加入不公平的 D2D copy。
+- Phase A/B SST 实测报告通过：E3/E4 system frontier 原始 ticks 均 100% 守恒；slowest-worker work 对 accelerator completion 的覆盖率分别为 `99.88%/99.95%`。
+- E3 slowest-worker work 为 input `4.96%`、QK `14.35%`、scale+Softmax `0.88%`、PV `79.81%`；E4 分别为 `4.50%/14.42%/0.89%/80.20%`。两个 profile 的结构高度一致。
+- PV matrix programming 单项占 E3 `66.91%`、E4 `67.21%`，显著高于 QK matrix programming 的约 `7.4%` 和 PV input programming 的约 `5.5%`。Phase C 应先做 ideal PV matrix-program bound，再扩展到 all-matrix-program bound。
+- 本地主机没有 `nvidia-smi` 且 Python 无 PyTorch，无法执行 CUDA stage benchmark；`baseline/attention_gpu_comparison.json` 明确保留 `gpu_stage_status=pending_external_measurement`，不使用估算阶段数据。
+- Phase A/B 独立审查无 Critical，但指出四项 Important：SST timebase override 未同步 verifier、GPU measured 输入未强制公平性/raw samples、schema 未约束 raw sample 类型、coverage gate 接受大于 100%。这些必须在收尾前修正。
+- 审查提及的 V-tile window size 变化属于此前独立完成并验证的 buffer 开发，不是本轮 Phase A/B 引入；默认正式 baseline 仍关闭 reuse，因此本轮保留用户已有改动，不作无关回退。
+- GPU 分段报告采用 evidence gate：`summary_only` 只能保留端到端 Scope A，不能生成阶段结论；`raw_samples` 必须提供同一默认 CUDA stream 上连续 Event 的 QK/scale/Softmax/PV 样本、Scope A 样本及可复算中位数，并满足无 H2D/D2H/dtype conversion、TF32 关闭等公平性条件，否则导入直接失败。
+- 用户报告的 RTX 5060 B3 摘要显示 GPU 阶段结构与 SST 明显不同：GPU E3/E4 的 QK 约占 `42.37%/45.33%`，PV 约占 `37.43%/27.89%`；SST slowest-worker 则由 PV 主导约 `79.81%/80.20%`。这进一步支持 Phase C 首先测试 ideal PV matrix programming，但该结论需在原始 JSON 通过 evidence gate 后转为正式基线证据。
+- RTX 原始 JSON 已通过 evidence gate，上一条阶段结构结论现为正式基线证据。直接阶段差距为：QK E3/E4 `12.31x/12.78x`，scale+Softmax `1.64x/1.31x`，PV `77.47x/115.54x`；优化优先级必须先处理 PV matrix programming，而不是 Softmax 或 MPI。
+- GPU raw evidence 的计时可信度还由空 Event 数据约束：1000 样本中位数为 `0.002400 ms`，E3 Scope A `0.097568 ms` 是其约 `40.7x`，未贴近计时下限。报告器现会重算该中位数并拒绝缺样本或正确性失败的输入。
+- 原始 SST CSV 与首次 lifecycle JSON 位于 `/tmp`，不能作为 Git 可移植项目的长期报告输入。E3/E4 baseline 现保存经过 verifier 的最小 lifecycle summary，包含 clock contract、completion、slowest-worker phase ticks 和 system-frontier conservation，可稳定复现双侧报告；它是验证摘要而不是原始 CSV。
+- GPU collector 与 importer 必须共享同一机器契约，不能只靠示例 JSON 对齐。collector 现直接生成 importer 所需的 FP32 benchmark、RTX 5060、正确性和顶层 Event-floor 字段，并用不依赖 CUDA 的构造函数测试锁定格式。
+- B4 初步对照：`tilelang_three_limitations/tl3lim/timing.py` 与 Attention 均用 CUDA Event 包围 device work、warmup 后同步、保存独立样本；参考实现预先分配全部 Events，将 timed iterations 连续入队，只在最后一个 end Event 同步，并另存 host enqueue 时间。Attention Scope A 则每个样本单独创建 Event 并立即 `end.synchronize()`。
+- CUDA Event 不会把 `end.synchronize()` 的 CPU 等待本身计入 elapsed interval，因此 Attention 的打点边界没有明显系统性高估；但逐样本同步会改变迭代间队列连续性、GPU DVFS/空闲和缓存条件，不能假定与参考项目的连续入队口径完全等价。
+- 当前 Attention E3 200 样本 median `0.097568 ms`、relative MAD 约 `9.12%`、7 个样本超过 2x median、最大值约 5.60x median；E4 relative MAD 约 `1.95%` 且无 2x outlier。中位数对离群值稳健，但 E3 的单批次结果缺少独立批次置信区间。
+- `tilelang_three_limitations` 的 continuous enqueue 会让后续 timed iteration 提前进入队列，减少小 kernel 因 host submission starvation 造成的 device idle；它更接近饱和 device throughput。Attention 的 per-sample synchronize 则让每个请求从空队列开始，更接近 isolated single-request latency。二者没有谁普遍“更准”，必须按目标分别报告，不能混成一个数。
+- Attention Scope A 与 stage-chain median 的相对差为 E3 `0.33%`、E4 `1.86%`；stage median sum 与同轮 chain median 的差为 E3 `-0.65%`、E4 `+0.42%`。这组内部一致性强烈反对“Event 放错导致数量级错误”的假设。
+- 单批次非参数 bootstrap 给出的 median 95% 区间为 E3 `0.09472-0.10701 ms`、E4 `0.34304-0.34784 ms`。该区间没有独立 run 间变异，仍弱于参考项目的三 run 分层 bootstrap；此前 E3 `0.103712 ms` 落在新区间内。
+- 当前 Q/K/V 在 200 次测量中重复使用，合计仅约 E3 `1.5 MiB`、E4 `3 MiB`，均小于 RTX 5060 的 `24 MiB` L2，实际是 warm-cache 输入条件。GPU kernel completion 保证 device global-memory 可见，但不强制输出脏线已驱逐到 HBM；SST completion 明确含 HBM/Local GM DMA。该语义差异在最终公平门禁前必须用 cache-state 敏感性或双口径说明。
+- B4 最终判定：当前 `0.097568/0.345984 ms` 对“单次 warm-cache GPU device-timeline Attention”是可信测量，足以支持约 40x 差距和 PV 优先级；对“跨主机 application end-to-end”或“HBM cold-cache 单次延迟”则不准确。最终 GPU gate 应补三次独立批次、SM clock、cache state，并并列 isolated/continuous 两种 Event 调度模式。
+- QK input programming 原先按 panel 完成后再批量启动全部 array GEMM；逐阵列 early-compute 将输入编程与阵列计算重叠，保持数组输出收集、Softmax、PV 累积和 output DMA 顺序不变。
+- 早启动会降低连续 WCP burst，因而 issue-width 的最小突发等待不能继续硬性要求；命令数、回调数、队列等待和数值/lifecycle 仍严格校验。
+- Q1024 测量显示 QK overlap 收益约 `0.257%`，当前主要瓶颈仍是 input movement、K/V wait 与 PV 路径；该机制是低风险 bubble 消除，不替代 PV 架构优化。
+- V release 提前到 Local-GM read completion 后没有降低 Q1024 completion，表明当前 N+2/cross-query DMA 已被 QK/PV 计算覆盖；继续提前只会增加 buffer 生命周期风险，不应默认推进。
+- PV 非广播路径的逐阵列串行 matrix programming 已改为 16 路有界 queue submission；默认广播路径已使用单次二叉树 multicast，因此该改动主要改善诊断/无广播配置，不改变默认 cycle。
+- QK readout 的直接多路挂起会与现有 array-buffer 回读队列的 callback/写回语义形成等待，不能简单按“16 个请求同时发出”实现。后续若优化，应先在 array buffer 增加显式 read-credit/多端口模型，再提升读回并发。
+- 即使限制为 2 个 read credit，当前 ComputeArray 的单端口 buffer transfer 与 ROCC 共享状态仍无法安全支持并发 QK readback；在缺少底层 credit/port ownership 前，继续扩大 ROCC 并发只会重复死等。
+- ComputeArray 现已具备 output-read credit/bank ownership 的底层资源约束；在 QK 状态机仍串行 readback 时，`1/1` 与 `2/2 + 2 buffer ports` 周期相同，说明并发资源模型本身不会制造虚假收益。下一步必须在该模型上实现按 credit 的 QK readback 状态，而不是绕过 buffer 调度。
+- Q1024 `2 buffer ports/2 credits/2 banks` 仍为 `1,143,086 cycles`，与默认配置完全相同；当前关键路径由输入/KV/PV 阶段主导，QK readout 并发没有可观测端到端收益，因此不应增加默认硬件复杂度。

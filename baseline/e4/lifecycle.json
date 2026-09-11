@@ -1,0 +1,286 @@
+{
+  "status": "PASS",
+  "mismatches": {},
+  "lifecycle": {
+    "clock_contract": {
+      "sst_timebase_ticks_per_second": 1000000000000,
+      "normalization_clock_hz": 1000000000,
+      "normalized_cycle_definition": "ceil(sst_timebase_ticks * normalization_clock_hz / sst_timebase_ticks_per_second)",
+      "normalized_cycles_are_model_native_cycles": false,
+      "model_clocks_hz": {
+        "vanadis_cpu_rocc_sfu_local_gm": 1000000000,
+        "mvm_array": 1000000000,
+        "memory_controller": 1250000000,
+        "archive_platform": 2000000000
+      }
+    },
+    "accelerator_clock_hz": 1000000000,
+    "sst_timebase_ticks_per_second": 1000000000000,
+    "root_descriptor_accept_tick": 68146000,
+    "root_tensor_complete_tick": 6628742125,
+    "root_wait_observed_tick": 6628743000,
+    "accelerator_completion_ticks": 6560596125,
+    "wait_return_ticks": 6560597000,
+    "accelerator_completion_cycles": 6560597,
+    "accelerator_completion_milliseconds": 6.560596125,
+    "wait_return_cycles": 6560597,
+    "wait_return_milliseconds": 6.560597,
+    "manager_descriptor_accept_skew_ticks": 538000,
+    "manager_descriptor_accept_skew_cycles": 538,
+    "manager_local_complete_skew_ticks": 163910000,
+    "manager_local_complete_skew_cycles": 163910,
+    "root_band_receive_first_tick": 6464840625,
+    "root_band_receive_last_tick": 6628742125,
+    "worker_critical_path": {
+      "slowest_worker_core": 16,
+      "milestone_ticks": {
+        "dispatch_accept": 68176625,
+        "final_qk_tile_complete": 6620915000,
+        "final_softmax_tile_complete": 6621160000,
+        "final_pv_tile_complete": 6628432000,
+        "final_output_dma_ack": 6628723500
+      },
+      "stage_ticks": {
+        "dispatch_to_final_qk": 6552738375,
+        "final_qk_to_final_softmax": 245000,
+        "final_softmax_to_final_pv": 7272000,
+        "final_pv_to_output_dma_ack": 291500
+      },
+      "stage_cycles": {
+        "dispatch_to_final_qk": 6552739,
+        "final_qk_to_final_softmax": 245,
+        "final_softmax_to_final_pv": 7272,
+        "final_pv_to_output_dma_ack": 292
+      },
+      "aggregate_online_pipeline_cycles": {
+        "dispatch_to_first_qk": 19867,
+        "all_qk_to_softmax": 125882,
+        "all_softmax_to_pv": 3724652,
+        "inter_tile_pv_to_next_qk": 2689855,
+        "final_pv_to_output_dma_ack": 292
+      },
+      "aggregate_interpretation": "PV-to-next-QK includes next-tile KV/QK preparation and any intermediate query-block output DMA.",
+      "order_valid": true,
+      "inter_tile_breakdown": {
+        "worker_core": 16,
+        "transition_count": 511,
+        "total_ticks": 2689855000,
+        "total_cycles": 2689855,
+        "phase_ticks": {
+          "output_dma": 103020125,
+          "query_load": 69861625,
+          "kv_load": 1284021000,
+          "q_local_read": 66430000,
+          "qk_matrix_program": 68382250,
+          "qk_input_program": 310688000,
+          "qk_compute_readout": 787452000
+        },
+        "phase_cycles": {
+          "output_dma": 103021,
+          "query_load": 69862,
+          "kv_load": 1284021,
+          "q_local_read": 66430,
+          "qk_matrix_program": 68383,
+          "qk_input_program": 310688,
+          "qk_compute_readout": 787452
+        },
+        "phase_counts": {
+          "output_dma": 511,
+          "query_load": 511,
+          "kv_load": 511,
+          "q_local_read": 511,
+          "qk_matrix_program": 511,
+          "qk_input_program": 511,
+          "qk_compute_readout": 511
+        },
+        "attributed_ticks": 2689855000,
+        "unattributed_ticks": 0,
+        "conservation_valid": true
+      },
+      "tile_pipeline_breakdown": {
+        "worker_core": 16,
+        "tile_count": 512,
+        "total_ticks": 6386107250,
+        "total_cycles": 6386108,
+        "phase_ticks": {
+          "kv_load": 1300335250,
+          "q_local_read": 66560000,
+          "qk_matrix_program": 68516000,
+          "qk_input_program": 311296000,
+          "qk_compute_readout": 788866000,
+          "softmax": 125882000,
+          "pv_matrix_program": 1613823625,
+          "pv_input_program": 851968000,
+          "pv_restore_output": 322560000,
+          "pv_compute": 602112000,
+          "pv_output_readwrite": 334188375
+        },
+        "phase_cycles": {
+          "kv_load": 1300336,
+          "q_local_read": 66560,
+          "qk_matrix_program": 68516,
+          "qk_input_program": 311296,
+          "qk_compute_readout": 788866,
+          "softmax": 125882,
+          "pv_matrix_program": 1613824,
+          "pv_input_program": 851968,
+          "pv_restore_output": 322560,
+          "pv_compute": 602112,
+          "pv_output_readwrite": 334189
+        },
+        "phase_counts": {
+          "kv_load": 512,
+          "q_local_read": 512,
+          "qk_matrix_program": 512,
+          "qk_input_program": 512,
+          "qk_compute_readout": 512,
+          "softmax": 512,
+          "pv_matrix_program": 512,
+          "pv_input_program": 512,
+          "pv_restore_output": 512,
+          "pv_compute": 512,
+          "pv_output_readwrite": 512
+        },
+        "attributed_ticks": 6386107250,
+        "unattributed_ticks": 0,
+        "conservation_valid": true
+      },
+      "kv_prefetch_timing": {
+        "ticks": {
+          "dma": 3924676375,
+          "ready_lead": 2288819125,
+          "wait": 1206147000
+        },
+        "cycles": {
+          "dma": 3924677,
+          "ready_lead": 2288820,
+          "wait": 1206147
+        },
+        "counts": {
+          "dma": 504,
+          "ready_lead": 305,
+          "wait": 199
+        }
+      }
+    },
+    "system_frontier": {
+      "milestone_ticks": {
+        "root_descriptor_accept": 68146000,
+        "manager_dispatch_complete": 68696000,
+        "worker_dispatch_accept_complete": 68714625,
+        "final_qk_tile_complete": 6620915000,
+        "final_softmax_tile_complete": 6621160000,
+        "final_pv_tile_complete": 6628432000,
+        "final_output_dma_ack": 6628723500,
+        "manager_local_complete": 6628742125,
+        "root_tensor_complete": 6628742125,
+        "software_wait_observed": 6628743000
+      },
+      "milestone_cycles_from_root_accept": {
+        "root_descriptor_accept": 0,
+        "manager_dispatch_complete": 550,
+        "worker_dispatch_accept_complete": 569,
+        "final_qk_tile_complete": 6552769,
+        "final_softmax_tile_complete": 6553014,
+        "final_pv_tile_complete": 6560286,
+        "final_output_dma_ack": 6560578,
+        "manager_local_complete": 6560597,
+        "root_tensor_complete": 6560597,
+        "software_wait_observed": 6560597
+      },
+      "stage_cycles": {
+        "root_descriptor_accept_to_manager_dispatch_complete": 550,
+        "manager_dispatch_complete_to_worker_dispatch_accept_complete": 19,
+        "worker_dispatch_accept_complete_to_final_qk_tile_complete": 6552201,
+        "final_qk_tile_complete_to_final_softmax_tile_complete": 245,
+        "final_softmax_tile_complete_to_final_pv_tile_complete": 7272,
+        "final_pv_tile_complete_to_final_output_dma_ack": 292,
+        "final_output_dma_ack_to_manager_local_complete": 19,
+        "manager_local_complete_to_root_tensor_complete": 0,
+        "root_tensor_complete_to_software_wait_observed": 1
+      },
+      "stage_ticks": {
+        "root_descriptor_accept_to_manager_dispatch_complete": 550000,
+        "manager_dispatch_complete_to_worker_dispatch_accept_complete": 18625,
+        "worker_dispatch_accept_complete_to_final_qk_tile_complete": 6552200375,
+        "final_qk_tile_complete_to_final_softmax_tile_complete": 245000,
+        "final_softmax_tile_complete_to_final_pv_tile_complete": 7272000,
+        "final_pv_tile_complete_to_final_output_dma_ack": 291500,
+        "final_output_dma_ack_to_manager_local_complete": 18625,
+        "manager_local_complete_to_root_tensor_complete": 0,
+        "root_tensor_complete_to_software_wait_observed": 875
+      },
+      "accelerator_attribution": {
+        "total_ticks": 6560596125,
+        "attributed_ticks": 6560596125,
+        "unattributed_ticks": 0,
+        "coverage_ratio": 1.0,
+        "conservation_valid": true
+      },
+      "order_valid": true,
+      "interpretation": "Frontier deltas describe when all parallel workers cross each milestone; dispatch-to-final-QK includes earlier online QK-Softmax-PV tiles."
+    },
+    "kv_second_lookahead_window": {
+      "max_candidates": 0,
+      "candidates": 0,
+      "candidate_rate": 0.0,
+      "ready_at_release": 0,
+      "ready_after_release_before_boundary": 0,
+      "timing_ticks": {
+        "k_release": 0,
+        "v_release": 0,
+        "available_lead": 0
+      },
+      "timing_counts": {
+        "k_release": 0,
+        "v_release": 0,
+        "available_lead": 0
+      },
+      "mean_cycles": {
+        "k_release": 0.0,
+        "v_release": 0.0,
+        "available_lead": 0.0
+      },
+      "max_available_lead_cycles": 0
+    },
+    "wcp_gemm_proxy": {
+      "queue_depth": 32,
+      "issue_width": 1,
+      "command_latency_cycles": 1,
+      "completion_latency_cycles": 1,
+      "max_worker_queue_wait_cycles": 16,
+      "worker_totals": {
+        "gemm_proxy_commands_issued": 5038080,
+        "gemm_proxy_queue_full_stalls": 0,
+        "gemm_proxy_queue_wait_cycles": 14868480,
+        "gemm_proxy_launch_commands": 1310720,
+        "gemm_proxy_completion_callbacks": 1310720,
+        "gemm_proxy_completion_delay_cycles": 1310720
+      }
+    },
+    "matrix_broadcast_fabric": {
+      "enabled": true,
+      "pv_enabled": true,
+      "qk_enabled": true,
+      "topology": "binary_tree",
+      "shares_array_buffer_ports": true,
+      "max_fanout": 16,
+      "bytes_per_cycle": 64,
+      "base_latency_cycles": 1,
+      "stage_latency_cycles": 1,
+      "tree_stages": 4,
+      "fanout": 16,
+      "payload_bytes": 8192,
+      "cycles_per_request": 133,
+      "max_observed_fanout": 16,
+      "worker_totals": {
+        "matrix_broadcast_requests": 73728,
+        "matrix_broadcast_rejected": 0,
+        "matrix_broadcast_ingress_bytes": 603979776,
+        "matrix_broadcast_sink_bytes": 9663676416,
+        "matrix_broadcast_transfer_cycles": 9805824,
+        "matrix_broadcast_fanout": 1179648
+      }
+    }
+  }
+}

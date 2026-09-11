@@ -77,7 +77,7 @@ def main(argv=None):
     parser.add_argument(
         "--dtype",
         default=os.getenv("GOLEM_MATMUL_DTYPE", "int32"),
-        help="Tensor dtype: int32|fp32",
+        help="Tensor dtype: int32|fp16|fp32",
     )
     parser.add_argument(
         "--bias-enable",
@@ -164,7 +164,7 @@ def main(argv=None):
     sampled = 0
     for i in range(args.m):
         j = rng.randrange(args.n)
-        ref_ij = 0.0 if dtype == "fp32" else 0
+        ref_ij = 0.0 if dtype in {"fp16", "fp32"} else 0
         for kk in range(args.k):
             b_value = b[j][kk] if args.transpose_b else b[kk][j]
             ref_ij += a[i][kk] * b_value

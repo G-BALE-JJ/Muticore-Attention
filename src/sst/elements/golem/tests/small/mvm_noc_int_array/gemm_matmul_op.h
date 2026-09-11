@@ -9,6 +9,8 @@
 #include <vector>
 #include <sched.h>
 
+#include "../../../fp16.h"
+
 #include "pipeline_config.h"
 #include "operators.h"
 
@@ -67,6 +69,7 @@ struct WorkerTaskListHeaderRuntime {
     uint32_t b_reuse_m_tiles;
     uint32_t m_group_count;
     uint32_t data_node_map_mode;
+    uint64_t descriptor_start_cycle;
 };
 
 constexpr uint64_t WCP_DESC_GM_ADDR = LOCAL_TMP_OFFSET;
@@ -74,15 +77,77 @@ static_assert((sizeof(WorkerTaskListHeaderRuntime) % sizeof(uint64_t)) == 0,
               "WorkerTaskListHeaderRuntime must be written as whole u64 words");
 
 static inline void write_worker_task_list_header_at(int core_id, uint64_t base, const WorkerTaskListHeaderRuntime& desc) {
-    const uint64_t* words = reinterpret_cast<const uint64_t*>(&desc);
-    constexpr size_t kWords = sizeof(WorkerTaskListHeaderRuntime) / sizeof(uint64_t);
-    for (size_t i = 0; i < kWords; ++i) {
-        reg2gm(words[i], base + static_cast<uint64_t>(i) * sizeof(uint64_t));
-    }
+    (void)core_id;
+    memory_barrier();
+    set_len(sizeof(WorkerTaskListHeaderRuntime));
+    mm2gm(&desc, base);
 }
 
 static inline void write_worker_task_list_header(int core_id, const WorkerTaskListHeaderRuntime& desc) {
     write_worker_task_list_header_at(core_id, gm_addr(core_id, WCP_DESC_GM_ADDR), desc);
+}
+
+static inline uint64_t read_cycle_counter();
+
+static inline uint64_t synchronize_worker_descriptor_start(
+    int core_id,
+    int worker_slot,
+    int participant_count) {
+    if (!WORKER_START_BARRIER_ENABLED || participant_count <= 1) {
+        return read_cycle_counter();
+    }
+
+    static uint64_t local_epoch = 0;
+    const uint64_t epoch = ++local_epoch;
+    const int leader_core = gemm_worker_core_for_slot(0);
+    const uint64_t ready_addr =
+        gm_addr(leader_core, WORKER_START_READY_BASE + static_cast<uint64_t>(worker_slot) * sizeof(uint64_t));
+    const uint64_t entry_cycle = read_cycle_counter();
+
+    if (core_id == leader_core) {
+        reg2gm(epoch, ready_addr);
+    } else {
+        remote_write_u64(core_id, epoch, ready_addr);
+    }
+
+    const uint64_t local_release_cycle = gm_addr(core_id, WORKER_START_RELEASE_CYCLE_OFF);
+    const uint64_t local_release_epoch = gm_addr(core_id, WORKER_START_RELEASE_EPOCH_OFF);
+    if (core_id == leader_core) {
+        for (int slot = 0; slot < participant_count; ++slot) {
+            adaptive_wait_eq(
+                gm_addr(leader_core, WORKER_START_READY_BASE + static_cast<uint64_t>(slot) * sizeof(uint64_t)),
+                epoch);
+        }
+
+        const uint64_t start_cycle = read_cycle_counter() + WORKER_START_GUARD_CYCLES;
+        for (int slot = 0; slot < participant_count; ++slot) {
+            const int target_core = gemm_worker_core_for_slot(slot);
+            const uint64_t target_release = gm_addr(target_core, WORKER_START_RELEASE_CYCLE_OFF);
+            if (target_core == core_id) {
+                reg2gm(start_cycle, local_release_cycle);
+                reg2gm(epoch, local_release_epoch);
+                continue;
+            }
+
+            const uint64_t src = tmp_addr(core_id);
+            reg2gm(start_cycle, src);
+            reg2gm(epoch, src + sizeof(uint64_t));
+            set_len(2 * sizeof(uint64_t));
+            remote_store(src, target_release);
+        }
+    } else {
+        adaptive_wait_eq(local_release_epoch, epoch);
+    }
+
+    uint64_t start_cycle = gm2reg(local_release_cycle);
+    while (start_cycle <= entry_cycle) {
+        delay_cycles(8);
+        start_cycle = gm2reg(local_release_cycle);
+    }
+    while (read_cycle_counter() < start_cycle) {
+        delay_cycles(8);
+    }
+    return start_cycle;
 }
 
 struct GemmKernelStats {
@@ -112,6 +177,9 @@ struct GemmKernelStats {
     uint64_t exec_window_begin_cycles;
     uint64_t exec_window_end_cycles;
     uint64_t exec_window_started;
+    uint64_t descriptor_barrier_cycle;
+    uint64_t descriptor_mm2gm_start_cycle;
+    uint64_t descriptor_mm2gm_end_cycle;
 };
 
 static inline void mark_exec_window_begin(GemmKernelStats* stats, uint64_t cycle) {
@@ -171,6 +239,7 @@ struct MatmulTensorBindingsT {
 
 using MatmulTensorBindings = MatmulTensorBindingsT<int32_t>;
 using MatmulTensorBindingsFP32 = MatmulTensorBindingsT<float>;
+using MatmulTensorBindingsFP16 = MatmulTensorBindingsT<SST::Golem::GolemFp16>;
 
 template <typename T>
 static inline T zero_value() {
@@ -193,6 +262,13 @@ inline float scalar_from_gm_reg<float>(uint64_t gm_addr) {
     float value = 0.0f;
     std::memcpy(&value, &raw32, sizeof(value));
     return value;
+}
+
+template <>
+inline SST::Golem::GolemFp16 scalar_from_gm_reg<SST::Golem::GolemFp16>(uint64_t gm_addr) {
+    const uint64_t raw = gm2reg(gm_addr);
+    return SST::Golem::GolemFp16(
+        SST::Golem::golem_fp16_to_float(static_cast<uint16_t>(raw & 0xffffu)));
 }
 
 template <typename T>
@@ -236,6 +312,11 @@ inline const char* dtype_label<int32_t>() {
 template <>
 inline const char* dtype_label<float>() {
     return "fp32";
+}
+
+template <>
+inline const char* dtype_label<SST::Golem::GolemFp16>() {
+    return "fp16";
 }
 
 static inline uint64_t read_cycle_counter() {
@@ -862,9 +943,16 @@ static inline void matmul_for_core_t(int core_id, const MatmulRuntimeConfig& cfg
                core_id, cfg.m, cfg.n, cfg.k, cfg.block_m, cfg.block_n, cfg.block_k);
         return;
     }
-    if ((cfg.block_m % TILE_M) != 0 || (cfg.block_k % TILE_K) != 0) {
-        printf("[Core %d] [ERROR] block_M/block_K must be integer multiples of ARRAY_OUTPUT/INPUT(%d,%d), got (%d,%d)\n",
+    const bool block_k_supported =
+        (cfg.block_k <= TILE_K) || ((cfg.block_k % TILE_K) == 0);
+    if ((cfg.block_m % TILE_M) != 0 || !block_k_supported) {
+        printf("[Core %d] [ERROR] block_M must be a multiple of ARRAY_OUTPUT(%d); block_K must be <= ARRAY_INPUT(%d) or an integer multiple of it, got (%d,%d)\n",
                core_id, TILE_M, TILE_K, cfg.block_m, cfg.block_k);
+        return;
+    }
+    if (cfg.block_k < TILE_K && !WORKER_COMMAND_PROCESSOR_ENABLED) {
+        printf("[Core %d] [ERROR] block_K(%d) < ARRAY_INPUT(%d) requires WorkerCommandProcessor lane padding\n",
+               core_id, cfg.block_k, TILE_K);
         return;
     }
     if (cfg.block_n > TILE_N_MAX) {
@@ -1015,6 +1103,50 @@ static inline void matmul_for_core_t(int core_id, const MatmulRuntimeConfig& cfg
 
 static inline void matmul_for_core(int core_id, const MatmulRuntimeConfig& cfg, const MatmulTensorBindings* tensors) {
     matmul_for_core_t<int32_t>(core_id, cfg, tensors);
+}
+
+inline void matmul_fp16(int M, int N, int K, int block_M, int block_N, int block_K) {
+    const int core_id = sched_getcpu();
+    if (core_id < 0 || core_id >= TOTAL_CORES) {
+        printf("[ERROR] invalid runtime core id=%d, TOTAL_CORES=%d\n", core_id, TOTAL_CORES);
+        return;
+    }
+    const MatmulRuntimeConfig cfg = {
+        .m = M,
+        .n = N,
+        .k = K,
+        .block_m = block_M,
+        .block_n = block_N,
+        .block_k = block_K,
+    };
+    // FP16 is stored in GM/HBM while the configured float array performs
+    // the numerical accumulation in FP32.
+    matmul_for_core_t<float>(core_id, cfg, nullptr);
+}
+
+inline void matmul_with_tensors_fp16(
+    int M,
+    int N,
+    int K,
+    int block_M,
+    int block_N,
+    int block_K,
+    const MatmulTensorBindingsFP16& tensors
+) {
+    const int core_id = sched_getcpu();
+    if (core_id < 0 || core_id >= TOTAL_CORES) {
+        printf("[ERROR] invalid runtime core id=%d, TOTAL_CORES=%d\n", core_id, TOTAL_CORES);
+        return;
+    }
+    const MatmulRuntimeConfig cfg = {
+        .m = M,
+        .n = N,
+        .k = K,
+        .block_m = block_M,
+        .block_n = block_N,
+        .block_k = block_K,
+    };
+    matmul_for_core_t<SST::Golem::GolemFp16>(core_id, cfg, &tensors);
 }
 
 inline void matmul(int M, int N, int K, int block_M, int block_N, int block_K) {

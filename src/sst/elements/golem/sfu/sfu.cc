@@ -572,7 +572,20 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
         rowEngineScratchpadBytes_ == 0) {
         output_.fatal(CALL_INFO, -1, "Row Engine parameters must be positive\n");
     }
-    attentionOnlineContexts_.resize(rowEngineContexts_);
+    const bool attentionKvPairReuse =
+        params.find<bool>("attention_kv_pair_reuse", false);
+    const uint32_t attentionKvQueryGroupSize =
+        params.find<uint32_t>("attention_kv_query_group_size", 2);
+    if (attentionKvPairReuse && attentionKvQueryGroupSize != 2 &&
+        attentionKvQueryGroupSize != 4) {
+        output_.fatal(
+            CALL_INFO, -1,
+            "Attention K/V query group size must be 2 or 4 when reuse is enabled\n");
+    }
+    attentionOnlineContexts_.resize(
+        attentionKvPairReuse
+            ? static_cast<size_t>(16u * attentionKvQueryGroupSize)
+            : static_cast<size_t>(rowEngineContexts_));
     rowEngineTimebaseTicksPerSecond_ = getTimeConverter("1s")->getFactor();
     if (rowEngineTimebaseTicksPerSecond_ == 0) {
         output_.fatal(CALL_INFO, -1, "SST timebase conversion for 1s must be positive\n");
@@ -1954,8 +1967,9 @@ bool SFU::issueAttentionTile(const AttentionTileRequest& request,
     worker.localTileCallback = std::move(callback);
     const uint32_t contextCount = std::min(request.rows, rowEngineContexts_);
     for (uint32_t index = 0; index < contextCount; ++index) {
-        AttentionOnlineRowContext& online = attentionOnlineContexts_[index];
         const uint32_t globalRow = request.globalRowBegin + index;
+        AttentionOnlineRowContext& online = attentionOnlineContexts_[
+            globalRow % attentionOnlineContexts_.size()];
         if (request.keyTile == 0) {
             online.valid = true;
             online.jobId = request.jobId;
@@ -2022,7 +2036,8 @@ void SFU::issueTensorInputDma(const TensorWorkerKey& key, uint32_t contextIndex)
     context.laneValues.reserve(rowEngineVectorLanes_);
     const uint64_t rowBytes = static_cast<uint64_t>(worker.dispatch.expectedCols) * sizeof(float);
     if (worker.localTileMode) {
-        AttentionOnlineRowContext& online = attentionOnlineContexts_[contextIndex];
+        AttentionOnlineRowContext& online = attentionOnlineContexts_[
+            context.row % attentionOnlineContexts_.size()];
         if (worker.attentionKeyTile == 0) {
             online.valid = true;
             online.jobId = worker.attentionJobId;
@@ -2276,7 +2291,8 @@ void SFU::advanceTensorRowChunk(const TensorWorkerKey& key, uint32_t contextInde
                 finishTensorWorker(key, false);
                 return;
             }
-            AttentionOnlineRowContext& online = attentionOnlineContexts_[contextIndex];
+            AttentionOnlineRowContext& online = attentionOnlineContexts_[
+                context.row % attentionOnlineContexts_.size()];
             if (!online.valid || online.jobId != worker.attentionJobId ||
                 online.globalRow != context.row) {
                 finishTensorWorker(key, false);
@@ -2460,6 +2476,8 @@ void SFU::finishTensorWorker(const TensorWorkerKey& key, bool ok)
     const bool finalAttentionTile = localTileMode &&
         workerIt->second.attentionKeyTile + 1 == workerIt->second.attentionKeyTiles;
     const uint64_t attentionJobId = workerIt->second.attentionJobId;
+    const uint32_t attentionRowBegin = workerIt->second.dispatch.row;
+    const uint32_t attentionRows = workerIt->second.dispatch.expectedRows;
     const AttentionTileResult attentionResult = workerIt->second.attentionResult;
     std::function<void(bool, const AttentionTileResult&)> callback =
         std::move(workerIt->second.localTileCallback);
@@ -2467,7 +2485,11 @@ void SFU::finishTensorWorker(const TensorWorkerKey& key, bool ok)
     if (localTileMode) {
         if (finalAttentionTile) {
             for (AttentionOnlineRowContext& online : attentionOnlineContexts_) {
-                if (online.valid && online.jobId == attentionJobId) online.valid = false;
+                if (online.valid && online.jobId == attentionJobId &&
+                    online.globalRow >= attentionRowBegin &&
+                    online.globalRow - attentionRowBegin < attentionRows) {
+                    online.valid = false;
+                }
             }
         }
         callback(ok, attentionResult);

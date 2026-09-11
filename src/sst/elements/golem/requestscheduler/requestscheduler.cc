@@ -5,7 +5,6 @@
 #include <cctype>
 #include <cstddef>
 #include <cmath>
-#include <mutex>
 
 namespace {
 constexpr uint64_t SCHED_LOCAL_MAILBOX_BASE = 0x1A00;
@@ -60,75 +59,6 @@ struct TraceStats {
     uint64_t min = 0;
     uint64_t max = 0;
 };
-
-struct GlobalNodeCreditState {
-    std::mutex mutex;
-    bool initialized = false;
-    uint32_t numNodes = 0;
-    uint32_t creditCap = 1;
-    std::vector<uint32_t> credits;
-};
-
-GlobalNodeCreditState& globalNodeCreditState() {
-    static GlobalNodeCreditState state;
-    return state;
-}
-
-void ensureGlobalNodeCredits(uint32_t numNodes, uint32_t creditCap) {
-    auto& state = globalNodeCreditState();
-    std::lock_guard<std::mutex> lock(state.mutex);
-    const uint32_t cap = std::max<uint32_t>(creditCap, 1u);
-    if (!state.initialized) {
-        state.initialized = true;
-        state.numNodes = std::max<uint32_t>(numNodes, 1u);
-        state.creditCap = cap;
-        state.credits.assign(state.numNodes, state.creditCap);
-        return;
-    }
-
-    if (numNodes > state.numNodes) {
-        state.credits.resize(numNodes, state.creditCap);
-        state.numNodes = numNodes;
-    }
-}
-
-bool acquireGlobalNodeCredits(uint16_t node, uint32_t units) {
-    auto& state = globalNodeCreditState();
-    std::lock_guard<std::mutex> lock(state.mutex);
-    if (!state.initialized || node >= state.credits.size()) {
-        return false;
-    }
-    if (state.credits[node] < units) {
-        return false;
-    }
-    state.credits[node] -= units;
-    return true;
-}
-
-void releaseGlobalNodeCredits(uint16_t node, uint32_t units) {
-    auto& state = globalNodeCreditState();
-    std::lock_guard<std::mutex> lock(state.mutex);
-    if (!state.initialized || node >= state.credits.size() || units == 0) {
-        return;
-    }
-    state.credits[node] = std::min<uint32_t>(state.creditCap, state.credits[node] + units);
-}
-
-uint64_t globalNodeUsedMax(uint32_t expectedNodes) {
-    auto& state = globalNodeCreditState();
-    std::lock_guard<std::mutex> lock(state.mutex);
-    if (!state.initialized) {
-        return 0;
-    }
-    const uint32_t count = std::min<uint32_t>(expectedNodes, static_cast<uint32_t>(state.credits.size()));
-    uint64_t maxUsed = 0;
-    for (uint32_t node = 0; node < count; ++node) {
-        if (state.creditCap > state.credits[node]) {
-            maxUsed = std::max<uint64_t>(maxUsed, static_cast<uint64_t>(state.creditCap - state.credits[node]));
-        }
-    }
-    return maxUsed;
-}
 
 TraceStats buildTraceStats(const std::vector<uint64_t>& samples) {
     TraceStats out{};
@@ -188,14 +118,11 @@ RequestSchedulerEndpoint::RequestSchedulerEndpoint(SST::ComponentId_t id, SST::P
       groupId_(parseU32Param(params, "group_id", 0)),
       workerSlot_(parseI32Param(params, "worker_slot", -1)),
       queueDepth_(parseU32Param(params, "queue_depth", 64)),
-      initialNodeCredit_(parseU32Param(params, "initial_node_chunk_credit",
-                                       parseU32Param(params, "initial_node_credit", 2))),
-      nodeCreditChunkBytes_(parseU32Param(params, "node_credit_chunk_bytes", 512)),
-      panelChunkBytes_(parseU32Param(params, "panel_chunk_bytes",
-                                     parseU32Param(params, "node_credit_chunk_bytes", 2048))),
+      panelChunkBytes_(parseU32Param(params, "panel_chunk_bytes", 2048)),
       workerCreditCap_(0),
       workerSoftIssueCap_(0),
       managerIssueBudgetPerTick_(parseU32Param(params, "manager_issue_budget_per_tick", 2)),
+      tileChunkQuantum_(parseU32Param(params, "tile_chunk_quantum", 1)),
       submitBatchSize_(parseU32Param(params, "submit_batch_size", 4)),
       doneBatchSize_(parseU32Param(params, "done_batch_size", 4)),
       prefetchWindowDepth_(parseU32Param(params, "prefetch_windows", 1)),
@@ -206,6 +133,9 @@ RequestSchedulerEndpoint::RequestSchedulerEndpoint(SST::ComponentId_t id, SST::P
       numMemoryNodes_(parseU32Param(params, "num_memory_nodes", 5)),
       inferSubmitBytes_(parseI32Param(params, "infer_submit_bytes", 0) != 0),
       traceEvents_(parseI32Param(params, "trace_events", envFlagDefault("GOLEM_REQUEST_SCHEDULER_TRACE", 0)) != 0),
+      eventDrivenWorker_(parseI32Param(params, "event_driven_worker", 0) != 0),
+      groupRoundRobin_(parseI32Param(params, "group_round_robin", 0) != 0),
+      workerNeedsService_(true),
       slot0Bytes_(parseU32Param(params, "slot0_bytes", 0)),
       slot1Bytes_(parseU32Param(params, "slot1_bytes", 0)),
       ctrlLatency_(params.find<std::string>("ctrl_latency", "2ns")),
@@ -218,6 +148,7 @@ RequestSchedulerEndpoint::RequestSchedulerEndpoint(SST::ComponentId_t id, SST::P
       networkId_(-1),
       gm_(nullptr),
       nodeIssueCursor_(0),
+      groupWorkerIssueCursor_(0),
       submitSeen_(false),
       doneSeen_(false),
       nextWindowTxnId_(1),
@@ -234,14 +165,14 @@ RequestSchedulerEndpoint::RequestSchedulerEndpoint(SST::ComponentId_t id, SST::P
     if (managerIssueBudgetPerTick_ == 0) {
         managerIssueBudgetPerTick_ = 1;
     }
+    if (tileChunkQuantum_ == 0) {
+        tileChunkQuantum_ = 1;
+    }
     if (windowKtiles_ == 0) {
         windowKtiles_ = 1;
     }
-    if (nodeCreditChunkBytes_ == 0) {
-        nodeCreditChunkBytes_ = 512;
-    }
     if (panelChunkBytes_ == 0) {
-        panelChunkBytes_ = nodeCreditChunkBytes_;
+        panelChunkBytes_ = 2048;
     }
     if (prefetchWindowDepth_ == 0) {
         prefetchWindowDepth_ = 1;
@@ -255,16 +186,20 @@ RequestSchedulerEndpoint::RequestSchedulerEndpoint(SST::ComponentId_t id, SST::P
     if (bReuseMTiles_ == 0) {
         bReuseMTiles_ = 1;
     }
-    workerCreditCap_ = computeWorkerCreditCap();
+    const uint32_t derivedWorkerCreditCap = computeWorkerCreditCap();
+    const uint32_t configuredWorkerCreditCap = parseU32Param(params, "worker_credit_cap", 0);
+    workerCreditCap_ = configuredWorkerCreditCap != 0
+        ? std::min<uint32_t>(configuredWorkerCreditCap, 4096u)
+        : derivedWorkerCreditCap;
     workerSoftIssueCap_ = computeWorkerSoftIssueCap();
     reqIn_.resize(4, nullptr);
     nodeWorkerQueues_.resize(numMemoryNodes_);
     nodeWorkerIssueCursor_.resize(numMemoryNodes_, 0);
+    workerNodeIssueCursor_.resize(reqIn_.size(), 0);
     for (auto& perNode : nodeWorkerQueues_) {
         perNode.resize(reqIn_.size());
     }
     workerCredits_.resize(reqIn_.size(), workerCreditCap_);
-    initGlobalNodeFlow();
     configureLinks(params);
     registerClock("1GHz", new SST::Clock::Handler<RequestSchedulerEndpoint>(this, &RequestSchedulerEndpoint::tick));
 }
@@ -342,8 +277,19 @@ void RequestSchedulerEndpoint::init(unsigned int phase) {
     if (linkControl_) linkControl_->init(phase);
 }
 
+void RequestSchedulerEndpoint::bindGlobalMemory(GlobalMemoryAPI* globalMemory) {
+    gm_ = dynamic_cast<GlobalMemoryImplement*>(globalMemory);
+    if (globalMemory != nullptr && gm_ == nullptr) {
+        output_.fatal(CALL_INFO, -1,
+            "core=%u request scheduler requires golem.GlobalMemory, not the local fallback\n",
+            coreId_);
+    }
+    if (gm_ != nullptr && role_ == RequestSchedulerRole::WORKER && eventDrivenWorker_) {
+        gm_->ctrlSetReadCompletionCallback([this](uint64_t) { workerNeedsService_ = true; });
+    }
+}
+
 void RequestSchedulerEndpoint::setup() {
-    gm_ = GlobalMemoryImplement::lookupByCoreId(static_cast<int>(coreId_));
     if (role_ == RequestSchedulerRole::WORKER) {
         if (reqOut_ == nullptr) {
             output_.fatal(CALL_INFO, -1, "worker core=%u missing req_out\n", coreId_);
@@ -422,11 +368,6 @@ uint64_t RequestSchedulerEndpoint::composeWindowRequestId(
            (static_cast<uint64_t>(slot) << 48) |
            (static_cast<uint64_t>(targetNode & 0xffff) << 32) |
            (seq & 0xffffffffULL);
-}
-
-uint32_t RequestSchedulerEndpoint::nodeCreditUnitsForBytes(uint32_t bytes) const {
-    const uint32_t chunkBytes = nodeCreditChunkBytes_ == 0 ? 512u : nodeCreditChunkBytes_;
-    return std::max<uint32_t>(1u, (bytes + chunkBytes - 1u) / chunkBytes);
 }
 
 uint32_t RequestSchedulerEndpoint::chunkBytesForTransfer(const PendingTransfer& req) const {
@@ -675,7 +616,9 @@ void RequestSchedulerEndpoint::sampleManagerPressure() {
     }
     pressureWorkerUsedMaxSamples_.push_back(maxWorkerUsed);
 
-    pressureNodeUsedMaxSamples_.push_back(globalNodeUsedMax(numMemoryNodes_));
+    // Credit admission belongs to the destination memory-node NIC. Keep this
+    // compatibility series at zero for existing pressure parsers.
+    pressureNodeUsedMaxSamples_.push_back(0);
 }
 
 void RequestSchedulerEndpoint::emitManagerPressureSummary() const {
@@ -694,42 +637,18 @@ void RequestSchedulerEndpoint::emitManagerPressureSummary() const {
         " node_used_max(n=%zu mean=%.2f p50=%" PRIu64 " p95=%" PRIu64 " max=%" PRIu64 " cap=%u chunk_bytes=%u panel_chunk_bytes=%u)"
         " blocked(worker_credit=%" PRIu64 " node_credit=%" PRIu64
         " issue_pace=%" PRIu64 " network_send=%" PRIu64 ")"
-        " priority_pair(attempts=%" PRIu64 " issued=%" PRIu64 ")\n",
+        " priority_pair(attempts=%" PRIu64 " issued=%" PRIu64 ")"
+        " credit_owner=memory_node\n",
         coreId_,
         pressureTicks_, pressurePendingNonEmptyTicks_, pressureNoIssueTicks_,
         pressureIssuedRequests_,
         pending.count, pending.mean, pending.p50, pending.p95, pending.max,
         workerUsed.count, workerUsed.mean, workerUsed.p50, workerUsed.p95, workerUsed.max, workerCreditCap_,
         nodeUsed.count, nodeUsed.mean, nodeUsed.p50, nodeUsed.p95, nodeUsed.max,
-        initialNodeCredit_ == 0 ? 1 : initialNodeCredit_, nodeCreditChunkBytes_, panelChunkBytes_,
+        0u, 0u, panelChunkBytes_,
         pressureWorkerCreditBlocked_, pressureNodeCreditBlocked_, pressureIssuePaceBlocked_,
         pressureNetworkSendBlocked_,
         pressurePriorityPairAttempts_, pressurePriorityPairIssued_);
-}
-
-void RequestSchedulerEndpoint::initGlobalNodeFlow() {
-    if (role_ != RequestSchedulerRole::MANAGER) {
-        return;
-    }
-    ensureGlobalNodeCredits(
-        std::max<uint32_t>(numMemoryNodes_, 1u),
-        initialNodeCredit_ == 0 ? 1u : initialNodeCredit_);
-}
-
-bool RequestSchedulerEndpoint::acquireNodeBudget(const PendingTransfer& req, uint32_t nodeNeed) {
-    if (acquireGlobalNodeCredits(req.targetNode, nodeNeed)) {
-        return true;
-    }
-    pressureNodeCreditBlocked_++;
-    return false;
-}
-
-void RequestSchedulerEndpoint::releaseNodeCredits(uint16_t targetNode, uint32_t units) {
-    releaseGlobalNodeCredits(targetNode, units);
-}
-
-void RequestSchedulerEndpoint::refundNodeBudget(uint16_t targetNode, uint32_t units) {
-    releaseGlobalNodeCredits(targetNode, units);
 }
 
 uint64_t RequestSchedulerEndpoint::submitWindowTransaction(const WcpWindowTransaction& txn)
@@ -749,6 +668,7 @@ uint64_t RequestSchedulerEndpoint::submitWindowTransaction(const WcpWindowTransa
 
     workerWindowTxns_[state.txnId] = state;
     enqueueWindowTiles(workerWindowTxns_[state.txnId]);
+    workerNeedsService_ = true;
     return state.txnId;
 }
 
@@ -824,9 +744,11 @@ void RequestSchedulerEndpoint::enqueueWindowTiles(WorkerWindowTxnState& state)
             const uint64_t requestId = composeWindowRequestId(slot, targetNode, state.txnId, i);
             const uint64_t flagAddr = gm_->ctrlGetReadFlagAddr(slot);
             gm_->ctrlRegisterPendingReadRequest(requestId, dstAddr, flagAddr, requestId & 0xffffffffULL, bytes);
-            workerSubmitQ_.push_back({static_cast<uint8_t>(workerSlot_), static_cast<uint16_t>(coreId_), requestId,
-                                      srcAddr, dstAddr, bytes, targetNode,
-                                      flagAddr, requestId & 0xffffffffULL});
+            PendingTransfer pending{
+                static_cast<uint8_t>(workerSlot_), static_cast<uint16_t>(coreId_), requestId,
+                srcAddr, dstAddr, bytes, targetNode,
+                flagAddr, requestId & 0xffffffffULL};
+            workerSubmitQ_.push_back(std::move(pending));
 
             if (slot == 0) {
                 tile.matRequestId = requestId;
@@ -941,6 +863,7 @@ void RequestSchedulerEndpoint::retireTileReady(uint64_t txnId, uint32_t localTil
     }
     txnIt->second.tiles[localTileIdx].retired = true;
     enqueueWindowTiles(txnIt->second);
+    workerNeedsService_ = true;
 }
 
 bool RequestSchedulerEndpoint::isTransactionDone(uint64_t txnId) const
@@ -963,6 +886,7 @@ void RequestSchedulerEndpoint::retireTransaction(uint64_t txnId)
     if (txnIt != workerWindowTxns_.end()) {
         flushDoneForWindowTransaction(txnIt->second);
         workerWindowTxns_.erase(txnIt);
+        workerNeedsService_ = !workerSubmitQ_.empty();
     }
 }
 
@@ -1018,7 +942,12 @@ void RequestSchedulerEndpoint::handleReq(SST::Event* ev, int slot) {
                 return;
             }
             if (managerPendingCount() < queueDepth_) {
-                nodeWorkerQueues_[targetNode][worker].push_back({
+                if (traceEvents_ && ((requestId >> 48) & 0xffULL) == 1) {
+                    output_.output("[RequestScheduler][core=%u] PANEL_ENQUEUE slot=%zu node=%u src=0x%" PRIx64
+                                   " dst=0x%" PRIx64 " bytes=%u req=%" PRIu64 "\n",
+                                   coreId_, worker, targetNode, srcAddr, dstAddr, bytes, requestId);
+                }
+                PendingTransfer pending{
                     static_cast<uint8_t>(slot),
                     msg->srcCoreId,
                     requestId,
@@ -1027,7 +956,9 @@ void RequestSchedulerEndpoint::handleReq(SST::Event* ev, int slot) {
                     bytes,
                     targetNode,
                     completionFlagAddr,
-                    completionValue});
+                    completionValue,
+                    0};
+                nodeWorkerQueues_[targetNode][worker].push_back(std::move(pending));
             }
         };
 
@@ -1041,7 +972,8 @@ void RequestSchedulerEndpoint::handleReq(SST::Event* ev, int slot) {
                         std::min(msg->batchDstAddrs.size(), msg->batchBytes.size()),
                         std::min(
                             msg->batchTargetNodes.size(),
-                            std::min(msg->batchCompletionFlagAddrs.size(), msg->batchCompletionValues.size())))));
+                            std::min(msg->batchCompletionFlagAddrs.size(),
+                                              msg->batchCompletionValues.size())))));
             for (size_t i = 0; i < validCount; ++i) {
                 enqueue_submit(msg->batchRequestIds[i],
                                msg->batchSrcAddrs[i],
@@ -1062,19 +994,7 @@ void RequestSchedulerEndpoint::handleReq(SST::Event* ev, int slot) {
         }
     } else if (msg->type == RequestSchedulerMsgType::DONE) {
         auto recycle_done = [&](uint64_t requestId, uint16_t targetNode, uint64_t pendingClearCycle) {
-            uint16_t node = targetNode;
-            if (requestId != 0) {
-                node = static_cast<uint16_t>((requestId >> 32) & 0xffffULL);
-            }
-            if (node < numMemoryNodes_) {
-                uint32_t units = 1;
-                auto unitsIt = issuedNodeCreditUnits_.find(requestId);
-                if (unitsIt != issuedNodeCreditUnits_.end()) {
-                    units = unitsIt->second;
-                    issuedNodeCreditUnits_.erase(unitsIt);
-                }
-                releaseNodeCredits(node, units);
-            }
+            (void)targetNode;
             if (slot >= 0 && static_cast<size_t>(slot) < workerCredits_.size()) {
                 uint32_t& credit = workerCredits_[static_cast<size_t>(slot)];
                 if (credit < workerCreditCap_) {
@@ -1568,9 +1488,6 @@ void RequestSchedulerEndpoint::refillWorkerWindows() {
 }
 
 bool RequestSchedulerEndpoint::issueTransfer(const PendingTransfer& req) {
-    if (!gm_) {
-        gm_ = GlobalMemoryImplement::lookupByCoreId(static_cast<int>(coreId_));
-    }
     if (!linkControl_ || networkId_ < 0 || !gm_) {
         output_.verbose(CALL_INFO, 1, 0, "manager core=%u cannot issue req=%" PRIu64 " link=%p nid=%d gm=%p\n",
                         coreId_, req.requestId, linkControl_, networkId_, gm_);
@@ -1656,11 +1573,10 @@ void RequestSchedulerEndpoint::tryIssue() {
         return true;
     };
 
-    auto spendIssued = [&](const PendingTransfer& panel, uint32_t nodeNeed, bool consumeWorkerCredit) {
+    auto spendIssued = [&](const PendingTransfer& panel, bool consumeWorkerCredit) {
         if (consumeWorkerCredit) {
             workerCredits_[panel.workerSlot]--;
         }
-        issuedNodeCreditUnits_[panel.requestId] += nodeNeed;
         issuedThisCycle_++;
         issuedThisCall++;
         pressureIssuedRequests_++;
@@ -1688,13 +1604,7 @@ void RequestSchedulerEndpoint::tryIssue() {
         chunk.dstAddr = panel.dstAddr + panel.issuedBytes;
         chunk.bytes = chunkBytes;
         chunk.issuedBytes = 0;
-
-        const uint32_t nodeNeed = nodeCreditUnitsForBytes(chunk.bytes);
-        if (!acquireNodeBudget(chunk, nodeNeed)) {
-            return false;
-        }
         if (!issueTransfer(chunk)) {
-            refundNodeBudget(chunk.targetNode, nodeNeed);
             return false;
         }
 
@@ -1703,7 +1613,7 @@ void RequestSchedulerEndpoint::tryIssue() {
         if (panel.issuedBytes < panel.bytes) {
             q.push_back(panel);
         }
-        spendIssued(panel, nodeNeed, consumeWorkerCredit);
+        spendIssued(panel, consumeWorkerCredit);
         if (issuedPanel != nullptr) {
             *issuedPanel = panel;
         }
@@ -1799,36 +1709,148 @@ void RequestSchedulerEndpoint::tryIssue() {
         if (!issueQueueEntry(q, idx, &issuedPanel)) {
             return false;
         }
-        tryIssuePrioritySibling(q, issuedPanel);
+        // Pairing A/B siblings improves locality in the legacy node-first
+        // policy, but would let one worker consume two turns under group RR.
+        if (!groupRoundRobin_) {
+            tryIssuePrioritySibling(q, issuedPanel);
+        }
         return true;
+    };
+
+    // Lock each group-RR turn to one (window, tile, worker) bundle. The
+    // bounded quantum improves tile completion without monopolizing issue.
+    auto tryIssueSlotFromWorker = [&](size_t worker, uint8_t wantedSlot,
+                                      bool requireBundle, uint32_t bundleSeq,
+                                      PendingTransfer* issuedPanel) -> bool {
+        if (worker >= (nodeWorkerQueues_.empty() ? 0 : nodeWorkerQueues_[0].size())) {
+            return false;
+        }
+        const size_t nodeStart = worker < workerNodeIssueCursor_.size()
+                                     ? workerNodeIssueCursor_[worker] % nodeCount
+                                     : 0;
+        for (size_t nodeOff = 0; nodeOff < nodeCount; ++nodeOff) {
+            const size_t node = (nodeStart + nodeOff) % nodeCount;
+            auto& q = nodeWorkerQueues_[node][worker];
+            bool found = false;
+            uint64_t bestKey = 0;
+            size_t chosenIdx = 0;
+            for (size_t idx = 0; idx < q.size();) {
+                const uint32_t chunkBytes = chunkBytesForTransfer(q[idx]);
+                if (chunkBytes == 0) {
+                    q.erase(q.begin() + static_cast<std::ptrdiff_t>(idx));
+                    continue;
+                }
+                if (decodeRequestSlot(q[idx].requestId) != wantedSlot) {
+                    ++idx;
+                    continue;
+                }
+                if (requireBundle && static_cast<uint32_t>(q[idx].requestId) != bundleSeq) {
+                    ++idx;
+                    continue;
+                }
+                const bool consumeWorkerCredit = (q[idx].issuedBytes == 0);
+                if (consumeWorkerCredit && !hasWorkerIssueRoom(q[idx])) {
+                    if (!hasWorkerCredit(q[idx])) {
+                        pressureWorkerCreditBlocked_++;
+                    } else {
+                        pressureIssuePaceBlocked_++;
+                    }
+                    ++idx;
+                    continue;
+                }
+                const uint64_t key = requestPriorityKey(q[idx]);
+                if (!found || key < bestKey) {
+                    found = true;
+                    bestKey = key;
+                    chosenIdx = idx;
+                }
+                ++idx;
+            }
+            if (!found || !issueQueueEntry(q, chosenIdx, issuedPanel)) {
+                continue;
+            }
+            if (worker < workerNodeIssueCursor_.size()) {
+                workerNodeIssueCursor_[worker] = (node + 1) % nodeCount;
+            }
+            return true;
+        }
+        return false;
     };
 
     bool progress = true;
     while (progress && managerPendingCount() != 0 && hasIssueBudget()) {
         progress = false;
-        const size_t nodeStart = nodeIssueCursor_;
-
-        for (size_t off = 0; off < nodeCount; ++off) {
-            const size_t node = (nodeStart + off) % nodeCount;
-            auto& perWorker = nodeWorkerQueues_[node];
-            if (perWorker.empty()) {
-                continue;
+        if (groupRoundRobin_) {
+            const size_t workerCount = nodeWorkerQueues_.empty() ? 0 : nodeWorkerQueues_[0].size();
+            if (workerCount == 0) {
+                break;
             }
-            const size_t workerCount = perWorker.size();
-            const size_t startWorker = node < nodeWorkerIssueCursor_.size()
-                                           ? nodeWorkerIssueCursor_[node] % workerCount
-                                           : 0;
+            const size_t workerStart = groupWorkerIssueCursor_ % workerCount;
             for (size_t workerOff = 0; workerOff < workerCount; ++workerOff) {
-                const size_t worker = (startWorker + workerOff) % workerCount;
-                if (perWorker[worker].empty()) {
+                const size_t worker = (workerStart + workerOff) % workerCount;
+                bool issuedWorker = false;
+                uint32_t bundleSeq = 0;
+                PendingTransfer firstPanel{};
+                if (hasIssueBudget()) {
+                    issuedWorker = tryIssueSlotFromWorker(worker, 0, false, 0, &firstPanel);
+                }
+                if (issuedWorker && hasIssueBudget()) {
+                    bundleSeq = static_cast<uint32_t>(firstPanel.requestId);
+                    tryIssueSlotFromWorker(worker, 1, true, bundleSeq, nullptr);
+                }
+                // Some workloads can have a B-only continuation.  Preserve
+                // forward progress while keeping A-before-B whenever A exists.
+                if (!issuedWorker && hasIssueBudget()) {
+                    issuedWorker = tryIssueSlotFromWorker(worker, 1, false, 0, &firstPanel);
+                    if (issuedWorker) {
+                        bundleSeq = static_cast<uint32_t>(firstPanel.requestId);
+                    }
+                }
+                for (uint32_t round = 1;
+                     issuedWorker && round < tileChunkQuantum_ && hasIssueBudget(); ++round) {
+                    bool issuedRound = tryIssueSlotFromWorker(
+                        worker, 0, true, bundleSeq, nullptr);
+                    if (hasIssueBudget()) {
+                        issuedRound = tryIssueSlotFromWorker(
+                            worker, 1, true, bundleSeq, nullptr) || issuedRound;
+                    }
+                    if (!issuedRound) {
+                        break;
+                    }
+                }
+                if (issuedWorker) {
+                    groupWorkerIssueCursor_ = (worker + 1) % workerCount;
+                    progress = true;
+                    break;
+                }
+            }
+        } else {
+            const size_t nodeStart = nodeIssueCursor_;
+            for (size_t off = 0; off < nodeCount; ++off) {
+                const size_t node = (nodeStart + off) % nodeCount;
+                auto& perWorker = nodeWorkerQueues_[node];
+                if (perWorker.empty()) {
                     continue;
                 }
-                if (tryIssueFromQueue(perWorker[worker])) {
-                    if (node < nodeWorkerIssueCursor_.size()) {
-                        nodeWorkerIssueCursor_[node] = (worker + 1) % workerCount;
+                const size_t workerCount = perWorker.size();
+                const size_t startWorker = node < nodeWorkerIssueCursor_.size()
+                                               ? nodeWorkerIssueCursor_[node] % workerCount
+                                               : 0;
+                for (size_t workerOff = 0; workerOff < workerCount; ++workerOff) {
+                    const size_t worker = (startWorker + workerOff) % workerCount;
+                    if (perWorker[worker].empty()) {
+                        continue;
                     }
-                    nodeIssueCursor_ = (node + 1) % nodeCount;
-                    progress = true;
+                    if (tryIssueFromQueue(perWorker[worker])) {
+                        if (node < nodeWorkerIssueCursor_.size()) {
+                            nodeWorkerIssueCursor_[node] = (worker + 1) % workerCount;
+                        }
+                        nodeIssueCursor_ = (node + 1) % nodeCount;
+                        progress = true;
+                        break;
+                    }
+                }
+                if (progress) {
                     break;
                 }
             }
@@ -1847,15 +1869,19 @@ void RequestSchedulerEndpoint::tryIssue() {
 bool RequestSchedulerEndpoint::tick(SST::Cycle_t cycle) {
     lastTickCycle_ = cycle;
     if (role_ == RequestSchedulerRole::WORKER) {
+        if (eventDrivenWorker_ && !workerNeedsService_) {
+            return false;
+        }
+        workerNeedsService_ = false;
         pollWorkerMailbox();
         flushWorkerDirectSubmits();
         flushWorkerDirectDones();
         refillWorkerWindows();
         flushWorkerDirectSubmits();
-    } else {
-        if (!gm_) {
-            gm_ = GlobalMemoryImplement::lookupByCoreId(static_cast<int>(coreId_));
+        if (!workerSubmitQ_.empty()) {
+            workerNeedsService_ = true;
         }
+    } else {
         sampleManagerPressure();
         tryIssue();
     }

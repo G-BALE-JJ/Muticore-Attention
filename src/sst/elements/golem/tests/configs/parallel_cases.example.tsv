@@ -1,0 +1,4 @@
+# case_name followed by run_noc_dma_pipeline.sh arguments, separated by tabs
+noc_1200	--noc-link-bw	1200GB/s	--noc-xbar-bw	1200GB/s
+noc_800	--noc-link-bw	800GB/s	--noc-xbar-bw	800GB/s
+noc_600	--noc-link-bw	600GB/s	--noc-xbar-bw	600GB/s

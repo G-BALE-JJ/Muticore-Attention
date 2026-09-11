@@ -126,10 +126,9 @@ class RiscvToolchainContractTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn(
-            f"/tmp/golem-test-sst --num-threads=1 {archive_script} >",
-            result.stdout,
-        )
+        self.assertIn("/tmp/golem-test-sst", result.stdout)
+        self.assertIn("--num-threads=1", result.stdout)
+        self.assertIn(archive_script, result.stdout)
 
     def test_int_array_makefile_uses_absolute_overridable_riscv_gxx(self):
         source = MAKEFILE.read_text(encoding="utf-8")

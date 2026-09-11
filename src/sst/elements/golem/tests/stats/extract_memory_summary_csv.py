@@ -71,6 +71,13 @@ def main():
         required=True,
         help="dramsim3.txt path (repeat for MPI memory nodes)",
     )
+    parser.add_argument(
+        "--exclude-node",
+        action="append",
+        type=int,
+        default=[],
+        help="Exclude nodeN parent directories from aggregate statistics",
+    )
     parser.add_argument("--output", required=True, help="Output CSV path")
     args = parser.parse_args()
 
@@ -79,13 +86,24 @@ def main():
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    excluded_nodes = set(args.exclude_node)
+
+    def included(path_name):
+        match = re.fullmatch(r"node(\d+)", Path(path_name).parent.name)
+        return match is None or int(match.group(1)) not in excluded_nodes
+
+    json_names = [name for name in args.json if included(name)]
+    txt_names = [name for name in args.txt if included(name)]
+    if not json_names:
+        parser.error("all DRAMSim3 node inputs were excluded")
+
     channels = []
-    for json_name in args.json:
+    for json_name in json_names:
         data = json.loads(Path(json_name).read_text())
         channels.extend(data[key] for key in sorted(data.keys(), key=lambda x: int(x)))
 
     txt_channels = {}
-    for txt_name in args.txt:
+    for txt_name in txt_names:
         for channel, channel_stats in parse_channel_blocks(
             Path(txt_name).read_text(errors="ignore")
         ).items():
@@ -105,6 +123,18 @@ def main():
         weighted_avg_latency = (
             sum(lat * cnt for lat, cnt in zip(avg_latencies, reads_done)) / total_reads
         )
+
+    write_hist = {}
+    for channel in channels:
+        for latency, count in (channel.get("write_latency") or {}).items():
+            cycle = int(latency)
+            write_hist[cycle] = write_hist.get(cycle, 0) + int(count)
+    write_hist_total = sum(write_hist.values())
+    weighted_avg_write_latency = (
+        sum(cycle * count for cycle, count in write_hist.items()) / write_hist_total
+        if write_hist_total > 0
+        else 0.0
+    )
 
     global_hist = {}
     tail_ge_100 = 0
@@ -136,6 +166,7 @@ def main():
 
     rows = [
         ["metric", "value"],
+        ["data_node_count", len(json_names)],
         ["channel_count", len(channels)],
         ["total_reads_done", total_reads],
         ["total_writes_done", total_writes],
@@ -149,8 +180,14 @@ def main():
             f"{estimate_p95_from_histogram(global_hist):.6f}",
         ],
         ["mem_read_tail_ge_100_pct", f"{tail_ge_100_pct:.6f}"],
-        ["hbm_avg_bandwidth", f"{bandwidth_mean:.6f}"],
-        ["hbm_peak_bandwidth", f"{max(avg_bandwidths) if avg_bandwidths else 0.0:.6f}"],
+        ["mem_avg_write_latency_cycles", f"{weighted_avg_write_latency:.6f}"],
+        [
+            "mem_p95_write_latency_cycles",
+            f"{estimate_p95_from_histogram(write_hist):.6f}",
+        ],
+        ["hbm_channel_avg_bandwidth_gbps", f"{bandwidth_mean:.6f}"],
+        ["hbm_aggregate_bandwidth_gbps", f"{sum(avg_bandwidths):.6f}"],
+        ["hbm_peak_channel_bandwidth_gbps", f"{max(avg_bandwidths) if avg_bandwidths else 0.0:.6f}"],
         ["hbm_channel_bandwidth_imbalance", f"{bandwidth_imbalance:.6f}"],
     ]
 

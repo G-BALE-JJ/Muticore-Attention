@@ -20,10 +20,13 @@
 #include "sst/elements/memHierarchy/membackend/memBackend.h"
 
 
-#include "base/base.h"
-#include "base/request.h"
-#include "frontend/frontend.h"
-//#include "memory_system/memory_system.h"
+#include "ramulator/base/request.h"
+#include "ramulator/frontend/i_frontend.h"
+#include "ramulator/memory_system/i_memory_system.h"
+
+#include <deque>
+#include <map>
+#include <vector>
 
 
 #ifdef OLD_DEBUG
@@ -42,7 +45,9 @@ public:
 
     SST_ELI_DOCUMENT_PARAMS( MEMBACKEND_ELI_PARAMS,
             /* Own parameters */
-            {"configFile",  "Name of the Ramulator2 Device config file", NULL} )
+            {"configFile",  "Name of the Ramulator2 device config file", NULL},
+            {"address_offset", "Address subtracted before sending a request to Ramulator2", "0"},
+            {"backend_id", "Memory-node identifier used in backend summaries", "0"} )
 
 /* Begin class definition */
     ramulator2Memory(ComponentId_t id, Params &params);
@@ -51,13 +56,42 @@ public:
     virtual void finish();
 
 protected:
+    struct PendingRequest {
+        Cycle_t issueCycle;
+        bool isWrite;
+        unsigned numBytes;
+        Ramulator::Addr_t transactionAddr;
+    };
+
+    struct TransactionDependency {
+        unsigned readers = 0;
+        bool writer = false;
+    };
+
+    void ramulatorDone(ReqId reqId);
+    void completeReadyRequests();
+
     std::string config_path;
     Ramulator::IFrontEnd* ramulator2_frontend;
     Ramulator::IMemorySystem* ramulator2_memorysystem;
 
-    // Track outstanding requests
-    std::map<uint64_t, std::deque<ReqId> > dramReqs;
-    std::set<ReqId> writes;
+    Addr addressOffset_;
+    unsigned transactionBytes_;
+    unsigned backendId_;
+    Cycle_t currentCycle_;
+    std::map<ReqId, PendingRequest> pendingRequests_;
+    std::map<Ramulator::Addr_t, TransactionDependency> outstandingTransactions_;
+    std::deque<ReqId> completedRequests_;
+    std::vector<uint64_t> readLatencies_;
+    uint64_t completedReads_;
+    uint64_t completedWrites_;
+    uint64_t completedReadBytes_;
+    uint64_t completedWriteBytes_;
+    uint64_t firstReadArrivalCycle_;
+    uint64_t lastReadCompleteCycle_;
+    uint64_t dependencyReadBlocked_;
+    uint64_t dependencyWriteBlocked_;
+    uint64_t concurrentAliasReads_;
 
 private:
 };

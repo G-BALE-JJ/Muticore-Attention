@@ -99,6 +99,7 @@ public:
 
     virtual bool RoCCFull() = 0;
     virtual bool isBusy() = 0;
+    virtual bool isCPUWaitBlocked() { return false; }
     virtual size_t roccQueueSize() = 0;
     virtual void push(RoCCCommand* rocc_me) = 0;
     virtual RoCCResponse* respond() = 0;

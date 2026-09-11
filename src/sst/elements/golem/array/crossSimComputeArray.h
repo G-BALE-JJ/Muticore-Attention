@@ -272,14 +272,12 @@ public:
         size_t elemBytes,
         uint64_t tag,
         typename ComputeArray::BufferCallback callback) override {
-        if (arrayIDs.empty() ||
-            matrix.size() != inputArraySize * outputArraySize || elemBytes == 0 ||
-            std::any_of(arrayIDs.begin(), arrayIDs.end(),
-                        [this](uint32_t id) { return id >= numArrays; })) {
+        if (!validateMatrixBroadcastRequest(
+                arrayIDs, matrix.size(), elemBytes)) {
             return false;
         }
-        return enqueueBufferTransfer(
-            matrix.size() * elemBytes, tag,
+        return enqueueMatrixBroadcastTransfer(
+            matrix.size() * elemBytes, arrayIDs.size(), tag,
             [this, arrayIDs, matrix, tag, callback = std::move(callback)]() {
                 for (uint32_t arrayID : arrayIDs) {
                     for (size_t index = 0; index < matrix.size(); ++index) {
@@ -352,7 +350,7 @@ public:
         if (arrayID >= numArrays || elemBytes == 0) {
             return false;
         }
-        return enqueueBufferTransfer(
+        return enqueueOutputReadTransfer(arrayID,
             outputArraySize * elemBytes, tag,
             [this, arrayID, tag, callback = std::move(callback)]() {
                 std::vector<double> values(outputVectors[arrayID].size(), 0.0);

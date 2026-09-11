@@ -12,19 +12,20 @@ AC_DEFUN([SST_CHECK_RAMULATOR2], [
   LIBS_saved="$LIBS"
 
   AS_IF([test ! -z "$with_ramulator2" -a "$with_ramulator2" != "yes"],
-    [RAMULATOR2_CPPFLAGS="-I$with_ramulator2/src/ -I$with_ramulator2/ext/spdlog/include/ \
-      -I$with_ramulator2/ext/yaml-cpp/include/ -DRAMULATOR2 -DHAVE_RAMULATOR2"
+    [RAMULATOR2_CPPFLAGS="-I$with_ramulator2/src -I$with_ramulator2/ext/yaml-cpp/include -I$with_ramulator2/ext/fmt/include -DRAMULATOR2 -DHAVE_RAMULATOR2"
+     RAMULATOR2_CXXFLAGS="-std=c++20"
      CPPFLAGS="$RAMULATOR2_CPPFLAGS $AM_CPPFLAGS $CPPFLAGS"
-     CXXFLAGS="$AM_CXXFLAGS $CXXFLAGS"
+     CXXFLAGS="$AM_CXXFLAGS $CXXFLAGS $RAMULATOR2_CXXFLAGS"
      RAMULATOR2_LDFLAGS="-L$with_ramulator2"
      RAMULATOR2_LIBDIR="$with_ramulator2"
      LDFLAGS="$RAMULATOR2_LDFLAGS $AM_LDFLAGS $LDFLAGS"],
     [RAMULATOR2_CPPFLAGS=
+     RAMULATOR2_CXXFLAGS=
      RAMULATOR2_LDFLAGS=
      RAMULATOR2_LIBDIR=])
 
   AC_LANG_PUSH(C++)
-  AC_CHECK_HEADERS([base/base.h], [], [sst_check_ramulator2_happy="no"])
+  AC_CHECK_HEADERS([ramulator/base/factory.h ramulator/frontend/i_frontend.h ramulator/memory_system/i_memory_system.h], [], [sst_check_ramulator2_happy="no"])
   AC_CHECK_FILE([$with_ramulator2/libramulator.so], #[_ZZN4YAML3Exp3TagEvE1e],
     [sst_check_ramulator2_happy="yes"], [sst_check_ramulator2_happy="no"])
   AS_IF([test "$sst_check_ramulator2_happy" = "yes"],
@@ -37,6 +38,7 @@ AC_DEFUN([SST_CHECK_RAMULATOR2], [
   LIBS="$LIBS_saved"
 
   AC_SUBST([RAMULATOR2_CPPFLAGS])
+  AC_SUBST([RAMULATOR2_CXXFLAGS])
   AC_SUBST([RAMULATOR2_LDFLAGS])
   AC_SUBST([RAMULATOR2_LIB])
   AC_SUBST([RAMULATOR2_LIBDIR])

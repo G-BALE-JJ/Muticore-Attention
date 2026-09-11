@@ -274,6 +274,7 @@ static inline void gemm_tiled_baseline_ctrl(
             .n_group_count = static_cast<uint32_t>(gemm_n_groups(default_matmul_runtime_config())),
             .b_reuse_m_tiles = static_cast<uint32_t>(B_REUSE_M_TILES),
             .m_group_count = static_cast<uint32_t>(gemm_m_groups(default_matmul_runtime_config())),
+            .descriptor_start_cycle = 0,
         };
         write_worker_task_list_header(core_id, header);
         mark_exec_window_begin(stats, read_cycle_counter());
@@ -667,6 +668,12 @@ inline void matmul_for_core_ctrl_t(int core_id, const MatmulRuntimeConfig& cfg, 
             tasks_done++;
         }
         if (tasks_done > 0) {
+            const int barrier_participants = std::min(ACTIVE_GEMM_CORES, wcp_tasks);
+            const uint64_t descriptor_start_cycle = synchronize_worker_descriptor_start(
+                core_id,
+                worker_slot,
+                barrier_participants);
+            stats.descriptor_barrier_cycle = descriptor_start_cycle;
             const uint64_t task_loop_begin = read_cycle_counter();
             WorkerTaskListHeaderRuntime header = {
                 .worker_slot = static_cast<uint32_t>(worker_slot),
@@ -707,8 +714,11 @@ inline void matmul_for_core_ctrl_t(int core_id, const MatmulRuntimeConfig& cfg, 
                 .n_group_count = static_cast<uint32_t>(gemm_n_groups(cfg)),
                 .b_reuse_m_tiles = static_cast<uint32_t>(B_REUSE_M_TILES),
                 .m_group_count = static_cast<uint32_t>(gemm_m_groups(cfg)),
+                .descriptor_start_cycle = descriptor_start_cycle,
             };
+            stats.descriptor_mm2gm_start_cycle = read_cycle_counter();
             write_worker_task_list_header_at(core_id, desc_base, header);
+            stats.descriptor_mm2gm_end_cycle = read_cycle_counter();
             const uint64_t task_loop_end = read_cycle_counter();
             stats.task_desc_overhead_cycles += (task_loop_end - task_loop_begin);
 
@@ -789,6 +799,12 @@ inline void matmul_for_core_ctrl_t(int core_id, const MatmulRuntimeConfig& cfg, 
                stats.submit_pack_cycles,
                stats.finish_publish_cycles,
                total_cycles);
+        printf("[Core %d] [%s] FRONTEND_BREAKDOWN barrier=%" PRIu64
+               " descriptor_mm2gm_start=%" PRIu64
+               " descriptor_mm2gm_end=%" PRIu64 "\n",
+               core_id, dtype_label<T>(), stats.descriptor_barrier_cycle,
+               stats.descriptor_mm2gm_start_cycle,
+               stats.descriptor_mm2gm_end_cycle);
         return;
     }
 
@@ -917,4 +933,24 @@ inline void matmul_with_tensors_ctrl_fp32(int M, int N, int K, int block_M, int 
     }
     const MatmulRuntimeConfig cfg = {.m = M, .n = N, .k = K, .block_m = block_M, .block_n = block_N, .block_k = block_K};
     matmul_for_core_ctrl_t<float>(core_id, cfg, &tensors);
+}
+
+inline void matmul_ctrl_fp16(int M, int N, int K, int block_M, int block_N, int block_K) {
+    const int core_id = sched_getcpu();
+    if (core_id < 0 || core_id >= TOTAL_CORES) {
+        printf("[ERROR] invalid runtime core id=%d, TOTAL_CORES=%d\n", core_id, TOTAL_CORES);
+        return;
+    }
+    const MatmulRuntimeConfig cfg = {.m = M, .n = N, .k = K, .block_m = block_M, .block_n = block_N, .block_k = block_K};
+    matmul_for_core_ctrl_t<float>(core_id, cfg, nullptr);
+}
+
+inline void matmul_with_tensors_ctrl_fp16(int M, int N, int K, int block_M, int block_N, int block_K, const MatmulTensorBindingsFP16& tensors) {
+    const int core_id = sched_getcpu();
+    if (core_id < 0 || core_id >= TOTAL_CORES) {
+        printf("[ERROR] invalid runtime core id=%d, TOTAL_CORES=%d\n", core_id, TOTAL_CORES);
+        return;
+    }
+    const MatmulRuntimeConfig cfg = {.m = M, .n = N, .k = K, .block_m = block_M, .block_n = block_N, .block_k = block_K};
+    matmul_for_core_ctrl_t<SST::Golem::GolemFp16>(core_id, cfg, &tensors);
 }

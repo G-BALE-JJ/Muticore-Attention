@@ -80,11 +80,15 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+_attention_fused = _env_flag("GOLEM_ATTENTION_FUSED", False)
+_attention_local_wcp = _env_flag(
+    "GOLEM_ATTENTION_GENERIC_GEMM_ENABLE", _attention_fused
+)
 _control_plane_defaults = {
     "GOLEM_GROUP_MANAGER_ENABLE": False,
     "GOLEM_CTRL_LINK_ENABLE": False,
-    "GOLEM_REQUEST_SCHEDULER_ENABLE": True,
-    "GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE": False,
+    "GOLEM_REQUEST_SCHEDULER_ENABLE": not _attention_fused,
+    "GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE": _attention_local_wcp,
 }
 _manager_rocc_only = _env_flag("GOLEM_SFU_MANAGER_COORDINATOR", False)
 _enabled_control_plane = [
@@ -92,6 +96,7 @@ _enabled_control_plane = [
     for name, default in _control_plane_defaults.items()
     if _env_flag(name, default)
     and not (name == "GOLEM_GROUP_MANAGER_ENABLE" and _manager_rocc_only)
+    and not (name == "GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE" and _attention_local_wcp)
 ]
 if _enabled_control_plane:
     raise ValueError(
@@ -299,14 +304,32 @@ for key in process_env_keys:
     if key in os.environ:
         process_env_entries.append(f"{key}={os.environ[key]}")
 
+attention_guest_args = []
+if _attention_fused:
+    attention_guest_arg_names = (
+        "GOLEM_ATTENTION_GUEST_MANAGER_QUERIES",
+        "GOLEM_ATTENTION_GUEST_KEYS",
+        "GOLEM_ATTENTION_GUEST_HEAD_DIM",
+    )
+    missing_attention_args = [
+        name for name in attention_guest_arg_names if name not in os.environ
+    ]
+    if missing_attention_args:
+        raise ValueError(
+            "missing Attention guest arguments: " + ", ".join(missing_attention_args)
+        )
+    attention_guest_args = [os.environ[name] for name in attention_guest_arg_names]
+
 for core_id in range(numCpus):
     process_params = {
         "env_count": len(process_env_entries),
         "exe": full_exe_name,
         "arg0": exe_name,
         "arg1": str(core_id),
-        "argc": 2,
+        "argc": 2 + len(attention_guest_args),
     }
+    for idx, argument in enumerate(attention_guest_args, start=2):
+        process_params[f"arg{idx}"] = argument
     for idx, env_entry in enumerate(process_env_entries):
         process_params[f"env{idx}"] = env_entry
     processList.append((1, process_params))
@@ -576,6 +599,39 @@ for idx, router_id in enumerate(MEMORY_ROUTERS):
             ),
             "golem_dma_response_chunk_bytes": os.getenv("GOLEM_DMA_RESPONSE_CHUNK_BYTES", "0"),
             "golem_dma_response_vn": os.getenv("GOLEM_DMA_RESPONSE_VN", "1"),
+            "golem_dma_response_drain_limit": os.getenv(
+                "GOLEM_DMA_RESPONSE_DRAIN_LIMIT", "0"
+            ),
+            "golem_dma_credit_cap": os.getenv(
+                "GOLEM_DMA_NODE_CHUNK_CREDITS", "128"
+            ),
+            "golem_dma_credit_chunk_bytes": os.getenv(
+                "GOLEM_DMA_CREDIT_CHUNK_BYTES", "16384"
+            ),
+            "golem_dma_admission_limit": os.getenv(
+                "GOLEM_DMA_ADMISSION_LIMIT", "0"
+            ),
+            "golem_dma_window_priority_enable": os.getenv(
+                "GOLEM_DMA_WINDOW_PRIORITY_ENABLE", "0"
+            ),
+            "golem_dma_window_reorder_cycles": os.getenv(
+                "GOLEM_DMA_WINDOW_REORDER_CYCLES", "512"
+            ),
+            "golem_dma_tile_chunk_quantum": os.getenv(
+                "GOLEM_DMA_TILE_CHUNK_QUANTUM", "1"
+            ),
+            "golem_dma_response_tile_priority_enable": os.getenv(
+                "GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE", "0"
+            ),
+            "golem_dma_response_reorder_cycles": os.getenv(
+                "GOLEM_DMA_RESPONSE_REORDER_CYCLES", "0"
+            ),
+            "golem_dma_response_max_starvation_cycles": os.getenv(
+                "GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES", "65536"
+            ),
+            "golem_dma_admission_max_starvation_cycles": os.getenv(
+                "GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES", "4096"
+            ),
             "golem_dma_trace": os.getenv("GOLEM_DMA_TRACE", "0"),
         }
     )

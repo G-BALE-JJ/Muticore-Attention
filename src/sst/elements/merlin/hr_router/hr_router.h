@@ -68,6 +68,9 @@ public:
         {"num_vns",            "Number of VNs.","2"},
         {"vn_remap",           "Array that specifies the vn remapping for each node in the systsm."},
         {"vn_remap_shm",       "Name of shared memory region for vn remapping.  If empty, no remapping is done", ""},
+        {"vn_priority_order",  "Comma-separated VNs in descending output priority. Empty preserves round-robin.", ""},
+        {"vn_starvation_vn",   "VN allowed to bypass priority after vn_max_starvation_cycles.", "-1"},
+        {"vn_max_starvation_cycles", "Maximum network age before vn_starvation_vn is serviced. 0 disables bypass.", "0"},
         {"debug",              "Turn on debugging for router. Set to 1 for on, 0 for off.", "0"}
     )
 

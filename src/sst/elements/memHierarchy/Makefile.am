@@ -441,6 +441,7 @@ libmemHierarchy_la_SOURCES += membackend/ramulator2Backend.cc \
 	membackend/ramulator2Backend.h
 nobase_sst_HEADERS += membackend/ramulator2Backend.h
 AM_CPPFLAGS += $(RAMULATOR2_CPPFLAGS) -DHAVE_LIBRAMULATOR2
+AM_CXXFLAGS += $(RAMULATOR2_CXXFLAGS)
 endif
 
 if HAVE_DRAMSIM
@@ -531,4 +532,3 @@ install-exec-hook:
 	$(SST_REGISTER_TOOL) RAMULATOR2 LIBDIR=$(RAMULATOR2_LIBDIR)
 	$(SST_REGISTER_TOOL) SST_ELEMENT_SOURCE     memHierarchy=$(abs_srcdir)
 	$(SST_REGISTER_TOOL) SST_ELEMENT_TESTS      memHierarchy=$(abs_srcdir)/tests
-

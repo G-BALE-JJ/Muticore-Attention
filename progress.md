@@ -45,3 +45,80 @@
 - 最终回归：Attention 13 项、GEMM MPI 4 项、RISC-V toolchain 5 项全部通过；shell/Python 语法、baseline JSON、`git diff --check` 全部通过，GEMM 三个关键路径无 diff。
 - 根据最终复审补齐构图证据：E3 4-rank 运行时 manifest 覆盖 200 个顶层组件，OS、OS L1、目录、内存、CPU 子系统和路由器均无缺失、多余或错放。
 - 最终复审无 Critical/Important；其余命名、帮助文本和完整性负向测试三个 Minor 也已处理。
+- 开始下一阶段：量化 E3 MPI 仿真加速，并将已构建的 E4 扩展为 1/2/4-rank 可冻结回归。
+- 确定 E3 计时口径为 runner 原生 `wall_time_sec`；发现 1/2/4 rank 均已有两次有效、相互接近的独立样本。
+- E3 墙钟中位数：rank1 `95.5s`、rank2 `48.5s`、rank4 `34.0s`；对应加速比 `1.00x/1.97x/2.81x`，并行效率 `100%/98.5%/70.2%`。
+- E4 单-rank 完整仿真与数值/生命周期验证 PASS，artifact 位于 `/tmp/fused_attention_e4_s2048_d128`，墙钟 `383s`。
+- E4 2-rank PASS，result/lifecycle 与单-rank JSON 完全相同，placement 200/200；墙钟 `410s`，未获得主机加速。
+- E4 4-rank PASS，result/lifecycle 与单-rank JSON 完全相同，placement 200/200；墙钟 `165s`，相对单-rank `2.32x`。
+- 新增 E4 single/MPI2/MPI4 冻结基线，统一入口支持 `--profile e3|e4`；正式 E4 MPI4 入口实测显示 frozen baseline MATCH。
+- 正式 E3 MPI4 入口再次通过；新增样本 `33s`，不改变 E3 rank4 中位数 `34s`。
+- 独立审查无 Critical/Important；补齐带值参数的缺参处理及 `--show-config` 轻量 profile 路由契约，Attention 契约增至 16 项。
+- 最终验证完成：Attention 16 项、GEMM MPI 4 项、RISC-V toolchain 5 项通过；shell/Python 语法、七份 JSON、`git diff --check` 通过，GEMM 关键路径保持无 diff。
+- 综合评估结论：当前 Attention MPI 最小切分单位是 manager+4 workers 的 query group，粒度明显粗于 GEMM；下一阶段转向 tile-level MPI，不直接按单个 GEMM 指令切分。
+- 后续路线确定为 tile-level MPI -> 独立多头 Attention -> 单 rank Top-1 MoE -> MPI token dispatch；每一阶段均须先通过数值/生命周期门禁，再进入性能优化。
+- 重新按 wall time 目标评估后，下一步调整为 E4 1/2/4-rank 性能决策测量；tile-level MPI 变为有门槛的条件性实现，不再默认立即开发。
+- E4 性能决策测量完成：1-rank `383/369/388s`，2-rank `410/247/189s`，4-rank `165/140/145s`；中位数加速为 `1.00x/1.55x/2.64x`，全部运行数值、生命周期和 placement PASS。
+- 测量显示 2-rank 波动较大（`189-410s`），当前不能仅凭 wall time 证明 tile-level MPI 必然有收益；下一步先在空闲主机复测或采集 rank 等待/负载数据，再决定是否实现。
+- 阶段 11 测量任务完成；当前暂缓 tile-level MPI，下一步是 PV/DMA 路径分析与 rank 级等待指标提取。
+- 最新 E4 rank 级统计显示 2-rank 两个 rank 的 tile 总工作量差异约 0.03%，4-rank 四个 rank 差异小于 0.1%；当前没有负载不均证据支持立即改为 tile-level MPI。
+- 性能决策转向 PV/DMA 路径分析：E4 tile breakdown 中 PV matrix programming 占主要周期，应优先评估该路径的优化开关和内存等待。
+- E3 4-rank 五个 PV/KV 单变量实验均 PASS；`--pv-v-tile-reuse` 最优，为 `31s/3327935 cycles`，优于原始 `34s/3561012 cycles`。
+- E4 4-rank `--pv-v-tile-reuse` 两次均 PASS，wall time `118/119s`，completion `13237937`，PV matrix programming `8587264 cycles`；相对原始 4-rank 中位数 `145s` 稳定改善约 18%。
+- 已新增 `baseline/pv_optimization.json`；该优化暂作为可选候选，不改动默认冻结基线，因为它会改变模拟生命周期周期。
+- E4 `--pv-v-tile-reuse` 1-rank/2-rank 追加验证分别为 `342s`/`187s`，均 PASS；优化后 1/2/4-rank 的 completion 均为 `13237937 cycles`。
+- PV V-tile reuse 已在全部 E4 rank 配置下通过功能验证；下一步只评审 optimized baseline 的独立入口，不覆盖默认基线。
+- 已将 PV V tile reuse 从无界 `vPayload` 假设改为 RoCC 内固定 16KiB VTileBuffer 语义：每个 key tile 清空，panel 0 填充并记录 `vTileTag`，后续 panel 需 tag 命中且 tile bytes 不超过容量才复用；容量不足自动回退 Local GM。
+- 新增 `attention_pv_v_tile_buffer_bytes` 参数及 `attention_pv_v_tile_buffer_{hits,misses,bytes_read,bytes_reused}` 统计，并接入 cpu_builder、float/int ELI 和契约测试。
+- 本地 element build/install 成功；契约测试 17/17 通过。当前受限执行环境中 OpenMPI 在 `MPI_Init` 前因无可用网络接口失败，尚未能在该环境完成运行时回归。
+- 为 VTileBuffer 命中路径加入可配置的 `attention_pv_v_tile_buffer_hit_ticks`（默认 1 cycle）和 `vTileBufferWaiting` 状态；命中先等待再进入 PV matrix programming，并记录 `attention_pv_v_tile_buffer_wait_ticks`。
+- 第二阶段源码契约、Python 语法检查和本地 SST element rebuild/install 均通过；运行时回归仍受同一 OpenMPI socket 限制。
+- 获得主机权限后确认 `mpirun -np 4 hostname` 正常；先前 OpenMPI 失败仅来自沙箱 socket 限制。
+- 首次主机回归发现新增 VTileBuffer statistics 缺少 ELI 声明，SST 在 time 0 拒绝组件实例化；已为 float/int RoCC 补齐全部 5 个统计项并重新构建安装。
+- 修复后 E3 VTileBuffer 1-rank 和 4-rank 均完整 PASS，数值与 lifecycle JSON 完全一致；completion `3328883 cycles`，wall time `88s/32s`，4-rank 主机加速 `2.75x`。
+- 根据独立代码审查补强自动验收：scale stats verifier 现在精确校验每 worker 的 VTileBuffer hits/misses/bytes/wait，并可推导容量不足回退；契约测试覆盖正常命中、8KiB 容量不足和 reuse 关闭，测试增至 18/18。
+- 真实 E3 1-rank/4-rank stats 重新通过增强后的 verifier，均为 `PASS`、0 mismatches。
+- VTileBuffer 已分配 Local GM 中紧邻 attention window 的保留区域，并支持 `attention_pv_v_tile_buffer_offset` 显式布局；panel 0 会异步写入，但 staging hit 不从该区域读回。
+- 新增 E3 4-rank staging/base 对照：baseline `3.65572 ms, 3,561,012 cycles, 33 s`；`vPayload` staging `3.45646 ms, 3,361,773 cycles, 32 s`，模拟 cycles 降低 `5.60%`，本次 wall time 降低 `3.03%`，两者均 PASS；该数据不代表 Local GM direct-hit。
+- 受控重复测量完成：baseline 三次均为 `33 s / 3,561,012 cycles`，`vPayload` staging 为 `32/32/31 s / 3,361,773 cycles`；wall time 中位数仍降低 `3.03%`，cycles 完全稳定。
+- E4 4-rank 重复对照完成：baseline `125/126/125 s`、`14,169,968 cycles`；`vPayload` staging `120/121/120 s`、`13,373,920 cycles`。wall time 中位数降低 `4.0%`，cycles 降低 `5.62%`，6 次运行全部 PASS。
+- 检查确认 GlobalMemory 已实现 Local GM read/write ports、队列深度、带宽和排队 cycles；E3 2-read-port 敏感性测试为 `3,358,735 cycles / 32 s`，相比默认 1-read-port 仅改善约 `0.09%` cycles，verifier PASS。下一步仅需在 E4 复核，不新增重复端口组件。
+- E4 2-read-port 敏感性测试 PASS：`13,359,788 cycles / 119 s`，相比默认 1-read-port 的 `13,373,920 cycles / 120 s` 仅改善约 `0.11%` cycles。端口模型阶段完成，不再扩展复杂竞争组件。
+- VTileBuffer hit 已切换为 Local GM `localReadAsync()` 真实读回路径；E3 4-rank PASS，`3,594,923 cycles / 34 s`，相对 baseline `3,561,012 cycles / 33 s` 增加约 `0.95%`。当前结论：软件 staging 版本有性能收益，Local GM direct-hit 版本满足硬件真实性但需要专用低延迟阵列接口才能重新获得收益。
+- 根据当前目标恢复 `vPayload` staging hit 作为推荐路径；direct-hit 代码已撤回但实验结果永久保留，恢复后的 E3 4-rank run PASS，completion `3,361,773 cycles`。
+- 开始精简收尾验证：不增加优化专用回归入口；`scripts/test_flash_attention.sh` 仅覆盖冻结 E3/E4 baseline，未启用 `pv-v-tile-reuse`，默认 E3 baseline 保持 reuse 关闭。
+- 精简收尾验证完成：本地 element 与 E2-E5 guests 构建安装成功；默认 E3 4-rank 冻结 baseline 为 `3,561,012 cycles / 33 s` 并 MATCH；Attention 18 项、GEMM MPI 4 项契约、shell/Python/JSON 和 diff 检查通过。
+- 最终复审后将所有 5.6%/5.62% 数据明确改名为 `vPayload` staging 结果；Local GM direct-hit 的 `3,594,923 cycles / 34 s` 退化实验独立保留，避免文档混淆。
+
+## 2026-09-04
+- 完成 RTX 5060 Attention 计时边界复核：FP32 Scope A 的 E3/E4 中位延迟为 `0.103712/0.340032 ms`，GPU 相对 SST baseline 快约 `34.3x/41.7x`。
+- 项目目标由功能扩展调整为先通过同精度 GPU latency gate；多头 Attention、MoE、tile-level MPI 和 E5 暂缓。
+- 将 GPU FP32 math 与 SST critical path 的双侧阶段分解确定为下一项工作；fused FlashAttention 在 CUPTI 不可用时只保留端到端口径。
+- 明确数据流重构的依据与边界：IO-aware tiling、online Softmax、单 head work partitioning 和 spatial fusion 有论文依据；K/V residency、QK/PV array separation 和 tile overlap 属于待验证的项目假设。
+- 新增 `GPU_COMPETITIVE_ROADMAP.md`，统一记录对比口径、当前差距、理想化上界实验、资源门禁和后续顺序；`task_plan.md` 已同步收敛到 Phase A/B。
+- 开始实施 Phase A/B：确认现有 lifecycle 已具备 E3/E4 slowest-worker tile/inter-tile 100% 守恒统计，下一步在其上增加明确的时钟契约和 GPU-comparison 报告层。
+- Phase A/B 实现已加入：verifier 输出 model/normalization/timebase 时钟契约和毫秒，system frontier 输出原始 stage ticks 与守恒覆盖；新增 SST/GPU 报告器、GPU JSON schema、RTX 独立 FP32 stage benchmark 和 summary-only RTX 5060 基线。
+- 快速验证通过：Attention 契约测试 `22/22`、三个 Python 文件编译、shell 语法、两份 JSON 语法及 GPU benchmark `--help` 均正常。
+- 首次尝试从旧 `/tmp/fused_attention_e3/e4` CSV 重新生成 lifecycle 被 verifier 拒绝；根因是这些 CSV 早于 VTileBuffer 五项统计，缺少 reuse-off 应有的零值行。保留严格 verifier，转用更新的 baseline artifacts 或重跑。
+- 使用包含完整 VTileBuffer 零值统计的后续 baseline CSV 重新验证 E3/E4，两者均 PASS；生成 `/tmp/phase_ab_e3_lifecycle.json` 和 `/tmp/phase_ab_e4_lifecycle.json`。
+- 生成 `baseline/attention_gpu_comparison.json`：SST report PASS，E3/E4 system frontier 100% 守恒，slowest-worker work coverage 为 `99.88%/99.95%`；GPU stage 状态据实为 pending。
+- 新增 `PHASE_AB_RESULTS.md`，固化 E3/E4 阶段占比和 Phase C 优先级；PV matrix programming 占比为 `66.91%/67.21%`。
+- Phase A/B 独立代码审查完成：无 Critical，四项 measurement-contract Important 进入修复；此前 V-tile window 改动确认为本轮范围外且默认 baseline 不启用。
+- Phase A/B 审查问题全部关闭：runner 禁止覆盖 SST timebase；GPU raw evidence 强制校验 H2D/D2H/dtype/TF32、原始样本与中位数、1 GHz 换算、同一 CUDA stream 和连续 Event 方法；SST coverage 同时限定 accelerator completion 与 worker interval 不超过 100%。最终复审无剩余 Critical/Important。
+- 最终验证从完整 E3/E4 CSV 重新生成 lifecycle 均为 PASS，综合报告与 checked-in JSON 逐字节一致；23 项 Attention 契约测试、Python 编译、shell/JSON 语法和 `git diff --check` 通过。外部 RTX raw stage 执行仍据实保留为 B3 pending。
+- 收到 RTX 5060 Phase B3 摘要：E3/E4 Scope A 为 `0.097568/0.345984 ms`，阶段链为 `0.097888/0.352416 ms`；但摘要所指原始 JSON 仍在另一台 GPU 主机，当前 SST 主机与附件目录均未找到。因此尚未执行 schema/evidence gate 和正式导入，B3 继续保持 pending。
+- 收到并导入完整 121 KB RTX JSON：报告器重新校验全部 raw samples 后输出 `SST PASS / GPU measured`。E3/E4 新 GPU gate 为 `97,568/345,984` cycles，SST 端到端差距为 `36.50x/40.96x`；PV 阶段差距为 `77.47x/115.54x`。B3 完成，下一步切换到 ideal PV matrix programming。
+- B3 收尾补强 evidence gate：raw 输入还必须提供 1000 组可复算的空 CUDA Event 样本，并且 E3/E4 output shape、finite、Scope A/stage-chain 最大误差均满足 `1e-6`。新增错误输入测试后 Attention 契约仍为 23/23 PASS。
+- 修复报告复现的临时文件依赖：从已验证综合报告提取最小 E3/E4 lifecycle summary 并固化到各自 baseline 目录。仅使用仓库内两份 lifecycle、RTX raw JSON 即可逐字节重建 `attention_gpu_comparison.json`。
+- 最终复审发现 GPU collector 仍输出旧 benchmark/correctness/event-floor 字段；已统一为正式 schema，增加 RTX 5060 device guard、默认 1000 次 Event-floor 测量和无 CUDA 的纯结构契约测试，Attention 测试增至 24 项。
+- 按用户要求暂停 Phase C，开始 B4 GPU timing audit；参考项目为 `/data/jjgong/tilelang_three_limitations`。本机无 CUDA，因此只对照源码、测试和已有结果，不执行 GPU benchmark。
+- B4 第一轮源码对照完成：两项目 CUDA Event 主边界一致，但参考项目使用预分配 Events、timed iterations 连续入队后末尾同步，并以三次独立 timing batch 汇总置信区间；当前 Attention 每样本同步且只有一批 200 样本。E3 波动显著高于 E4，需要进一步审计 cache/clock/host enqueue 记录后给出最终准确性等级。
+- B4 审计完成：Scope A 与 stage-chain median 仅差 E3 `0.33%`、E4 `1.86%`，Event floor 远低于 workload，未发现漏计 Attention device work。单批 bootstrap 95% 区间为 E3 `0.09472-0.10701 ms`、E4 `0.34304-0.34784 ms`；E3 需要三次独立批次确认。当前口径定性为 isolated warm-cache device-timeline latency，而非 application/HBM-cold end-to-end。
+- QK overlap 实现完成：非转置路径在每个 input programming callback 完成后立即启动对应 array GEMM；转置路径仅对首个 panel 使用相同机制，后续 panel 保持批量复用。新增参数、统计和报告字段均已接入。
+- Q256 control/early 为 `49,517/48,890 cycles`；Q1024 单 MPI 为 `1,146,035/1,143,086 cycles`，减少 `2,949 cycles`（约 `0.257%`）。Q1024 MPI2 的数值、lifecycle、placement 与单 MPI 一致并全部 PASS。
+- K/V overlap 继续优化：V Local-GM buffer 在 tile 读回并复制到受控 `vPayload` 后提前释放，允许释放的双缓冲进入后续 prefetch；Q256/Q1024 均 PASS，但 Q1024 总周期仍为 `1,143,086`，说明该 DMA 已被后续阶段覆盖。
+- PV 非广播 fallback 改为向全部 16 个 array/WCP buffer 队列并发提交矩阵编程请求，全部回调完成后再进入 PV input；默认二叉广播路径保持不变。Q256 实测 `48,890 cycles`、数值/lifecycle PASS。
+- 尝试的 QK 多路 output readback 在真实 queue 语义下出现无进度等待，已撤回；当前 QK readout 继续使用已验证的串行回读，避免引入不可靠并发。
+- 第二次 2-credit QK readout 窗口实验仍在单端口 array-buffer/Local-GM 写回组合下无进度，已终止并撤回；稳定版本重新构建成功，契约测试 `61/61 PASS`。
+- ComputeArray 下层已加入显式 output-read credit/bank 资源模型和统计：`arrayOutputReadCredits`、`arrayOutputReadBanks`、credit stalls、bank conflicts、最大在途读；默认 `1/1` 兼容回归与 2-port/2-credit Q256 均为 `48,890 cycles`、数值/lifecycle PASS，暂不提升默认并发。
+- 完整 Q1024 对照完成：默认 `1/1` 与 `2 buffer ports/2 credits/2 banks` 均为 `1,143,086 cycles`，数值/lifecycle PASS；因此不启用 QK readout 并发作为默认优化，保留底层模型供后续真实多端口阵列实现使用。

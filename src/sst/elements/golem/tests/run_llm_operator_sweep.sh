@@ -15,6 +15,7 @@ RESUME=1
 DISABLE_SST_STATS="${GOLEM_BENCH_DISABLE_SST_STATS:-0}"
 PROGRESS_HEARTBEAT="${GOLEM_LLM_SWEEP_PROGRESS_HEARTBEAT:-${GOLEM_PROGRESS_HEARTBEAT:-1}}"
 PROGRESS_INTERVAL_CYCLES="${GOLEM_LLM_SWEEP_PROGRESS_INTERVAL_CYCLES:-${GOLEM_PROGRESS_INTERVAL_CYCLES:-1000000}}"
+OUTPUT_MODE="${GOLEM_LLM_OUTPUT_MODE:-fusion}"
 
 usage() {
 	cat <<'EOF'
@@ -40,6 +41,7 @@ Options:
   --enable-sst-stats       Keep SST stats enabled, default
   --progress-heartbeat N   Enable lightweight SST progress heartbeats, default 1
   --progress-interval-cycles N  Heartbeat interval in simulated cycles, default 1000000
+  --output-mode MODE        Final C destination: fusion|hbm, default fusion
   -h, --help               Show this help
 
 Output files:
@@ -79,6 +81,8 @@ while [[ $# -gt 0 ]]; do
 			PROGRESS_HEARTBEAT="$2"; shift 2 ;;
 		--progress-interval-cycles)
 			PROGRESS_INTERVAL_CYCLES="$2"; shift 2 ;;
+		--output-mode)
+			OUTPUT_MODE="$2"; shift 2 ;;
 		-h|--help)
 			usage; exit 0 ;;
 		*)
@@ -88,7 +92,7 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-if [[ ! -f "$SHAPES_FILE" ]]; then
+if [[ -z "$SHAPES_FILE" || ! -f "$SHAPES_FILE" ]]; then
 	echo "[ERROR] Missing shapes file: $SHAPES_FILE" >&2
 	exit 1
 fi
@@ -106,6 +110,10 @@ if [[ "$PROGRESS_HEARTBEAT" != "0" && "$PROGRESS_HEARTBEAT" != "1" ]]; then
 fi
 if ! [[ "$PROGRESS_INTERVAL_CYCLES" =~ ^[0-9]+$ ]] || [[ "$PROGRESS_INTERVAL_CYCLES" -le 0 ]]; then
 	echo "[ERROR] --progress-interval-cycles must be a positive integer, got: $PROGRESS_INTERVAL_CYCLES" >&2
+	exit 1
+fi
+if [[ "$OUTPUT_MODE" != "fusion" && "$OUTPUT_MODE" != "hbm" ]]; then
+	echo "[ERROR] --output-mode must be fusion or hbm, got: $OUTPUT_MODE" >&2
 	exit 1
 fi
 
@@ -256,6 +264,7 @@ PY
 	echo "quiet_logs=1"
 	echo "hbm_dump_output=0"
 	echo "verify_c=0"
+	echo "output_mode=$OUTPUT_MODE"
 	echo "clock_ref=${GOLEM_STAGE_CLOCK_GHZ:-${VANADIS_CPU_CLOCK:-1.0GHz}}"
 } > "$METADATA_TXT"
 
@@ -299,6 +308,7 @@ while IFS=$'\t' read -r shape_id run_m run_n run_k orig_m orig_n orig_k total_b 
 		--orig-n "$orig_n"
 		--orig-k "$orig_k"
 		--mem-node-size auto
+		--output-mode "$OUTPUT_MODE"
 		--no-hbm-dump-output
 		--log "$sst_log"
 	)

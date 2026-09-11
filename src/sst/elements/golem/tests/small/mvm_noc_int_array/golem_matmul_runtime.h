@@ -9,6 +9,7 @@ extern "C" {
 typedef enum {
     GOLEM_DTYPE_INT32 = 0,
     GOLEM_DTYPE_FP32 = 1,
+    GOLEM_DTYPE_FP16 = 2,
 } golem_dtype_t;
 
 typedef enum {

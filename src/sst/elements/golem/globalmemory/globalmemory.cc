@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <algorithm>
 #include <sstream>
 #include <limits>
 #include <new>
@@ -70,9 +71,6 @@ std::vector<uint8_t> parseMemoryRoutersParam(const std::string& raw, SST::Output
 
 }
 
-std::unordered_map<int, GlobalMemoryImplement*> GlobalMemoryImplement::ctrlRegistry;
-std::mutex GlobalMemoryImplement::ctrlRegistryMutex;
-
 GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
     : GlobalMemoryAPI(id, params)
 {
@@ -132,9 +130,8 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
     if (num_vns == -1) {
         output->fatal(CALL_INFO, -1, "num_vns must be set!\n");
     }
-    // Compatibility mapping:
-    // - Keep requests on VN0 to match existing receiver assumptions in memory path.
-    // - Move replies to VN1 when available for request/reply separation.
+    // Keep read requests, read responses, and writes in independent queues when
+    // three virtual networks are available.
     request_vn = 0;
     response_vn = (num_vns >= 2) ? 1 : 0;
     reduction_vn = params.find<uint32_t>("reduction_vn", request_vn);
@@ -147,6 +144,12 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
     statReductionSendQueued_ = registerStatistic<uint64_t>("gmem_reduction_send_queued");
     statReductionSendRejected_ = registerStatistic<uint64_t>("gmem_reduction_send_rejected");
     statReductionReceived_ = registerStatistic<uint64_t>("gmem_reduction_received");
+    write_vn = params.find<uint32_t>("dma_write_vn", (num_vns >= 3) ? 2u : request_vn);
+    if (write_vn >= static_cast<uint32_t>(num_vns)) {
+        output->fatal(CALL_INFO, -1,
+                      "GlobalMemory '%s' dma_write_vn=%u must be smaller than num_vns=%d.\n",
+                      getName().c_str(), write_vn, num_vns);
+    }
 
     // 读取 Identity Window 基础地址
     identityWindowBase = params.find<uint64_t>("identityWindowBase", 0x04000000ULL);
@@ -213,8 +216,8 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
                     "GlobalMemory DMA fallback routers: [%s]\n",
                     routers_desc.str().c_str());
     output->verbose(CALL_INFO, 2, 0,
-                    "GlobalMemory VN mapping: request_vn=%u response_vn=%u reduction_vn=%u (num_vns=%d)\n",
-                    request_vn, response_vn, reduction_vn, num_vns);
+                    "GlobalMemory VN mapping: read_request_vn=%u response_vn=%u write_vn=%u reduction_vn=%u (num_vns=%d)\n",
+                    request_vn, response_vn, write_vn, reduction_vn, num_vns);
     output->verbose(CALL_INFO, 2, 0,
                     "GlobalMemory DMA window: max_inflight=%u retry_ticks=%u max_retries=%u\n",
                     dma_read_max_inflight, dma_read_retry_ticks, dma_read_max_retries);
@@ -231,6 +234,12 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
         if_params.insert("input_buf_size", params.find<std::string>("buffer_length", "1kB"));
         if_params.insert("output_buf_size", params.find<std::string>("buffer_length", "1kB"));
         if_params.insert("port_name", "rtr");
+        if_params.insert("vn_priority_order",
+                         params.find<std::string>("network_vn_priority_order", ""));
+        if_params.insert("vn_starvation_vn",
+                         params.find<std::string>("network_vn_starvation_vn", "-1"));
+        if_params.insert("max_starvation_cycles",
+                         params.find<std::string>("network_vn_max_starvation_cycles", "0"));
 
         link_control = loadAnonymousSubComponent<SST::Interfaces::SimpleNetwork>(
             "merlin.linkcontrol", "networkIF", 0,
@@ -258,46 +267,15 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
     output->verbose(CALL_INFO, 2, 0,
                     "DMA operations will use shared link_control (networkIF)\n");
 
-    {
-        std::lock_guard<std::mutex> lock(ctrlRegistryMutex);
-        ctrlRegistry[core_id] = this;
-    }
 }
 
 GlobalMemoryImplement::~GlobalMemoryImplement() 
 { 
-    {
-        std::lock_guard<std::mutex> lock(ctrlRegistryMutex);
-        auto it = ctrlRegistry.find(core_id);
-        if (it != ctrlRegistry.end() && it->second == this) {
-            ctrlRegistry.erase(it);
-        }
-    }
     while (!send_retry_queue.empty()) {
         delete send_retry_queue.front();
         send_retry_queue.pop_front();
     }
     if (dma_handlers) delete dma_handlers;
-}
-
-GlobalMemoryImplement* GlobalMemoryImplement::lookupByCoreId(int coreId)
-{
-    std::lock_guard<std::mutex> lock(ctrlRegistryMutex);
-    auto it = ctrlRegistry.find(coreId);
-    if (it == ctrlRegistry.end()) {
-        return nullptr;
-    }
-    return it->second;
-}
-
-int GlobalMemoryImplement::lookupEndpointByCoreId(int coreId)
-{
-    std::lock_guard<std::mutex> lock(ctrlRegistryMutex);
-    auto it = ctrlRegistry.find(coreId);
-    if (it == ctrlRegistry.end() || it->second == nullptr) {
-        return -1;
-    }
-    return it->second->network_id;
 }
 
 int GlobalMemoryImplement::ctrlLookupMemNicEndpointId(uint64_t phys_addr)
@@ -417,6 +395,18 @@ bool GlobalMemoryImplement::sendReductionMessage(uint32_t destinationCore,
         statReductionSendQueued_->addData(1);
     }
     return true;
+}
+
+void GlobalMemoryImplement::ctrlSetReadCompletionCallback(std::function<void(uint64_t)> callback)
+{
+    ctrl_read_completion_callback = std::move(callback);
+}
+
+void GlobalMemoryImplement::notifyCtrlReadComplete(uint64_t requestId)
+{
+    if (ctrl_read_completion_callback) {
+        ctrl_read_completion_callback(requestId);
+    }
 }
 
 bool GlobalMemoryImplement::try_send_or_queue(SST::Interfaces::SimpleNetwork::Request* req, const char* context)
@@ -996,7 +986,8 @@ void GlobalMemoryImplement::issue_dma_read_chunk(PendingDmaOp& op, const char* r
         0,
         0,
         op.request_id,
-        op.dmaRequestKind);
+        op.dmaRequestKind,
+        op.dmaConsumer);
     req->givePayload(payload);
 
     dma_read_req_to_key[req] = op.request_id;
@@ -1255,6 +1246,9 @@ void GlobalMemoryImplement::finish() {
     uint64_t request_avg_submit_ready_cycles = (request_read_submit_ready_samples > 0)
                                                    ? (request_read_submit_ready_cycles_sum / request_read_submit_ready_samples)
                                                    : 0;
+    uint64_t write_avg_rtt_cycles = (dma_write_rtt_samples > 0)
+                                        ? (dma_write_rtt_cycles_sum / dma_write_rtt_samples)
+                                        : 0;
     output->output("GlobalMemory core=%d DMA READ stats: immediate_send=%" PRIu64
                    " queued_send=%" PRIu64 " flushed_send=%" PRIu64
                    " read_issue_count=%" PRIu64 " write_issue_count=%" PRIu64
@@ -1270,6 +1264,10 @@ void GlobalMemoryImplement::finish() {
                    " strict_avg_rtt_cycles=%" PRIu64 " strict_max_rtt_cycles=%" PRIu64
                    " strict_avg_e2e_rtt_cycles=%" PRIu64 " strict_max_e2e_rtt_cycles=%" PRIu64
                    " request_avg_submit_ready_cycles=%" PRIu64 " request_max_submit_ready_cycles=%" PRIu64
+                   " write_rtt_samples=%" PRIu64 " write_rtt_cycles_sum=%" PRIu64
+                   " write_avg_rtt_cycles=%" PRIu64 " write_max_rtt_cycles=%" PRIu64
+                   " write_first_issue_cycle=%" PRIu64 " write_last_issue_cycle=%" PRIu64
+                   " write_last_complete_cycle=%" PRIu64
                    " send_retry_q_max=%zu\n",
                    core_id,
                    dma_read_send_immediate_count,
@@ -1300,6 +1298,13 @@ void GlobalMemoryImplement::finish() {
                    dma_read_strict_e2e_rtt_cycles_max,
                    request_avg_submit_ready_cycles,
                    request_read_submit_ready_cycles_max,
+                   dma_write_rtt_samples,
+                   dma_write_rtt_cycles_sum,
+                   write_avg_rtt_cycles,
+                   dma_write_rtt_cycles_max,
+                   dma_write_first_issue_cycle,
+                   dma_write_last_issue_cycle,
+                   dma_write_last_complete_cycle,
                    send_retry_queue_max_depth);
     if (reduction_send_immediate_count != 0 || reduction_send_queued_count != 0 ||
         reduction_receive_count != 0) {
@@ -1546,8 +1551,15 @@ void GlobalMemoryImplement::dma_write_to_host_impl(uint64_t dst_pa, size_t lengt
         op.completion_value = seq_value;
         op.completion_token = ctx ? ctx->completion_token : completion_token;
         op.dmaRequestKind = kind;
+        // The architecture clock is 1 GHz, so nanoseconds are architectural cycles.
+        op.issue_cycle = getCurrentSimTimeNano();
 
-        req->vn = request_vn;
+        if (dma_write_first_issue_cycle == 0) {
+            dma_write_first_issue_cycle = op.issue_cycle;
+        }
+        dma_write_last_issue_cycle = op.issue_cycle;
+
+        req->vn = write_vn;
         req->size_in_bits = (sizeof(dst_pa) + sizeof(xfer) + xfer) * 8;
 
         // 创建 DMA_WRITE 负载
@@ -1578,13 +1590,15 @@ void GlobalMemoryImplement::dma_write_to_host_impl(uint64_t dst_pa, size_t lengt
 }
 
 void GlobalMemoryImplement::dma_read_from_host_to_globalmem(uint64_t src_pa, size_t length, uint64_t gm_dst_addr, DmaCallback cb,
-                                                            DmaRequestKind kind)
+                                                            DmaRequestKind kind,
+                                                            const DmaConsumerMetadata& consumer)
 {
-    dma_read_from_host_to_globalmem_impl(src_pa, length, gm_dst_addr, cb, 0, kind);
+    dma_read_from_host_to_globalmem_impl(src_pa, length, gm_dst_addr, cb, 0, kind, consumer);
 }
 
 void GlobalMemoryImplement::dma_read_from_host_to_globalmem_impl(uint64_t src_pa, size_t length, uint64_t gm_dst_addr, DmaCallback cb,
-                                                                 uint64_t completion_token, DmaRequestKind kind)
+                                                                 uint64_t completion_token, DmaRequestKind kind,
+                                                                 const DmaConsumerMetadata& consumer)
 {
     if (!link_control) {
         output->fatal(CALL_INFO, -1,
@@ -1641,6 +1655,7 @@ void GlobalMemoryImplement::dma_read_from_host_to_globalmem_impl(uint64_t src_pa
         op.host_addr = src_pa + offset;
         op.gm_dst_addr = gm_dst_addr + offset;
         op.dmaRequestKind = kind;
+        op.dmaConsumer = consumer;
         op.cb = ctx ? DmaCallback() : cb;
         op.length = xfer;
         op.ctx = ctx;
@@ -1671,6 +1686,32 @@ void GlobalMemoryImplement::dma_read_from_host_to_globalmem_impl(uint64_t src_pa
     if (!ctx) {
         // 对于单次传输，我们等待 DMA_READ_COMPLETE 消息
         // 这里暂时不做处理，让 handleDmaReceives 处理完成通知
+    }
+}
+
+void GlobalMemoryImplement::dma_update_consumer_progress(
+    uint64_t firstHostAddr, uint64_t secondHostAddr,
+    const DmaConsumerMetadata& consumer)
+{
+    if (!link_control || consumer.valid == 0) return;
+    std::vector<int> destinations;
+    for (uint64_t hostAddr : {firstHostAddr, secondHostAddr}) {
+        int destination = getMemNicEndpointId(hostAddr);
+        if (destination == -1) destination = getDmaTargetRouter(hostAddr);
+        if (std::find(destinations.begin(), destinations.end(), destination) != destinations.end()) {
+            continue;
+        }
+        destinations.push_back(destination);
+        auto* req = new SST::Interfaces::SimpleNetwork::Request();
+        req->src = network_id;
+        req->dest = destination;
+        req->vn = request_vn;
+        req->size_in_bits = (sizeof(DmaConsumerMetadata) + sizeof(hostAddr)) * 8;
+        req->givePayload(new NetworkDataEvent(
+            NetworkDataEvent::DMA_CONSUMER_PROGRESS, hostAddr, 0,
+            std::vector<uint8_t>(), 0, network_id, 0, 0, 0,
+            DmaRequestKind::AttentionKvPrefetch, consumer));
+        try_send_or_queue(req, "dma_consumer_progress");
     }
 }
 
@@ -1751,6 +1792,7 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
                     }
                     write_u64_to_storage(flagAddr, flagValue);
                     request_pending.erase(req_it);
+                    notifyCtrlReadComplete(ev->getRequestId());
                 }
                 output->verbose(CALL_INFO, 1, 2,
                                 "handle_receives: WRITE completed req=%" PRIu64 " dst=0x%" PRIx64
@@ -1782,11 +1824,9 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
             output->verbose(CALL_INFO, 1, 2,
                             "handle_receives: READ addr=0x%" PRIx64 " len=%zu return=0x%" PRIx64 " -> sending reply to ep %" PRI_NID "\n",
                             ev->getAddr(), ev->getLength(), ev->getReturnAddr(), req->src);
-            // 创建回复事件 (类型 WRITE，携带读取的数据)
+            const size_t total_size_bytes = sizeof(ev->getAddr()) + sizeof(ev->getLength()) + readData.size();
             const uint64_t responseAddr = ev->getReturnAddr();
             const int responseEndpoint = ev->getReturnEndpoint();
-            const uint64_t completionFlagAddr = ev->getCompletionFlagAddr();
-            const uint64_t completionValue = ev->getCompletionValue();
             NetworkDataEvent* respEv = new NetworkDataEvent(
                 NetworkDataEvent::WRITE,
                 responseAddr,
@@ -1794,13 +1834,12 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
                 readData,
                 responseAddr,
                 responseEndpoint,
-                completionFlagAddr,
-                completionValue,
+                ev->getCompletionFlagAddr(),
+                ev->getCompletionValue(),
                 ev->getRequestId());
             SST::Interfaces::SimpleNetwork::Request* respReq = new SST::Interfaces::SimpleNetwork::Request();
             respReq->src = network_id;
             respReq->dest = (responseEndpoint >= 0) ? static_cast<SST::Interfaces::SimpleNetwork::nid_t>(responseEndpoint) : req->src;
-            size_t total_size_bytes = sizeof(ev->getAddr()) + sizeof(ev->getLength()) + readData.size();
             respReq->size_in_bits = total_size_bytes * 8;
             respReq->vn = response_vn;
             respReq->givePayload(respEv);
@@ -1913,6 +1952,7 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
                         }
                         dma_read_completion_count++;
                         request_pending.erase(req_it);
+                        notifyCtrlReadComplete(ev->getRequestId());
                     }
                     output->verbose(CALL_INFO, 1, 2,
                                     "handle_receives: DMA_READ_COMPLETE req=%" PRIu64 " dst=0x%" PRIx64
@@ -1947,6 +1987,15 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
 
                 if (op.kind == PendingDmaOp::WRITE_TO_HOST) {
                     dma_write_completion_count++;
+                    const uint64_t complete_cycle = getCurrentSimTimeNano();
+                    const uint64_t rtt_cycles = complete_cycle >= op.issue_cycle
+                                                    ? complete_cycle - op.issue_cycle
+                                                    : 0;
+                    dma_write_rtt_samples++;
+                    dma_write_rtt_cycles_sum += rtt_cycles;
+                    dma_write_rtt_cycles_max = std::max(dma_write_rtt_cycles_max, rtt_cycles);
+                    dma_write_last_complete_cycle = std::max(
+                        dma_write_last_complete_cycle, complete_cycle);
                     // 处理 burst 上下文
                     if (op.ctx) {
                         if (op.ctx->remaining > 0) op.ctx->remaining--;
@@ -2236,6 +2285,7 @@ bool GlobalMemoryImplement::handleDmaReceives(int vn) {
                         write_u64_to_storage(flagAddr, flagValue);
                         dma_read_completion_count++;
                         request_pending.erase(req_it);
+                        notifyCtrlReadComplete(ev->getRequestId());
                     }
                     output->verbose(CALL_INFO, 1, 2,
                                     "handleDmaReceives: DMA_READ_COMPLETE req=%" PRIu64 " dst=0x%" PRIx64
@@ -2421,7 +2471,8 @@ void GlobalMemoryLocal::dma_write_from_globalmem_to_host(uint64_t,
     }
 }
 
-void GlobalMemoryLocal::dma_read_from_host_to_globalmem(uint64_t, size_t, uint64_t, DmaCallback, DmaRequestKind)
+void GlobalMemoryLocal::dma_read_from_host_to_globalmem(uint64_t, size_t, uint64_t, DmaCallback, DmaRequestKind,
+                                                       const DmaConsumerMetadata&)
 {
     assert(false && "GlobalMemoryLocal does not support dma_read_from_host_to_globalmem (no StandardMem interface wired)");
 }

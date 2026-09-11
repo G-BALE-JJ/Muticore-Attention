@@ -1,0 +1,101 @@
+{
+  "profile": "e4",
+  "shape": {
+    "batch": 1,
+    "heads": 1,
+    "queries": 2048,
+    "keys": 2048,
+    "head_dim": 128,
+    "dtype": "fp32"
+  },
+  "topology": {
+    "managers": 4,
+    "workers": 16,
+    "mpi_ranks": 4,
+    "partitioner": "sst.self",
+    "placement": "query_block"
+  },
+  "architecture": {
+      "generic_gemm_wcp": true,
+      "wcp_gemm_proxy": {
+        "queue_depth": 32,
+        "issue_width": 1,
+        "command_latency_cycles": 1,
+        "completion_latency_cycles": 1,
+        "max_worker_queue_wait_cycles": 16,
+        "worker_totals": {
+          "gemm_proxy_commands_issued": 5038080,
+          "gemm_proxy_queue_full_stalls": 0,
+          "gemm_proxy_queue_wait_cycles": 14868480,
+          "gemm_proxy_launch_commands": 1310720,
+          "gemm_proxy_completion_callbacks": 1310720,
+          "gemm_proxy_completion_delay_cycles": 1310720
+        }
+      },
+      "pv_matrix_broadcast": true,
+      "qk_matrix_broadcast": true,
+      "kv_double_buffer": true,
+      "matrix_broadcast_fabric": {
+      "enabled": true,
+      "topology": "binary_tree",
+      "shares_array_buffer_ports": true,
+      "max_fanout": 16,
+      "bytes_per_cycle": 64,
+      "base_latency_cycles": 1,
+      "stage_latency_cycles": 1,
+      "tree_stages": 4,
+      "fanout": 16,
+      "payload_bytes": 8192,
+      "cycles_per_request": 133,
+      "max_observed_fanout": 16,
+      "worker_totals": {
+          "matrix_broadcast_requests": 73728,
+        "matrix_broadcast_rejected": 0,
+          "matrix_broadcast_ingress_bytes": 603979776,
+          "matrix_broadcast_sink_bytes": 9663676416,
+          "matrix_broadcast_transfer_cycles": 9805824,
+          "matrix_broadcast_fanout": 1179648
+      }
+    }
+  },
+  "verification": {
+    "status": "PASS",
+    "checked": 262144,
+    "mismatches": 0,
+    "max_abs_error": 1.1813748100435173e-09,
+    "score_probability_hbm_bytes": 0
+  },
+  "lifecycle": {
+    "status": "PASS",
+      "accelerator_completion_cycles": 6560597,
+      "wait_return_cycles": 6560597,
+      "order_valid": true,
+      "conservation_valid": true,
+      "worker_critical_path": {
+        "kv_prefetch_timing": {
+          "ticks": {
+            "dma": 3924676375,
+            "ready_lead": 2288819125,
+            "wait": 1206147000
+          },
+          "cycles": {
+            "dma": 3924677,
+            "ready_lead": 2288820,
+            "wait": 1206147
+          },
+          "counts": {
+            "dma": 504,
+            "ready_lead": 305,
+            "wait": 199
+          }
+        }
+      }
+  },
+  "partition": {
+    "status": "PASS",
+    "cores_per_rank": 5,
+    "manager_groups_per_rank": 1
+  },
+  "source": "scripts/build_and_install_local.sh --reconfigure --jobs 16; scripts/test_flash_attention.sh --profile e4 --mpi-ranks 4 --timeout 1800",
+  "artifact_root": "/tmp/fused_attention_e4_s2048_d128_mpi4"
+}

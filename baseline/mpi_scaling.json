@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "measurement": "full_runner_wall_time_sec",
+  "correctness_gate": false,
+  "measured_at": "2026-09-04T13:42:00+08:00",
+  "source_commit": "c4101d6b7d9b13f67891968e84fa7b8051465bf9",
+  "host": {
+    "cpu": "AMD Ryzen 9 9950X3D 16-Core Processor",
+    "physical_cores": 16,
+    "hardware_threads": 32,
+    "sst_core": "15.1.0"
+  },
+  "profiles": {
+    "e3": {
+      "shape": "B1,H1,S1024,D128,FP32",
+      "samples": {
+        "1": [94, 97],
+        "2": [49, 48],
+        "4": [34, 34, 33]
+      },
+      "median_wall_time_sec": {
+        "1": 95.5,
+        "2": 48.5,
+        "4": 34.0
+      },
+      "speedup_vs_rank1": {
+        "1": 1.0,
+        "2": 1.9690721649484537,
+        "4": 2.8088235294117645
+      },
+      "parallel_efficiency": {
+        "1": 1.0,
+        "2": 0.9845360824742269,
+        "4": 0.7022058823529411
+      }
+    },
+    "e4": {
+      "shape": "B1,H1,S2048,D128,FP32",
+      "samples": {
+        "1": [383, 369, 388],
+        "2": [410, 247, 189],
+        "4": [165, 140, 145]
+      },
+      "median_wall_time_sec": {
+        "1": 383.0,
+        "2": 247.0,
+        "4": 145.0
+      },
+      "speedup_vs_rank1": {
+        "1": 1.0,
+        "2": 1.5506072874493927,
+        "4": 2.6413793103448277
+      },
+      "parallel_efficiency": {
+        "1": 1.0,
+        "2": 0.7753036437246963,
+        "4": 0.6603448275862069
+      },
+      "interpretation": "Correctness is verified for all ranks. E4 wall time varies materially with host load (rank 2: 189-410s; rank 4: 140-165s); use medians for comparison and repeat on an idle host before making an optimization decision."
+    }
+  }
+}

@@ -150,6 +150,15 @@ void GroupCtrlEndpoint::init(unsigned int phase) {
     (void)phase;
 }
 
+void GroupCtrlEndpoint::bindGlobalMemory(GlobalMemoryAPI* globalMemory) {
+    gm_ = dynamic_cast<GlobalMemoryImplement*>(globalMemory);
+    if (globalMemory != nullptr && gm_ == nullptr) {
+        output_.fatal(CALL_INFO, -1,
+            "core=%u group control requires golem.GlobalMemory, not the local fallback\n",
+            coreId_);
+    }
+}
+
 void GroupCtrlEndpoint::setup() {
     if (role_ == GroupCtrlRole::WORKER) {
         output_.verbose(CALL_INFO, 1, 0,
@@ -189,7 +198,6 @@ void GroupCtrlEndpoint::setup() {
         }
     }
 
-    gm_ = GlobalMemoryImplement::lookupByCoreId(static_cast<int>(coreId_));
     if (gm_ != nullptr) {
         gmBoundLogged_ = true;
         output_.verbose(CALL_INFO, 1, 0,
@@ -293,16 +301,7 @@ void GroupCtrlEndpoint::handleReq(SST::Event* ev, int slot) {
 bool GroupCtrlEndpoint::tick(SST::Cycle_t)
 {
     if (gm_ == nullptr) {
-        gm_ = GlobalMemoryImplement::lookupByCoreId(static_cast<int>(coreId_));
-        if (gm_ == nullptr) {
-            return false;
-        }
-        if (!gmBoundLogged_) {
-            gmBoundLogged_ = true;
-            output_.verbose(CALL_INFO, 1, 0,
-                "core=%u role=%s late-bound local GM in tick mailbox_base=0x%" PRIx64 "\n",
-                coreId_, role_ == GroupCtrlRole::MANAGER ? "manager" : "worker", mailboxAddr(0));
-        }
+        return false;
     }
 
     if (role_ == GroupCtrlRole::WORKER) {

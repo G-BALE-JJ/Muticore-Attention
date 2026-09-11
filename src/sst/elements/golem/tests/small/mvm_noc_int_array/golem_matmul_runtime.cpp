@@ -40,6 +40,8 @@ const char* dtype_name(golem_dtype_t dtype) {
             return "GOLEM_DTYPE_INT32";
         case GOLEM_DTYPE_FP32:
             return "GOLEM_DTYPE_FP32";
+        case GOLEM_DTYPE_FP16:
+            return "GOLEM_DTYPE_FP16";
         default:
             return "GOLEM_DTYPE_UNKNOWN";
     }
@@ -74,7 +76,7 @@ golem_status_t validate_op_desc_v1(const golem_matmul_op_desc_t* op) {
                        static_cast<long long>(op->block_k));
         return GOLEM_STATUS_INVALID_ARGUMENT;
     }
-    if (op->dtype != GOLEM_DTYPE_INT32 && op->dtype != GOLEM_DTYPE_FP32) {
+    if (op->dtype != GOLEM_DTYPE_INT32 && op->dtype != GOLEM_DTYPE_FP16 && op->dtype != GOLEM_DTYPE_FP32) {
         set_last_error("unsupported matmul dtype: %d", static_cast<int>(op->dtype));
         return GOLEM_STATUS_UNSUPPORTED;
     }
@@ -86,12 +88,19 @@ golem_status_t validate_op_desc_v1(const golem_matmul_op_desc_t* op) {
         set_last_error("v1 supports transpose_a=0 and transpose_b in {0,1}");
         return GOLEM_STATUS_UNSUPPORTED;
     }
-    if ((op->block_m % TILE_M) != 0 || (op->block_k % TILE_K) != 0) {
-        set_last_error("v1 requires block_M/block_K to be integer multiples of ARRAY_OUTPUT/INPUT(%d,%d), got (%lld,%lld)",
+    const bool block_k_supported =
+        (op->block_k <= TILE_K) || ((op->block_k % TILE_K) == 0);
+    if ((op->block_m % TILE_M) != 0 || !block_k_supported) {
+        set_last_error("v1 requires block_M to be a multiple of ARRAY_OUTPUT(%d); block_K must be <= ARRAY_INPUT(%d) or an integer multiple of it, got (%lld,%lld)",
                        TILE_M,
                        TILE_K,
                        static_cast<long long>(op->block_m),
                        static_cast<long long>(op->block_k));
+        return GOLEM_STATUS_UNSUPPORTED;
+    }
+    if (op->block_k < TILE_K && !WORKER_COMMAND_PROCESSOR_ENABLED) {
+        set_last_error("v1 requires WorkerCommandProcessor for block_K(%lld) < ARRAY_INPUT(%d)",
+                       static_cast<long long>(op->block_k), TILE_K);
         return GOLEM_STATUS_UNSUPPORTED;
     }
     if (op->block_n > TILE_N_MAX) {
@@ -121,7 +130,7 @@ golem_status_t validate_tensor_desc_v1(const golem_tensor_desc_t* t, int64_t exp
                        static_cast<long long>(t->shape[1]));
         return GOLEM_STATUS_INVALID_ARGUMENT;
     }
-    if (t->dtype != GOLEM_DTYPE_INT32 && t->dtype != GOLEM_DTYPE_FP32) {
+    if (t->dtype != GOLEM_DTYPE_INT32 && t->dtype != GOLEM_DTYPE_FP16 && t->dtype != GOLEM_DTYPE_FP32) {
         set_last_error("%s tensor dtype unsupported: %d", name, static_cast<int>(t->dtype));
         return GOLEM_STATUS_UNSUPPORTED;
     }
@@ -278,6 +287,51 @@ golem_status_t run_matmul_fp32(const golem_matmul_op_desc_t& op,
     return GOLEM_STATUS_OK;
 }
 
+golem_status_t run_matmul_fp16(const golem_matmul_op_desc_t& op,
+                               const golem_tensor_desc_t* a,
+                               const golem_tensor_desc_t* b,
+                               const golem_tensor_desc_t* c,
+                               bool has_tensor_bindings) {
+    if (has_tensor_bindings) {
+        MatmulTensorBindingsFP16 tensors = {
+            .a = reinterpret_cast<const SST::Golem::GolemFp16*>(a->data),
+            .b = reinterpret_cast<const SST::Golem::GolemFp16*>(b->data),
+            .c = reinterpret_cast<SST::Golem::GolemFp16*>(c->data),
+            .a_stride0 = a->stride[0],
+            .a_stride1 = a->stride[1],
+            .b_stride0 = b->stride[0],
+            .b_stride1 = b->stride[1],
+            .c_stride0 = c->stride[0],
+            .c_stride1 = c->stride[1],
+        };
+        if (CTRL_LINK_ENABLED) {
+            matmul_with_tensors_ctrl_fp16(
+                static_cast<int>(op.m), static_cast<int>(op.n), static_cast<int>(op.k),
+                static_cast<int>(op.block_m), static_cast<int>(op.block_n),
+                static_cast<int>(op.block_k), tensors);
+        } else {
+            matmul_with_tensors_fp16(
+                static_cast<int>(op.m), static_cast<int>(op.n), static_cast<int>(op.k),
+                static_cast<int>(op.block_m), static_cast<int>(op.block_n),
+                static_cast<int>(op.block_k), tensors);
+        }
+        return GOLEM_STATUS_OK;
+    }
+
+    if (CTRL_LINK_ENABLED) {
+        matmul_ctrl_fp16(
+            static_cast<int>(op.m), static_cast<int>(op.n), static_cast<int>(op.k),
+            static_cast<int>(op.block_m), static_cast<int>(op.block_n),
+            static_cast<int>(op.block_k));
+    } else {
+        matmul_fp16(
+            static_cast<int>(op.m), static_cast<int>(op.n), static_cast<int>(op.k),
+            static_cast<int>(op.block_m), static_cast<int>(op.block_n),
+            static_cast<int>(op.block_k));
+    }
+    return GOLEM_STATUS_OK;
+}
+
 }  // namespace
 
 extern "C" golem_status_t golemCreateMatmulKernel(
@@ -343,6 +397,8 @@ extern "C" golem_status_t golemRunMatmul(
             return run_matmul_int32(op, a, b, c, has_tensor_bindings);
         case GOLEM_DTYPE_FP32:
             return run_matmul_fp32(op, a, b, c, has_tensor_bindings);
+        case GOLEM_DTYPE_FP16:
+            return run_matmul_fp16(op, a, b, c, has_tensor_bindings);
         default:
             set_last_error("unsupported op dtype: %d", static_cast<int>(op.dtype));
             return GOLEM_STATUS_UNSUPPORTED;

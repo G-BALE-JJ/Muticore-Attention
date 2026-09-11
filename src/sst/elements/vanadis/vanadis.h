@@ -153,7 +153,9 @@ public:
         { "print_fp_reg", "Print floating-point registers true/false, auto set to "
                           "true if verbose > 16", "false" },
         { "print_rob", "Print reorder buffer state during issue and retire", "true"},
-        { "enable_simt", "Implement SIMT pipeline for multithread kernels", "false"}  )
+        { "enable_simt", "Implement SIMT pipeline for multithread kernels", "false"},
+        { "rocc_wait_fastpath", "Gate the CPU pipeline while a RoCC wait command blocks on an accelerator", "false"},
+        { "rocc_wait_fastpath_threshold", "Consecutive no-progress cycles before gating the CPU pipeline", "256"}  )
 
     SST_ELI_DOCUMENT_STATISTICS(
         { "cycles", "Number of cycles the core executed", "cycles", 1 },
@@ -170,6 +172,7 @@ public:
         { "branches", "Number of retired branches", "instructions", 1 },
         { "loads_issued", "Number of load instructions issued to the LSQ", "instructions", 1 },
         { "stores_issued", "Number of store instructions issued to the LSQ", "instructions", 1 },
+        { "rocc_wait_fastpath_cycles", "Cycles where only the RoCC interface was ticked while the CPU pipeline was gated", "cycles", 1 },
         { "phys_int_reg_in_use", "Number of physical integer registers that are in use each cycle", "registers", 1 },
         { "phys_fp_reg_in_use", "Number of physical floating point registers than are in use each cycle", "registers",
           1 })
@@ -254,6 +257,7 @@ private:
     void performDecode(const uint64_t cycle);
     int  performIssue(const uint64_t cycle, int hwThr, uint32_t& rob_start, int& unallocated_memory_op_seen);
     void performExecute(const uint64_t cycle);
+    void performRoCCExecute(const uint64_t cycle);
     int  performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*>* rob, const uint64_t cycle);
     int  allocateFunctionalUnit(VanadisInstruction* ins);
     bool mapInstructiontoFunctionalUnit(VanadisInstruction* ins, std::vector<VanadisFunctionalUnit*>& functional_units);
@@ -345,6 +349,9 @@ private:
     bool  print_retire_tables;
     bool  print_rob;
     bool enable_simt; //for future use
+    bool rocc_wait_fastpath;
+    uint64_t rocc_wait_fastpath_threshold;
+    uint64_t rocc_wait_stall_cycles;
 
     char*    instPrintBuffer;
     uint64_t nextInsID;
@@ -360,6 +367,7 @@ private:
     Statistic<uint64_t>* stat_ins_issued;
     Statistic<uint64_t>* stat_loads_issued;
     Statistic<uint64_t>* stat_stores_issued;
+    Statistic<uint64_t>* stat_rocc_wait_fastpath_cycles;
     Statistic<uint64_t>* stat_branch_mispredicts;
     Statistic<uint64_t>* stat_branches;
     Statistic<uint64_t>* stat_cycles;

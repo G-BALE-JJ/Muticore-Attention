@@ -35,7 +35,7 @@ def write_f32_bin(path: str, values):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Generate sample int32 tensors for GOLEM matmul"
+        description="Generate sample tensors for GOLEM matmul"
     )
     parser.add_argument("--m", type=int, required=True, help="Rows of A")
     parser.add_argument("--n", type=int, required=True, help="Cols of B")
@@ -49,7 +49,7 @@ def main(argv=None):
     parser.add_argument(
         "--dtype",
         default="int32",
-        choices=["int32", "fp32"],
+        choices=["int32", "fp16", "fp32"],
         help="Sample tensor binary dtype",
     )
     args = parser.parse_args(argv)
@@ -63,6 +63,13 @@ def main(argv=None):
     if args.dtype == "fp32":
         write_f32_bin(args.a_out, a_vals)
         write_f32_bin(args.b_out, b_vals)
+    elif args.dtype == "fp16":
+        os.makedirs(os.path.dirname(os.path.abspath(args.a_out)), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(args.b_out)), exist_ok=True)
+        with open(args.a_out, "wb") as f:
+            f.write(struct.pack(f"<{len(a_vals)}e", *[float(v) for v in a_vals]))
+        with open(args.b_out, "wb") as f:
+            f.write(struct.pack(f"<{len(b_vals)}e", *[float(v) for v in b_vals]))
     else:
         write_i32_bin(args.a_out, a_vals)
         write_i32_bin(args.b_out, b_vals)

@@ -1,0 +1,18 @@
+# phase case reuse_n reuse_m node_credit prefetch_windows note
+profile_multicast baseline_1x1 1 1 0 1 method-ch4-residual-intertile
+profile_congestion reuse_4x4_unbounded 4 4 0 1 method-ch4-burst-unbounded
+reuse_ablation reuse_1x1 1 1 128 1 evaluation
+reuse_ablation reuse_1x4 1 4 128 1 evaluation
+reuse_ablation reuse_4x1 4 1 128 1 evaluation
+reuse_ablation reuse_2x2 2 2 128 1 evaluation
+reuse_ablation reuse_4x4 4 4 128 1 evaluation
+reuse_ablation reuse_8x8 8 8 128 1 evaluation
+credit_ablation credit_unbounded 4 4 0 1 evaluation
+credit_ablation credit_32 4 4 32 1 evaluation
+credit_ablation credit_48 4 4 48 1 evaluation
+credit_ablation credit_64 4 4 64 1 evaluation
+credit_ablation credit_84 4 4 84 1 evaluation
+credit_ablation credit_128 4 4 128 1 evaluation
+prefetch_ablation prefetch_1 4 4 84 1 evaluation
+prefetch_ablation prefetch_2 4 4 84 2 evaluation
+prefetch_ablation prefetch_3 4 4 84 3 evaluation

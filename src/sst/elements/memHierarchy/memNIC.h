@@ -92,7 +92,7 @@ public:
     void init(unsigned int phase) override;
     void setup() override { link_control->setup(); MemNICBase::setup(); }
     void complete(unsigned int phase) override;
-    void finish() override { finishGolemDmaResponseStats(); link_control->finish(); }
+    void finish() override { finishGolemDmaResponseStats(); emitGolemDmaCreditSummary(); link_control->finish(); }
     void sendUntimedData(MemEventInit* ev, bool broadcast, bool lookup_dst) override;
 
     /* Debug */

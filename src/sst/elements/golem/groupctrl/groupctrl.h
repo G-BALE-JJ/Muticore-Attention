@@ -78,6 +78,7 @@ public:
 
     GroupCtrlAPI(ComponentId_t id, SST::Params& params) : SST::SubComponent(id) {}
     virtual ~GroupCtrlAPI() = default;
+    virtual void bindGlobalMemory(GlobalMemoryAPI* globalMemory) = 0;
 };
 
 class GroupCtrlEndpoint : public GroupCtrlAPI {
@@ -122,6 +123,7 @@ public:
     void init(unsigned int phase) override;
     void setup() override;
     void finish() override;
+    void bindGlobalMemory(GlobalMemoryAPI* globalMemory) override;
 
 private:
     struct PendingReq {

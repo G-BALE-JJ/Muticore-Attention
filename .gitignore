@@ -2,6 +2,7 @@
 *.lo
 *.la
 *.pyc
+__pycache__/
 .*.swp
 .libs/
 .deps/
@@ -28,6 +29,7 @@ tags
 sst_test_outputs/
 build/
 install/
+deps/
 .\#*
 \#*\#
 .gdb_history
@@ -42,6 +44,8 @@ src/sst/elements/golem/tests/data/*.bin
 src/sst/elements/golem/tests/data/*.npy
 src/sst/elements/golem/tests/data/*.csv
 src/sst/elements/golem/tests/data/real_lenet5*/
+src/sst/elements/golem/tests/stats/parallel_simulation_walltime_milestones.csv
+src/sst/elements/golem/tests/tile_shape_sweep.csv
 src/sst/elements/golem/tests/doc/node_modules/
 src/sst/elements/golem/tests/doc/package-lock.json
 src/sst/elements/golem/tests/small/mvm_noc_int_array/riscv64/test_noc_dma
@@ -63,3 +67,6 @@ src/sst/elements/memHierarchy/tests/dramsim3*.json
 .ruff_cache/
 **/__pycache__/
 src/sst/elements/golem/tests/small/muticore_softmax/figures/**/*.tiff
+
+# Local agent plans and generated performance artifacts
+.planning/

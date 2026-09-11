@@ -13,11 +13,13 @@ Defaults:
   INSTALL_PREFIX      ./install
   SST_CORE_PREFIX     /local/sstcore
   SST_DRAMSIM3_PREFIX /local/packages/dramsim3
+  SST_RAMULATOR2_PREFIX ./deps/ramulator2-2.1
   JOBS                nproc
 
 Override defaults with environment variables, for example:
   SST_CORE_PREFIX=/path/to/sst_core_install \
   SST_DRAMSIM3_PREFIX=/path/to/DRAMsim3 \
+  SST_RAMULATOR2_PREFIX=/path/to/ramulator2 \
   scripts/build_and_install_local.sh
 
 Options:
@@ -73,6 +75,7 @@ BUILD_ROOT="${BUILD_ROOT:-$WORKTREE_ROOT/build/sst-elements}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-$WORKTREE_ROOT/install}"
 SST_CORE_PREFIX="${SST_CORE_PREFIX:-/local/sstcore}"
 SST_DRAMSIM3_PREFIX="${SST_DRAMSIM3_PREFIX:-/local/packages/dramsim3}"
+SST_RAMULATOR2_PREFIX="${SST_RAMULATOR2_PREFIX:-$WORKTREE_ROOT/deps/ramulator2-2.1}"
 INSTALL_HOME="$BUILD_ROOT/.sst-home"
 INSTALL_HOME_CONFIG="$INSTALL_HOME/.sst/sstsimulator.conf"
 ATTENTION_DIR="$WORKTREE_ROOT/src/sst/elements/golem/tests/small/muticore_attention"
@@ -98,6 +101,10 @@ fi
 
 if [[ ! -d "$SST_DRAMSIM3_PREFIX" ]]; then
 	echo "[ERROR] Missing DRAMSim3 prefix: $SST_DRAMSIM3_PREFIX" >&2
+	exit 1
+fi
+if [[ ! -f "$SST_RAMULATOR2_PREFIX/libramulator.so" ]]; then
+	echo "[ERROR] Missing Ramulator2 library: $SST_RAMULATOR2_PREFIX/libramulator.so" >&2
 	exit 1
 fi
 
@@ -133,7 +140,8 @@ echo "[2/5] Configuring local install"
 ./configure \
 	--prefix="$INSTALL_PREFIX" \
 	--with-sst-core="$SST_CORE_PREFIX" \
-	--with-dramsim3="$SST_DRAMSIM3_PREFIX"
+	--with-dramsim3="$SST_DRAMSIM3_PREFIX" \
+	--with-ramulator2="$SST_RAMULATOR2_PREFIX"
 
 echo "[3/5] Building SST elements with $jobs jobs"
 make -j"$jobs"
@@ -146,7 +154,7 @@ fi
 HOME="$INSTALL_HOME" make install
 
 echo "[5/5] Building FlashAttention RISC-V guests"
-make -C "$ATTENTION_DIR" -j"$jobs" scale-e2 scale-e3 scale-e4 scale-e5
+make -C "$ATTENTION_DIR" -j"$jobs" scale
 
 cat <<EOF
 [OK] Build and install complete.

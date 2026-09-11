@@ -4,7 +4,7 @@ import struct
 from typing import Iterable, Optional, Tuple
 
 
-SUPPORTED_DTYPES = {"int32", "fp32"}
+SUPPORTED_DTYPES = {"int32", "fp16", "fp32"}
 
 
 def normalize_dtype(dtype: str) -> str:
@@ -13,6 +13,9 @@ def normalize_dtype(dtype: str) -> str:
         "float": "fp32",
         "float32": "fp32",
         "fp32": "fp32",
+        "half": "fp16",
+        "float16": "fp16",
+        "fp16": "fp16",
         "int": "int32",
         "int32": "int32",
         "i32": "int32",
@@ -25,13 +28,15 @@ def normalize_dtype(dtype: str) -> str:
 
 def elem_nbytes(dtype: str) -> int:
     normalize_dtype(dtype)
-    return 4
+    return 2 if normalize_dtype(dtype) == "fp16" else 4
 
 
 def struct_scalar_fmt(dtype: str) -> str:
     value = normalize_dtype(dtype)
     if value == "int32":
         return "i"
+    if value == "fp16":
+        return "e"
     return "f"
 
 
@@ -72,6 +77,8 @@ def numpy_dtype_name(dtype: str) -> str:
     value = normalize_dtype(dtype)
     if value == "int32":
         return "int32"
+    if value == "fp16":
+        return "float16"
     return "float32"
 
 
@@ -79,6 +86,8 @@ def default_tolerance(dtype: str) -> Tuple[float, float]:
     value = normalize_dtype(dtype)
     if value == "int32":
         return (0.0, 0.0)
+    if value == "fp16":
+        return (1e-2, 1e-2)
     return (1e-5, 1e-4)
 
 

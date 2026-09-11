@@ -38,6 +38,12 @@ MemNIC::MemNIC(ComponentId_t id, Params &params, TimeConverter* tc) : MemNICBase
         netparams.insert("input_buf_size", params.find<std::string>("network_input_buffer_size", "1KiB"));
         netparams.insert("output_buf_size", params.find<std::string>("network_output_buffer_size", "1KiB"));
         netparams.insert("link_bw", params.find<std::string>("network_bw", "80GiB/s"));
+        netparams.insert("vn_priority_order",
+                         params.find<std::string>("network_vn_priority_order", ""));
+        netparams.insert("vn_starvation_vn",
+                         params.find<std::string>("network_vn_starvation_vn", "-1"));
+        netparams.insert("max_starvation_cycles",
+                         params.find<std::string>("network_vn_max_starvation_cycles", "0"));
         std::string link_control_class = params.find<std::string>("network_link_control", "merlin.linkcontrol");
 
         if (link_control_class != "merlin.linkcontrol")
@@ -70,9 +76,15 @@ void MemNIC::complete(unsigned int phase) {
  * Returns whether anything sent this cycle
  */
 bool MemNIC::clock(SimTime_t cycle) {
-    drainQueue(&golem_dma_send_queue_, link_control, golem_dma_response_drain_limit);
+    (void)cycle;
+    std::vector<MemEventBase*> admitted = admitGolemDmaIngress(getCurrentSimCycle());
+    for (auto* ev : admitted) {
+        (*recvHandler)(ev);
+    }
+    drainGolemDmaResponseQueue(link_control, golem_dma_response_drain_limit);
     drainQueue(&sendQueue, link_control);
-    if (sendQueue.empty() && golem_dma_send_queue_.empty()) {
+    if (sendQueue.empty() && golem_dma_send_queue_.empty() &&
+        !golemDmaIngressCanProgress(getCurrentSimCycle())) {
         clockOn = false;
         return true; /* turn off clock */
     }
@@ -83,8 +95,8 @@ bool MemNIC::clock(SimTime_t cycle) {
  * Event handler called by link control on event receive
  * Return whether event can be received
  */
-bool MemNIC::recvNotify(int) {
-    MemRtrEvent * mre = doRecv(link_control);
+bool MemNIC::recvNotify(int vn) {
+    MemRtrEvent * mre = doRecv(link_control, vn);
     if (mre) {
         MemEventBase* ev = mre->takeEvent();
         delete mre;
@@ -96,6 +108,10 @@ bool MemNIC::recvNotify(int) {
             (*recvHandler)(ev);
         }
     }
+    if (hasGolemDmaIngress() && !clockOn) {
+        clockOn = true;
+        reregisterClock(clockTC, clockHandler);
+    }
     return true;
 }
 
@@ -103,7 +119,7 @@ bool MemNIC::recvNotify(int) {
 /* Send event to memNIC */
 void MemNIC::send(MemEventBase *ev) {
     if (trySendGolemDmaResponse(ev, link_control)) {
-        if (!golem_dma_send_queue_.empty() && !clockOn) {
+        if ((!golem_dma_send_queue_.empty() || hasGolemDmaIngress()) && !clockOn) {
             clockOn = true;
             reregisterClock(clockTC, clockHandler);
         }

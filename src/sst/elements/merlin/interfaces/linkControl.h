@@ -69,6 +69,9 @@ public:
         {"use_nid_remap",      "If true, will remap logical nids in job to physical ids", "false" },
         {"nid_map_name",       "Base name of shared region where my NID map will be located.  If empty, no NID map will be used.",""},
         {"vn_remap",           "Remap VNs onto/off of the network.  If empty, no vn remapping is done", "" },
+        {"vn_priority_order",  "Comma-separated VNs in descending injection priority. Empty preserves round-robin.", "" },
+        {"vn_starvation_vn",   "VN allowed to bypass priority after max_starvation_cycles.", "-1" },
+        {"max_starvation_cycles", "Maximum queue age before vn_starvation_vn is injected. 0 disables bypass.", "0" },
 
     )
 
@@ -77,6 +80,9 @@ public:
         { "send_bit_count",     "Count number of bits sent on link", "bits", 1},
         { "output_port_stalls", "Time output port is stalled (in units of core timebase)", "time in stalls", 1},
         { "idle_time",          "Number of (in unites of core timebas) that port was idle", "time spent idle", 1},
+        { "vn_priority_high_grants", "Packets injected from VNs above the starvation VN", "packets", 1},
+        { "vn_priority_low_grants", "Packets injected from the starvation VN", "packets", 1},
+        { "vn_priority_starvation_grants", "Starvation-VN packets promoted after the wait bound", "packets", 1},
         // { "recv_bit_count",     "Count number of bits received on the link", "bits", 1},
     )
 
@@ -160,6 +166,9 @@ private:
     // Doing a round robin on the output.  Need to keep track of the
     // current virtual channel.
     int curr_out_vn;
+    std::vector<int> vn_priority_order;
+    int vn_starvation_vn;
+    SimTime_t vn_max_starvation_cycles;
 
     // Represents the start of when a port was idle
     // If the buffer was empty we instantiate this to the current time
@@ -210,7 +219,11 @@ private:
     Statistic<uint64_t>* send_bit_count;
     Statistic<uint64_t>* output_port_stalls;
     Statistic<uint64_t>* idle_time;
+    Statistic<uint64_t>* vn_priority_high_grants;
+    Statistic<uint64_t>* vn_priority_low_grants;
+    Statistic<uint64_t>* vn_priority_starvation_grants;
     Statistic<uint64_t>* recv_bit_count;
+    std::vector<uint64_t> packet_latencies_ns;
 
     RtrInitEvent* checkInitProtocol(Event* ev, RtrInitEvent::Commands command, uint32_t line, const char* file, const char* func);
 
