@@ -1,0 +1,3181 @@
+{
+  "status": "PASS",
+  "mismatches": {},
+  "lifecycle": {
+    "clock_contract": {
+      "sst_timebase_ticks_per_second": 1000000000000,
+      "normalization_clock_hz": 1000000000,
+      "normalized_cycle_definition": "ceil(sst_timebase_ticks * normalization_clock_hz / sst_timebase_ticks_per_second)",
+      "normalized_cycles_are_model_native_cycles": false,
+      "model_clocks_hz": {
+        "vanadis_cpu_rocc_sfu_local_gm": 1000000000,
+        "mvm_array": 1000000000,
+        "memory_controller": 1250000000,
+        "archive_platform": 2000000000
+      }
+    },
+    "accelerator_clock_hz": 1000000000,
+    "sst_timebase_ticks_per_second": 1000000000000,
+    "root_descriptor_accept_tick": 68590000,
+    "root_tensor_complete_tick": 398714375,
+    "root_wait_observed_tick": 398715000,
+    "accelerator_completion_ticks": 330124375,
+    "wait_return_ticks": 330125000,
+    "accelerator_completion_cycles": 330125,
+    "accelerator_completion_milliseconds": 0.330124375,
+    "wait_return_cycles": 330125,
+    "wait_return_milliseconds": 0.330125,
+    "manager_descriptor_accept_skew_ticks": 1259000,
+    "manager_descriptor_accept_skew_cycles": 1259,
+    "manager_local_complete_skew_ticks": 74324000,
+    "manager_local_complete_skew_cycles": 74324,
+    "root_band_receive_first_tick": 324383625,
+    "root_band_receive_last_tick": 398714375,
+    "worker_critical_path": {
+      "slowest_worker_core": 19,
+      "milestone_ticks": {
+        "dispatch_accept": 69879625,
+        "final_qk_tile_complete": 395136000,
+        "final_softmax_tile_complete": 395953000,
+        "final_pv_tile_complete": 398131000,
+        "final_output_dma_ack": 398680500
+      },
+      "stage_ticks": {
+        "dispatch_to_final_qk": 325256375,
+        "final_qk_to_final_softmax": 817000,
+        "final_softmax_to_final_pv": 2178000,
+        "final_pv_to_output_dma_ack": 549500
+      },
+      "stage_cycles": {
+        "dispatch_to_final_qk": 325257,
+        "final_qk_to_final_softmax": 817,
+        "final_softmax_to_final_pv": 2178,
+        "final_pv_to_output_dma_ack": 550
+      },
+      "aggregate_online_pipeline_cycles": {
+        "dispatch_to_first_qk": 75956,
+        "all_qk_to_softmax": 34602,
+        "all_softmax_to_pv": 147093,
+        "inter_tile_pv_to_next_qk": 70601,
+        "final_pv_to_output_dma_ack": 550
+      },
+      "aggregate_interpretation": "PV-to-next-QK includes next-tile KV/QK preparation and any intermediate query-block output DMA.",
+      "order_valid": true,
+      "inter_tile_breakdown": {
+        "worker_core": 19,
+        "transition_count": 31,
+        "total_ticks": 146683000,
+        "total_cycles": 146683,
+        "phase_ticks": {
+          "output_dma": 0,
+          "query_load": 0,
+          "kv_load": 105271750,
+          "q_local_read": 4030000,
+          "qk_matrix_program": 24237250,
+          "qk_input_program": 9548000,
+          "qk_compute_readout": 3596000
+        },
+        "phase_cycles": {
+          "output_dma": 0,
+          "query_load": 0,
+          "kv_load": 105272,
+          "q_local_read": 4030,
+          "qk_matrix_program": 24238,
+          "qk_input_program": 9548,
+          "qk_compute_readout": 3596
+        },
+        "phase_counts": {
+          "output_dma": 31,
+          "query_load": 31,
+          "kv_load": 31,
+          "q_local_read": 31,
+          "qk_matrix_program": 31,
+          "qk_input_program": 31,
+          "qk_compute_readout": 31
+        },
+        "attributed_ticks": 146683000,
+        "unattributed_ticks": 0,
+        "conservation_valid": true
+      },
+      "tile_pipeline_breakdown": {
+        "worker_core": 19,
+        "tile_count": 128,
+        "total_ticks": 324988500,
+        "total_cycles": 324989,
+        "phase_ticks": {
+          "kv_load": 178623375,
+          "q_local_read": 4160000,
+          "qk_matrix_program": 25018625,
+          "qk_input_program": 6144000,
+          "qk_compute_readout": 7424000,
+          "softmax": 6023000,
+          "pv_matrix_program": 16896000,
+          "pv_input_program": 16383500,
+          "pv_restore_output": 0,
+          "pv_compute": 4608000,
+          "pv_output_readwrite": 59708000
+        },
+        "phase_cycles": {
+          "kv_load": 178624,
+          "q_local_read": 4160,
+          "qk_matrix_program": 25019,
+          "qk_input_program": 6144,
+          "qk_compute_readout": 7424,
+          "softmax": 6023,
+          "pv_matrix_program": 16896,
+          "pv_input_program": 16384,
+          "pv_restore_output": 0,
+          "pv_compute": 4608,
+          "pv_output_readwrite": 59708
+        },
+        "phase_counts": {
+          "kv_load": 128,
+          "q_local_read": 128,
+          "qk_matrix_program": 128,
+          "qk_input_program": 128,
+          "qk_compute_readout": 128,
+          "softmax": 128,
+          "pv_matrix_program": 128,
+          "pv_input_program": 128,
+          "pv_restore_output": 128,
+          "pv_compute": 128,
+          "pv_output_readwrite": 128
+        },
+        "attributed_ticks": 324988500,
+        "unattributed_ticks": 0,
+        "conservation_valid": true
+      },
+      "kv_prefetch_timing": {
+        "ticks": {
+          "dma": 209372500,
+          "ready_lead": 38023875,
+          "wait": 105271750
+        },
+        "cycles": {
+          "dma": 209373,
+          "ready_lead": 38024,
+          "wait": 105272
+        },
+        "counts": {
+          "dma": 31,
+          "ready_lead": 20,
+          "wait": 11
+        }
+      }
+    },
+    "system_frontier": {
+      "milestone_ticks": {
+        "root_descriptor_accept": 68590000,
+        "manager_dispatch_complete": 69861000,
+        "worker_dispatch_accept_complete": 69879625,
+        "final_qk_tile_complete": 395136000,
+        "final_softmax_tile_complete": 395953000,
+        "final_pv_tile_complete": 398131000,
+        "final_output_dma_ack": 398680500,
+        "manager_local_complete": 398699125,
+        "root_tensor_complete": 398714375,
+        "software_wait_observed": 398715000
+      },
+      "milestone_cycles_from_root_accept": {
+        "root_descriptor_accept": 0,
+        "manager_dispatch_complete": 1271,
+        "worker_dispatch_accept_complete": 1290,
+        "final_qk_tile_complete": 326546,
+        "final_softmax_tile_complete": 327363,
+        "final_pv_tile_complete": 329541,
+        "final_output_dma_ack": 330091,
+        "manager_local_complete": 330110,
+        "root_tensor_complete": 330125,
+        "software_wait_observed": 330125
+      },
+      "stage_cycles": {
+        "root_descriptor_accept_to_manager_dispatch_complete": 1271,
+        "manager_dispatch_complete_to_worker_dispatch_accept_complete": 19,
+        "worker_dispatch_accept_complete_to_final_qk_tile_complete": 325257,
+        "final_qk_tile_complete_to_final_softmax_tile_complete": 817,
+        "final_softmax_tile_complete_to_final_pv_tile_complete": 2178,
+        "final_pv_tile_complete_to_final_output_dma_ack": 550,
+        "final_output_dma_ack_to_manager_local_complete": 19,
+        "manager_local_complete_to_root_tensor_complete": 16,
+        "root_tensor_complete_to_software_wait_observed": 1
+      },
+      "stage_ticks": {
+        "root_descriptor_accept_to_manager_dispatch_complete": 1271000,
+        "manager_dispatch_complete_to_worker_dispatch_accept_complete": 18625,
+        "worker_dispatch_accept_complete_to_final_qk_tile_complete": 325256375,
+        "final_qk_tile_complete_to_final_softmax_tile_complete": 817000,
+        "final_softmax_tile_complete_to_final_pv_tile_complete": 2178000,
+        "final_pv_tile_complete_to_final_output_dma_ack": 549500,
+        "final_output_dma_ack_to_manager_local_complete": 18625,
+        "manager_local_complete_to_root_tensor_complete": 15250,
+        "root_tensor_complete_to_software_wait_observed": 625
+      },
+      "accelerator_attribution": {
+        "total_ticks": 330124375,
+        "attributed_ticks": 330124375,
+        "unattributed_ticks": 0,
+        "coverage_ratio": 1.0,
+        "conservation_valid": true
+      },
+      "order_valid": true,
+      "interpretation": "Frontier deltas describe when all parallel workers cross each milestone; dispatch-to-final-QK includes earlier online QK-Softmax-PV tiles."
+    },
+    "kv_second_lookahead_window": {
+      "max_candidates": 1920,
+      "candidates": 0,
+      "prefetches": 0,
+      "candidate_rate": 0.0,
+      "ready_at_release": 0,
+      "ready_after_release_before_boundary": 0,
+      "timing_ticks": {
+        "k_release": 1562006000,
+        "v_release": 2008582000,
+        "available_lead": 0
+      },
+      "timing_counts": {
+        "k_release": 512,
+        "v_release": 2048,
+        "available_lead": 0
+      },
+      "mean_cycles": {
+        "k_release": 3050.79296875,
+        "v_release": 980.7529296875,
+        "available_lead": 0.0
+      },
+      "max_available_lead_cycles": 0
+    },
+    "qk_readout_overlap": {
+      "enabled": false,
+      "window": 2,
+      "max_observed_ahead": 0,
+      "ordered_local_gm_retirement": true
+    },
+    "wcp_gemm_proxy": {
+      "queue_depth": 32,
+      "issue_width": 1,
+      "command_latency_cycles": 1,
+      "completion_latency_cycles": 1,
+      "max_worker_queue_wait_cycles": 2,
+      "worker_totals": {
+        "gemm_proxy_commands_issued": 172032,
+        "gemm_proxy_queue_full_stalls": 0,
+        "gemm_proxy_queue_wait_cycles": 172049,
+        "gemm_proxy_launch_commands": 6144,
+        "gemm_proxy_completion_callbacks": 131072,
+        "gemm_proxy_completion_delay_cycles": 131072
+      }
+    },
+    "qk_panel_row_burst": {
+      "enabled": false,
+      "mode": "disabled",
+      "capacity_bytes": 1024,
+      "banks": 16,
+      "bank_bytes_per_cycle": 64,
+      "row_burst_bytes": 64,
+      "worker_totals": {
+        "attention_tile_storage_acquires": 0,
+        "attention_tile_storage_releases": 0,
+        "attention_tile_storage_mode_conflicts": 0,
+        "attention_tile_storage_capacity_rejections": 0,
+        "attention_tile_storage_column_writes": 0,
+        "attention_tile_storage_row_reads": 0,
+        "attention_tile_storage_write_bytes": 0,
+        "attention_tile_storage_read_bytes": 0,
+        "attention_tile_storage_write_wait_cycles": 0,
+        "attention_tile_storage_read_wait_cycles": 0
+      }
+    },
+    "attention_o_accumulator_cbuffer": {
+      "enabled": false,
+      "mode": "disabled",
+      "qk_scratch_bytes": 1024,
+      "accumulator_bytes": 8192,
+      "worker_totals": {
+        "attention_storage_session_acquires": 0,
+        "attention_storage_session_releases": 0,
+        "attention_accumulator_row_writes": 0,
+        "attention_accumulator_row_reads": 0,
+        "attention_accumulator_write_bytes": 0,
+        "attention_accumulator_read_bytes": 0,
+        "attention_accumulator_write_wait_cycles": 0,
+        "attention_accumulator_read_wait_cycles": 0
+      }
+    },
+    "matrix_broadcast_fabric": {
+      "enabled": true,
+      "pv_enabled": true,
+      "qk_enabled": true,
+      "topology": "binary_tree",
+      "shares_array_buffer_ports": false,
+      "max_fanout": 16,
+      "bytes_per_cycle": 64,
+      "base_latency_cycles": 1,
+      "stage_latency_cycles": 1,
+      "tree_stages": 4,
+      "fanout": 16,
+      "payload_bytes": null,
+      "qk_payload_bytes": 16384,
+      "q_pair_payload_bytes": 256,
+      "pv_payload_bytes": 128,
+      "cycles_per_request": null,
+      "qk_cycles_per_request": 260,
+      "q_pair_cycles_per_request": 5,
+      "pv_cycles_per_request": 4,
+      "qk_requests_per_worker": 64,
+      "q_pair_requests_per_worker": 4096,
+      "pv_requests_per_worker": 2048,
+      "max_observed_fanout": 16,
+      "worker_totals": {
+        "matrix_broadcast_requests": 100352,
+        "matrix_broadcast_rejected": 0,
+        "matrix_broadcast_ingress_bytes": 46137344,
+        "matrix_broadcast_sink_bytes": 293601280,
+        "matrix_broadcast_transfer_cycles": 861184,
+        "matrix_broadcast_fanout": 155648
+      }
+    },
+    "attention_cluster": {
+      "enabled": true,
+      "physical_array_contract": {
+        "arrays_per_worker": 64,
+        "input_rows_per_array": 64,
+        "output_cus_per_array": 64,
+        "operand_banks_per_array": 2
+      },
+      "array_partition": {
+        "qk": [
+          0,
+          15
+        ],
+        "pv": [
+          16,
+          63
+        ]
+      },
+      "owned_arrays": {
+        "qk": 16,
+        "pv": 48
+      },
+      "contexts_per_worker": 388,
+      "q_physical_inputs_per_tile": 32,
+      "qk_pair_reductions_per_tile": 16,
+      "score_beats_per_tile": 16,
+      "direct_p": {
+        "slots": 4,
+        "bytes_per_slot": 2048,
+        "write_bytes_per_cycle": 64,
+        "read_bytes_per_cycle": 64,
+        "reservations_per_worker": 128,
+        "writes_per_worker": 256,
+        "reads_per_worker": 2048
+      },
+      "group_pipeline": {
+        "group_size": 4,
+        "physical_tiles_per_worker": 32,
+        "logical_tiles_per_worker": 128,
+        "ahead_contexts_per_worker": 96,
+        "tile_ii_target_cycles": 625,
+        "tile_ii_applicable": true,
+        "tile_ii_accepted": false,
+        "three_stage_overlap_cycles_total": 0,
+        "workers": [
+          {
+            "core": 4,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 3,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 104284,
+              "min_cycles": 554,
+              "max_cycles": 58461,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 89718,
+              "min_cycles": 2045,
+              "max_cycles": 7526
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2160,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 5,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 1,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 43421,
+              "min_cycles": 554,
+              "max_cycles": 796,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 85220,
+              "min_cycles": 2684,
+              "max_cycles": 4249
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2196,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 6,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 2,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 43422,
+              "min_cycles": 554,
+              "max_cycles": 796,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 85212,
+              "min_cycles": 2684,
+              "max_cycles": 4240
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2196,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 7,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 1,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 43422,
+              "min_cycles": 554,
+              "max_cycles": 796,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 85218,
+              "min_cycles": 2684,
+              "max_cycles": 4246
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2196,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 8,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 3,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 102302,
+              "min_cycles": 554,
+              "max_cycles": 56479,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 90707,
+              "min_cycles": 2045,
+              "max_cycles": 7526
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2160,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 9,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 2,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 43497,
+              "min_cycles": 554,
+              "max_cycles": 855,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 103560,
+              "min_cycles": 2684,
+              "max_cycles": 7343
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2196,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 10,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 2,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 43433,
+              "min_cycles": 554,
+              "max_cycles": 796,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 134328,
+              "min_cycles": 2684,
+              "max_cycles": 42354
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2196,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 11,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 2,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 43433,
+              "min_cycles": 554,
+              "max_cycles": 796,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 145246,
+              "min_cycles": 2684,
+              "max_cycles": 51944
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2196,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 12,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 3,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 63333,
+              "min_cycles": 554,
+              "max_cycles": 17510,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 92187,
+              "min_cycles": 2045,
+              "max_cycles": 7526
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2160,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 13,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 3,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 47799,
+              "min_cycles": 554,
+              "max_cycles": 2975,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 93879,
+              "min_cycles": 2045,
+              "max_cycles": 12611
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2160,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 14,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 2,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 43474,
+              "min_cycles": 554,
+              "max_cycles": 826,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 99935,
+              "min_cycles": 2684,
+              "max_cycles": 11287
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2196,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 15,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 2,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 43447,
+              "min_cycles": 554,
+              "max_cycles": 799,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 101258,
+              "min_cycles": 2684,
+              "max_cycles": 18720
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2196,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 16,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 3,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 51440,
+              "min_cycles": 554,
+              "max_cycles": 5617,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 109873,
+              "min_cycles": 2045,
+              "max_cycles": 8918
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2160,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 17,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 3,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 44308,
+              "min_cycles": 554,
+              "max_cycles": 1653,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 109798,
+              "min_cycles": 2684,
+              "max_cycles": 11246
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2160,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 18,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 2,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 43460,
+              "min_cycles": 554,
+              "max_cycles": 805,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 185427,
+              "min_cycles": 2684,
+              "max_cycles": 33762
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2196,
+              "qk_pv": 124,
+              "three_stage": 0
+            }
+          },
+          {
+            "core": 19,
+            "ahead_launched": 96,
+            "ahead_completed": 96,
+            "ahead_promoted": 96,
+            "promotion_waits": 2,
+            "initial_enqueue_retries": 0,
+            "tile_ii": {
+              "count": 64,
+              "sum_cycles": 43490,
+              "min_cycles": 554,
+              "max_cycles": 834,
+              "over_target_count": 33,
+              "p95_relation": ">625"
+            },
+            "boundary_ii": {
+              "count": 31,
+              "sum_cycles": 187832,
+              "min_cycles": 2684,
+              "max_cycles": 33783
+            },
+            "overlap_cycles": {
+              "qk_sfu": 0,
+              "sfu_pv": 2196,
+              "qk_pv": 130,
+              "three_stage": 0
+            }
+          }
+        ]
+      },
+      "resource_profile": {
+        "critical_worker_core": 19,
+        "interval_semantics": "Each worker entry is a union of real [start,end) service intervals. worker_totals are sums across workers and are not end-to-end latency.",
+        "resources": {
+          "qk_array_active": {
+            "critical_worker": {
+              "core": 19,
+              "busy_ticks": 17408000,
+              "busy_cycles": 17408,
+              "span_ticks": 249581000,
+              "span_cycles": 249581,
+              "idle_ticks": 232173000,
+              "idle_cycles": 232173,
+              "busy_fraction_of_span": 0.06974889915498375,
+              "max_concurrency": 16,
+              "source_unit": "ticks"
+            },
+            "worker_totals": {
+              "busy_ticks": 278528000,
+              "busy_cycles": 278528,
+              "span_ticks": 3217730000,
+              "span_cycles": 3217730,
+              "idle_ticks": 2939202000,
+              "idle_cycles": 2939202
+            },
+            "max_worker_concurrency": 16,
+            "workers": [
+              {
+                "core": 4,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 284517000,
+                "span_cycles": 284517,
+                "idle_ticks": 267109000,
+                "idle_cycles": 267109,
+                "busy_fraction_of_span": 0.061184393199703355,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 5,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 146880000,
+                "span_cycles": 146880,
+                "idle_ticks": 129472000,
+                "idle_cycles": 129472,
+                "busy_fraction_of_span": 0.11851851851851852,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 6,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 146881000,
+                "span_cycles": 146881,
+                "idle_ticks": 129473000,
+                "idle_cycles": 129473,
+                "busy_fraction_of_span": 0.11851771161688714,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 7,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 146880000,
+                "span_cycles": 146880,
+                "idle_ticks": 129472000,
+                "idle_cycles": 129472,
+                "busy_fraction_of_span": 0.11851851851851852,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 8,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 279234000,
+                "span_cycles": 279234,
+                "idle_ticks": 261826000,
+                "idle_cycles": 261826,
+                "busy_fraction_of_span": 0.062341978412370984,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 9,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 165303000,
+                "span_cycles": 165303,
+                "idle_ticks": 147895000,
+                "idle_cycles": 147895,
+                "busy_fraction_of_span": 0.10530964350314272,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 10,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 196006000,
+                "span_cycles": 196006,
+                "idle_ticks": 178598000,
+                "idle_cycles": 178598,
+                "busy_fraction_of_span": 0.08881360774670163,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 11,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 206924000,
+                "span_cycles": 206924,
+                "idle_ticks": 189516000,
+                "idle_cycles": 189516,
+                "busy_fraction_of_span": 0.08412750575090372,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 12,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 241418000,
+                "span_cycles": 241418,
+                "idle_ticks": 224010000,
+                "idle_cycles": 224010,
+                "busy_fraction_of_span": 0.07210729937287194,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 13,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 161177000,
+                "span_cycles": 161177,
+                "idle_ticks": 143769000,
+                "idle_cycles": 143769,
+                "busy_fraction_of_span": 0.10800548465351756,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 14,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 161661000,
+                "span_cycles": 161661,
+                "idle_ticks": 144253000,
+                "idle_cycles": 144253,
+                "busy_fraction_of_span": 0.10768212494046184,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 15,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 162958000,
+                "span_cycles": 162958,
+                "idle_ticks": 145550000,
+                "idle_cycles": 145550,
+                "busy_fraction_of_span": 0.10682507149081358,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 16,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 243258000,
+                "span_cycles": 243258,
+                "idle_ticks": 225850000,
+                "idle_cycles": 225850,
+                "busy_fraction_of_span": 0.0715618808014536,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 17,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 177905000,
+                "span_cycles": 177905,
+                "idle_ticks": 160497000,
+                "idle_cycles": 160497,
+                "busy_fraction_of_span": 0.09784997611084567,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 18,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 247147000,
+                "span_cycles": 247147,
+                "idle_ticks": 229739000,
+                "idle_cycles": 229739,
+                "busy_fraction_of_span": 0.07043581350370427,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 19,
+                "busy_ticks": 17408000,
+                "busy_cycles": 17408,
+                "span_ticks": 249581000,
+                "span_cycles": 249581,
+                "idle_ticks": 232173000,
+                "idle_cycles": 232173,
+                "busy_fraction_of_span": 0.06974889915498375,
+                "max_concurrency": 16,
+                "source_unit": "ticks"
+              }
+            ]
+          },
+          "pv_array_active": {
+            "critical_worker": {
+              "core": 19,
+              "busy_ticks": 4608000,
+              "busy_cycles": 4608,
+              "span_ticks": 250975000,
+              "span_cycles": 250975,
+              "idle_ticks": 246367000,
+              "idle_cycles": 246367,
+              "busy_fraction_of_span": 0.01836039446159976,
+              "max_concurrency": 32,
+              "source_unit": "ticks"
+            },
+            "worker_totals": {
+              "busy_ticks": 73730000,
+              "busy_cycles": 73730,
+              "span_ticks": 3418954000,
+              "span_cycles": 3418954,
+              "idle_ticks": 3345224000,
+              "idle_cycles": 3345224
+            },
+            "max_worker_concurrency": 32,
+            "workers": [
+              {
+                "core": 4,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 285851000,
+                "span_cycles": 285851,
+                "idle_ticks": 281243000,
+                "idle_cycles": 281243,
+                "busy_fraction_of_span": 0.016120286442937056,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 5,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 221233000,
+                "span_cycles": 221233,
+                "idle_ticks": 216625000,
+                "idle_cycles": 216625,
+                "busy_fraction_of_span": 0.02082871904281911,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 6,
+                "busy_ticks": 4609000,
+                "busy_cycles": 4609,
+                "span_ticks": 150042000,
+                "span_cycles": 150042,
+                "idle_ticks": 145433000,
+                "idle_cycles": 145433,
+                "busy_fraction_of_span": 0.030718065608296343,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 7,
+                "busy_ticks": 4609000,
+                "busy_cycles": 4609,
+                "span_ticks": 148728000,
+                "span_cycles": 148728,
+                "idle_ticks": 144119000,
+                "idle_cycles": 144119,
+                "busy_fraction_of_span": 0.030989457264267658,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 8,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 280759000,
+                "span_cycles": 280759,
+                "idle_ticks": 276151000,
+                "idle_cycles": 276151,
+                "busy_fraction_of_span": 0.016412652844610503,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 9,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 224551000,
+                "span_cycles": 224551,
+                "idle_ticks": 219943000,
+                "idle_cycles": 219943,
+                "busy_fraction_of_span": 0.020520950697169017,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 10,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 216145000,
+                "span_cycles": 216145,
+                "idle_ticks": 211537000,
+                "idle_cycles": 211537,
+                "busy_fraction_of_span": 0.021319021952855722,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 11,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 210095000,
+                "span_cycles": 210095,
+                "idle_ticks": 205487000,
+                "idle_cycles": 205487,
+                "busy_fraction_of_span": 0.02193293510078774,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 12,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 242794000,
+                "span_cycles": 242794,
+                "idle_ticks": 238186000,
+                "idle_cycles": 238186,
+                "busy_fraction_of_span": 0.018979052200630987,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 13,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 179649000,
+                "span_cycles": 179649,
+                "idle_ticks": 175041000,
+                "idle_cycles": 175041,
+                "busy_fraction_of_span": 0.025650017534191674,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 14,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 165341000,
+                "span_cycles": 165341,
+                "idle_ticks": 160733000,
+                "idle_cycles": 160733,
+                "busy_fraction_of_span": 0.02786967539811662,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 15,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 170300000,
+                "span_cycles": 170300,
+                "idle_ticks": 165692000,
+                "idle_cycles": 165692,
+                "busy_fraction_of_span": 0.02705813270698767,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 16,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 244652000,
+                "span_cycles": 244652,
+                "idle_ticks": 240044000,
+                "idle_cycles": 240044,
+                "busy_fraction_of_span": 0.018834916534506155,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 17,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 179299000,
+                "span_cycles": 179299,
+                "idle_ticks": 174691000,
+                "idle_cycles": 174691,
+                "busy_fraction_of_span": 0.025700087563232367,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 18,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 248540000,
+                "span_cycles": 248540,
+                "idle_ticks": 243932000,
+                "idle_cycles": 243932,
+                "busy_fraction_of_span": 0.01854027520721011,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 19,
+                "busy_ticks": 4608000,
+                "busy_cycles": 4608,
+                "span_ticks": 250975000,
+                "span_cycles": 250975,
+                "idle_ticks": 246367000,
+                "idle_cycles": 246367,
+                "busy_fraction_of_span": 0.01836039446159976,
+                "max_concurrency": 32,
+                "source_unit": "ticks"
+              }
+            ]
+          },
+          "array_buffer_ports": {
+            "critical_worker": {
+              "core": 19,
+              "busy_ticks": 44449000,
+              "busy_cycles": 44449,
+              "span_ticks": 252735000,
+              "span_cycles": 252735,
+              "idle_ticks": 208286000,
+              "idle_cycles": 208286,
+              "busy_fraction_of_span": 0.17587196074940153,
+              "max_concurrency": 2,
+              "source_unit": "ticks"
+            },
+            "worker_totals": {
+              "busy_ticks": 711507000,
+              "busy_cycles": 711507,
+              "span_ticks": 3447116000,
+              "span_cycles": 3447116,
+              "idle_ticks": 2735609000,
+              "idle_cycles": 2735609
+            },
+            "max_worker_concurrency": 2,
+            "workers": [
+              {
+                "core": 4,
+                "busy_ticks": 44475000,
+                "busy_cycles": 44475,
+                "span_ticks": 287611000,
+                "span_cycles": 287611,
+                "idle_ticks": 243136000,
+                "idle_cycles": 243136,
+                "busy_fraction_of_span": 0.1546359492508979,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 5,
+                "busy_ticks": 44468000,
+                "busy_cycles": 44468,
+                "span_ticks": 222993000,
+                "span_cycles": 222993,
+                "idle_ticks": 178525000,
+                "idle_cycles": 178525,
+                "busy_fraction_of_span": 0.19941433139156833,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 6,
+                "busy_ticks": 44468000,
+                "busy_cycles": 44468,
+                "span_ticks": 151802000,
+                "span_cycles": 151802,
+                "idle_ticks": 107334000,
+                "idle_cycles": 107334,
+                "busy_fraction_of_span": 0.29293421694048827,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 7,
+                "busy_ticks": 44468000,
+                "busy_cycles": 44468,
+                "span_ticks": 150488000,
+                "span_cycles": 150488,
+                "idle_ticks": 106020000,
+                "idle_cycles": 106020,
+                "busy_fraction_of_span": 0.2954919993620754,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 8,
+                "busy_ticks": 44475000,
+                "busy_cycles": 44475,
+                "span_ticks": 282519000,
+                "span_cycles": 282519,
+                "idle_ticks": 238044000,
+                "idle_cycles": 238044,
+                "busy_fraction_of_span": 0.15742304057426226,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 9,
+                "busy_ticks": 44472000,
+                "busy_cycles": 44472,
+                "span_ticks": 226311000,
+                "span_cycles": 226311,
+                "idle_ticks": 181839000,
+                "idle_cycles": 181839,
+                "busy_fraction_of_span": 0.1965083447114811,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 10,
+                "busy_ticks": 44471000,
+                "busy_cycles": 44471,
+                "span_ticks": 217905000,
+                "span_cycles": 217905,
+                "idle_ticks": 173434000,
+                "idle_cycles": 173434,
+                "busy_fraction_of_span": 0.20408434868405956,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 11,
+                "busy_ticks": 44471000,
+                "busy_cycles": 44471,
+                "span_ticks": 211855000,
+                "span_cycles": 211855,
+                "idle_ticks": 167384000,
+                "idle_cycles": 167384,
+                "busy_fraction_of_span": 0.20991244011234098,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 12,
+                "busy_ticks": 44475000,
+                "busy_cycles": 44475,
+                "span_ticks": 244554000,
+                "span_cycles": 244554,
+                "idle_ticks": 200079000,
+                "idle_cycles": 200079,
+                "busy_fraction_of_span": 0.18186167472214726,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 13,
+                "busy_ticks": 44475000,
+                "busy_cycles": 44475,
+                "span_ticks": 181409000,
+                "span_cycles": 181409,
+                "idle_ticks": 136934000,
+                "idle_cycles": 136934,
+                "busy_fraction_of_span": 0.2451642421269066,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 14,
+                "busy_ticks": 44466000,
+                "busy_cycles": 44466,
+                "span_ticks": 167102000,
+                "span_cycles": 167102,
+                "idle_ticks": 122636000,
+                "idle_cycles": 122636,
+                "busy_fraction_of_span": 0.26610094433340115,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 15,
+                "busy_ticks": 44465000,
+                "busy_cycles": 44465,
+                "span_ticks": 172060000,
+                "span_cycles": 172060,
+                "idle_ticks": 127595000,
+                "idle_cycles": 127595,
+                "busy_fraction_of_span": 0.2584272928048355,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 16,
+                "busy_ticks": 44475000,
+                "busy_cycles": 44475,
+                "span_ticks": 246412000,
+                "span_cycles": 246412,
+                "idle_ticks": 201937000,
+                "idle_cycles": 201937,
+                "busy_fraction_of_span": 0.1804903981948931,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 17,
+                "busy_ticks": 44475000,
+                "busy_cycles": 44475,
+                "span_ticks": 181059000,
+                "span_cycles": 181059,
+                "idle_ticks": 136584000,
+                "idle_cycles": 136584,
+                "busy_fraction_of_span": 0.24563816214604078,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 18,
+                "busy_ticks": 44459000,
+                "busy_cycles": 44459,
+                "span_ticks": 250301000,
+                "span_cycles": 250301,
+                "idle_ticks": 205842000,
+                "idle_cycles": 205842,
+                "busy_fraction_of_span": 0.17762214293990036,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 19,
+                "busy_ticks": 44449000,
+                "busy_cycles": 44449,
+                "span_ticks": 252735000,
+                "span_cycles": 252735,
+                "idle_ticks": 208286000,
+                "idle_cycles": 208286,
+                "busy_fraction_of_span": 0.17587196074940153,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              }
+            ]
+          },
+          "local_gm_read_ports": {
+            "critical_worker": {
+              "core": 19,
+              "busy_ticks": 33670000,
+              "busy_cycles": 33670,
+              "span_ticks": 254076875,
+              "span_cycles": 254077,
+              "idle_ticks": 220406875,
+              "idle_cycles": 220407,
+              "busy_fraction_of_span": 0.1325189472674363,
+              "max_concurrency": 2,
+              "source_unit": "ticks"
+            },
+            "worker_totals": {
+              "busy_ticks": 539500000,
+              "busy_cycles": 539500,
+              "span_ticks": 3473624375,
+              "span_cycles": 3473632,
+              "idle_ticks": 2934124375,
+              "idle_cycles": 2934132
+            },
+            "max_worker_concurrency": 2,
+            "workers": [
+              {
+                "core": 4,
+                "busy_ticks": 33800000,
+                "busy_cycles": 33800,
+                "span_ticks": 288930250,
+                "span_cycles": 288931,
+                "idle_ticks": 255130250,
+                "idle_cycles": 255131,
+                "busy_fraction_of_span": 0.11698325114798468,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 5,
+                "busy_ticks": 33670000,
+                "busy_cycles": 33670,
+                "span_ticks": 225983250,
+                "span_cycles": 225984,
+                "idle_ticks": 192313250,
+                "idle_cycles": 192314,
+                "busy_fraction_of_span": 0.14899334353320434,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 6,
+                "busy_ticks": 33670000,
+                "busy_cycles": 33670,
+                "span_ticks": 153692625,
+                "span_cycles": 153693,
+                "idle_ticks": 120022625,
+                "idle_cycles": 120023,
+                "busy_fraction_of_span": 0.2190736217824375,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 7,
+                "busy_ticks": 33670000,
+                "busy_cycles": 33670,
+                "span_ticks": 151810250,
+                "span_cycles": 151811,
+                "idle_ticks": 118140250,
+                "idle_cycles": 118141,
+                "busy_fraction_of_span": 0.22179003064681074,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 8,
+                "busy_ticks": 33800000,
+                "busy_cycles": 33800,
+                "span_ticks": 283847500,
+                "span_cycles": 283848,
+                "idle_ticks": 250047500,
+                "idle_cycles": 250048,
+                "busy_fraction_of_span": 0.11907802605272197,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 9,
+                "busy_ticks": 33670000,
+                "busy_cycles": 33670,
+                "span_ticks": 229301000,
+                "span_cycles": 229301,
+                "idle_ticks": 195631000,
+                "idle_cycles": 195631,
+                "busy_fraction_of_span": 0.14683756285406518,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 10,
+                "busy_ticks": 33670000,
+                "busy_cycles": 33670,
+                "span_ticks": 219559500,
+                "span_cycles": 219560,
+                "idle_ticks": 185889500,
+                "idle_cycles": 185890,
+                "busy_fraction_of_span": 0.15335250809006215,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 11,
+                "busy_ticks": 33670000,
+                "busy_cycles": 33670,
+                "span_ticks": 213509250,
+                "span_cycles": 213510,
+                "idle_ticks": 179839250,
+                "idle_cycles": 179840,
+                "busy_fraction_of_span": 0.1576980856801286,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 12,
+                "busy_ticks": 33800000,
+                "busy_cycles": 33800,
+                "span_ticks": 245889625,
+                "span_cycles": 245890,
+                "idle_ticks": 212089625,
+                "idle_cycles": 212090,
+                "busy_fraction_of_span": 0.13746004940224704,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 13,
+                "busy_ticks": 33800000,
+                "busy_cycles": 33800,
+                "span_ticks": 183072625,
+                "span_cycles": 183073,
+                "idle_ticks": 149272625,
+                "idle_cycles": 149273,
+                "busy_fraction_of_span": 0.18462618318822926,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 14,
+                "busy_ticks": 33670000,
+                "busy_cycles": 33670,
+                "span_ticks": 168438125,
+                "span_cycles": 168439,
+                "idle_ticks": 134768125,
+                "idle_cycles": 134769,
+                "busy_fraction_of_span": 0.1998953621693426,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 15,
+                "busy_ticks": 33670000,
+                "busy_cycles": 33670,
+                "span_ticks": 173714625,
+                "span_cycles": 173715,
+                "idle_ticks": 140044625,
+                "idle_cycles": 140045,
+                "busy_fraction_of_span": 0.1938236345961084,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 16,
+                "busy_ticks": 33800000,
+                "busy_cycles": 33800,
+                "span_ticks": 247753875,
+                "span_cycles": 247754,
+                "idle_ticks": 213953875,
+                "idle_cycles": 213954,
+                "busy_fraction_of_span": 0.13642571685306637,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 17,
+                "busy_ticks": 33800000,
+                "busy_cycles": 33800,
+                "span_ticks": 182401500,
+                "span_cycles": 182402,
+                "idle_ticks": 148601500,
+                "idle_cycles": 148602,
+                "busy_fraction_of_span": 0.1853054936499974,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 18,
+                "busy_ticks": 33670000,
+                "busy_cycles": 33670,
+                "span_ticks": 251643500,
+                "span_cycles": 251644,
+                "idle_ticks": 217973500,
+                "idle_cycles": 217974,
+                "busy_fraction_of_span": 0.13380039619541137,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 19,
+                "busy_ticks": 33670000,
+                "busy_cycles": 33670,
+                "span_ticks": 254076875,
+                "span_cycles": 254077,
+                "idle_ticks": 220406875,
+                "idle_cycles": 220407,
+                "busy_fraction_of_span": 0.1325189472674363,
+                "max_concurrency": 2,
+                "source_unit": "ticks"
+              }
+            ]
+          },
+          "local_gm_write_ports": {
+            "critical_worker": {
+              "core": 19,
+              "busy_ticks": 17680000,
+              "busy_cycles": 17680,
+              "span_ticks": 327371000,
+              "span_cycles": 327371,
+              "idle_ticks": 309691000,
+              "idle_cycles": 309691,
+              "busy_fraction_of_span": 0.054006005418928374,
+              "max_concurrency": 1,
+              "source_unit": "ticks"
+            },
+            "worker_totals": {
+              "busy_ticks": 282880000,
+              "busy_cycles": 282880,
+              "span_ticks": 4084380000,
+              "span_cycles": 4084385,
+              "idle_ticks": 3801500000,
+              "idle_cycles": 3801505
+            },
+            "max_worker_concurrency": 1,
+            "workers": [
+              {
+                "core": 4,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 291017625,
+                "span_cycles": 291018,
+                "idle_ticks": 273337625,
+                "idle_cycles": 273338,
+                "busy_fraction_of_span": 0.06075233415845518,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 5,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 228358000,
+                "span_cycles": 228358,
+                "idle_ticks": 210678000,
+                "idle_cycles": 210678,
+                "busy_fraction_of_span": 0.07742229306615052,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 6,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 158510000,
+                "span_cycles": 158510,
+                "idle_ticks": 140830000,
+                "idle_cycles": 140830,
+                "busy_fraction_of_span": 0.11153870418270141,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 7,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 158093625,
+                "span_cycles": 158094,
+                "idle_ticks": 140413625,
+                "idle_cycles": 140414,
+                "busy_fraction_of_span": 0.11183246636289097,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 8,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 292197375,
+                "span_cycles": 292198,
+                "idle_ticks": 274517375,
+                "idle_cycles": 274518,
+                "busy_fraction_of_span": 0.06050704596507754,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 9,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 231020250,
+                "span_cycles": 231021,
+                "idle_ticks": 213340250,
+                "idle_cycles": 213341,
+                "busy_fraction_of_span": 0.07653008773040458,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 10,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 263587250,
+                "span_cycles": 263588,
+                "idle_ticks": 245907250,
+                "idle_cycles": 245908,
+                "busy_fraction_of_span": 0.06707456449429933,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 11,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 257435375,
+                "span_cycles": 257436,
+                "idle_ticks": 239755375,
+                "idle_cycles": 239756,
+                "busy_fraction_of_span": 0.06867743020942635,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 12,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 293528250,
+                "span_cycles": 293529,
+                "idle_ticks": 275848250,
+                "idle_cycles": 275849,
+                "busy_fraction_of_span": 0.0602327033258298,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 13,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 232019000,
+                "span_cycles": 232019,
+                "idle_ticks": 214339000,
+                "idle_cycles": 214339,
+                "busy_fraction_of_span": 0.0762006559807602,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 14,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 224340000,
+                "span_cycles": 224340,
+                "idle_ticks": 206660000,
+                "idle_cycles": 206660,
+                "busy_fraction_of_span": 0.07880895069983061,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 15,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 233183250,
+                "span_cycles": 233184,
+                "idle_ticks": 215503250,
+                "idle_cycles": 215504,
+                "busy_fraction_of_span": 0.07582019720541677,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 16,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 316849000,
+                "span_cycles": 316849,
+                "idle_ticks": 299169000,
+                "idle_cycles": 299169,
+                "busy_fraction_of_span": 0.05579945021129939,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 17,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 254121000,
+                "span_cycles": 254121,
+                "idle_ticks": 236441000,
+                "idle_cycles": 236441,
+                "busy_fraction_of_span": 0.06957315609493116,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 18,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 322749000,
+                "span_cycles": 322749,
+                "idle_ticks": 305069000,
+                "idle_cycles": 305069,
+                "busy_fraction_of_span": 0.0547794106255945,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 19,
+                "busy_ticks": 17680000,
+                "busy_cycles": 17680,
+                "span_ticks": 327371000,
+                "span_cycles": 327371,
+                "idle_ticks": 309691000,
+                "idle_cycles": 309691,
+                "busy_fraction_of_span": 0.054006005418928374,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              }
+            ]
+          },
+          "sfu": {
+            "critical_worker": {
+              "core": 19,
+              "busy_ticks": 24071000,
+              "busy_cycles": 24071,
+              "span_ticks": 250118000,
+              "span_cycles": 250118,
+              "idle_ticks": 226047000,
+              "idle_cycles": 226047,
+              "busy_fraction_of_span": 0.09623857539241477,
+              "max_concurrency": 1,
+              "source_unit": "ticks"
+            },
+            "worker_totals": {
+              "busy_ticks": 385136000,
+              "busy_cycles": 385136,
+              "span_ticks": 3380086000,
+              "span_cycles": 3380086,
+              "idle_ticks": 2994950000,
+              "idle_cycles": 2994950
+            },
+            "max_worker_concurrency": 1,
+            "workers": [
+              {
+                "core": 4,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 285034000,
+                "span_cycles": 285034,
+                "idle_ticks": 260963000,
+                "idle_cycles": 260963,
+                "busy_fraction_of_span": 0.08444957443673386,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 5,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 214785000,
+                "span_cycles": 214785,
+                "idle_ticks": 190714000,
+                "idle_cycles": 190714,
+                "busy_fraction_of_span": 0.11207020974462835,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 6,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 148396000,
+                "span_cycles": 148396,
+                "idle_ticks": 124325000,
+                "idle_cycles": 124325,
+                "busy_fraction_of_span": 0.16220787622307878,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 7,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 147397000,
+                "span_cycles": 147397,
+                "idle_ticks": 123326000,
+                "idle_cycles": 123326,
+                "busy_fraction_of_span": 0.16330725862805892,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 8,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 279930000,
+                "span_cycles": 279930,
+                "idle_ticks": 255859000,
+                "idle_cycles": 255859,
+                "busy_fraction_of_span": 0.08598935448147751,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 9,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 218073000,
+                "span_cycles": 218073,
+                "idle_ticks": 194002000,
+                "idle_cycles": 194002,
+                "busy_fraction_of_span": 0.11038046892554328,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 10,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 213010000,
+                "span_cycles": 213010,
+                "idle_ticks": 188939000,
+                "idle_cycles": 188939,
+                "busy_fraction_of_span": 0.11300408431529037,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 11,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 208211000,
+                "span_cycles": 208211,
+                "idle_ticks": 184140000,
+                "idle_cycles": 184140,
+                "busy_fraction_of_span": 0.11560868542007867,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 12,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 241949000,
+                "span_cycles": 241949,
+                "idle_ticks": 217878000,
+                "idle_cycles": 217878,
+                "busy_fraction_of_span": 0.09948790860883905,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 13,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 173170000,
+                "span_cycles": 173170,
+                "idle_ticks": 149099000,
+                "idle_cycles": 149099,
+                "busy_fraction_of_span": 0.13900213662874633,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 14,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 162927000,
+                "span_cycles": 162927,
+                "idle_ticks": 138856000,
+                "idle_cycles": 138856,
+                "busy_fraction_of_span": 0.14774101284624402,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 15,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 167165000,
+                "span_cycles": 167165,
+                "idle_ticks": 143094000,
+                "idle_cycles": 143094,
+                "busy_fraction_of_span": 0.14399545359375468,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 16,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 243795000,
+                "span_cycles": 243795,
+                "idle_ticks": 219724000,
+                "idle_cycles": 219724,
+                "busy_fraction_of_span": 0.09873459258803503,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 17,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 178442000,
+                "span_cycles": 178442,
+                "idle_ticks": 154371000,
+                "idle_cycles": 154371,
+                "busy_fraction_of_span": 0.13489537216574574,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 18,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 247684000,
+                "span_cycles": 247684,
+                "idle_ticks": 223613000,
+                "idle_cycles": 223613,
+                "busy_fraction_of_span": 0.0971843154987807,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              },
+              {
+                "core": 19,
+                "busy_ticks": 24071000,
+                "busy_cycles": 24071,
+                "span_ticks": 250118000,
+                "span_cycles": 250118,
+                "idle_ticks": 226047000,
+                "idle_cycles": 226047,
+                "busy_fraction_of_span": 0.09623857539241477,
+                "max_concurrency": 1,
+                "source_unit": "ticks"
+              }
+            ]
+          },
+          "o_read_port": {
+            "critical_worker": {
+              "core": 19,
+              "busy_ticks": 16384000,
+              "busy_cycles": 16384,
+              "span_ticks": 217851000,
+              "span_cycles": 217851,
+              "idle_ticks": 201467000,
+              "idle_cycles": 201467,
+              "busy_fraction_of_span": 0.0752073665027932,
+              "max_concurrency": 1,
+              "source_unit": "cycles"
+            },
+            "worker_totals": {
+              "busy_ticks": 262144000,
+              "busy_cycles": 262144,
+              "span_ticks": 2822558000,
+              "span_cycles": 2822558,
+              "idle_ticks": 2560414000,
+              "idle_cycles": 2560414
+            },
+            "max_worker_concurrency": 1,
+            "workers": [
+              {
+                "core": 4,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 148877000,
+                "span_cycles": 148877,
+                "idle_ticks": 132493000,
+                "idle_cycles": 132493,
+                "busy_fraction_of_span": 0.11005057866560987,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 5,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 215194000,
+                "span_cycles": 215194,
+                "idle_ticks": 198810000,
+                "idle_cycles": 198810,
+                "busy_fraction_of_span": 0.07613595174586651,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 6,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 144003000,
+                "span_cycles": 144003,
+                "idle_ticks": 127619000,
+                "idle_cycles": 127619,
+                "busy_fraction_of_span": 0.11377540745678909,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 7,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 142690000,
+                "span_cycles": 142690,
+                "idle_ticks": 126306000,
+                "idle_cycles": 126306,
+                "busy_fraction_of_span": 0.11482234214030415,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 8,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 150057000,
+                "span_cycles": 150057,
+                "idle_ticks": 133673000,
+                "idle_cycles": 133673,
+                "busy_fraction_of_span": 0.1091851762996728,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 9,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 218512000,
+                "span_cycles": 218512,
+                "idle_ticks": 202128000,
+                "idle_cycles": 202128,
+                "busy_fraction_of_span": 0.07497986380610676,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 10,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 210107000,
+                "span_cycles": 210107,
+                "idle_ticks": 193723000,
+                "idle_cycles": 193723,
+                "busy_fraction_of_span": 0.07797931530125127,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 11,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 202735000,
+                "span_cycles": 202735,
+                "idle_ticks": 186351000,
+                "idle_cycles": 186351,
+                "busy_fraction_of_span": 0.08081485683281131,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 12,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 151388000,
+                "span_cycles": 151388,
+                "idle_ticks": 135004000,
+                "idle_cycles": 135004,
+                "busy_fraction_of_span": 0.10822522260681164,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 13,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 170176000,
+                "span_cycles": 170176,
+                "idle_ticks": 153792000,
+                "idle_cycles": 153792,
+                "busy_fraction_of_span": 0.09627679578789018,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 14,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 153996000,
+                "span_cycles": 153996,
+                "idle_ticks": 137612000,
+                "idle_cycles": 137612,
+                "busy_fraction_of_span": 0.10639237382789163,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 15,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 149750000,
+                "span_cycles": 149750,
+                "idle_ticks": 133366000,
+                "idle_cycles": 133366,
+                "busy_fraction_of_span": 0.10940901502504173,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 16,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 169092000,
+                "span_cycles": 169092,
+                "idle_ticks": 152708000,
+                "idle_cycles": 152708,
+                "busy_fraction_of_span": 0.0968939985333428,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 17,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 164669000,
+                "span_cycles": 164669,
+                "idle_ticks": 148285000,
+                "idle_cycles": 148285,
+                "busy_fraction_of_span": 0.0994965658381359,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 18,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 213461000,
+                "span_cycles": 213461,
+                "idle_ticks": 197077000,
+                "idle_cycles": 197077,
+                "busy_fraction_of_span": 0.0767540674877378,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 19,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 217851000,
+                "span_cycles": 217851,
+                "idle_ticks": 201467000,
+                "idle_cycles": 201467,
+                "busy_fraction_of_span": 0.0752073665027932,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              }
+            ]
+          },
+          "o_write_port": {
+            "critical_worker": {
+              "core": 19,
+              "busy_ticks": 16384000,
+              "busy_cycles": 16384,
+              "span_ticks": 251404000,
+              "span_cycles": 251404,
+              "idle_ticks": 235020000,
+              "idle_cycles": 235020,
+              "busy_fraction_of_span": 0.06517000525051311,
+              "max_concurrency": 1,
+              "source_unit": "cycles"
+            },
+            "worker_totals": {
+              "busy_ticks": 262144000,
+              "busy_cycles": 262144,
+              "span_ticks": 3425818000,
+              "span_cycles": 3425818,
+              "idle_ticks": 3163674000,
+              "idle_cycles": 3163674
+            },
+            "max_worker_concurrency": 1,
+            "workers": [
+              {
+                "core": 4,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 286280000,
+                "span_cycles": 286280,
+                "idle_ticks": 269896000,
+                "idle_cycles": 269896,
+                "busy_fraction_of_span": 0.0572306832471706,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 5,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 221662000,
+                "span_cycles": 221662,
+                "idle_ticks": 205278000,
+                "idle_cycles": 205278,
+                "busy_fraction_of_span": 0.0739143380462145,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 6,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 150471000,
+                "span_cycles": 150471,
+                "idle_ticks": 134087000,
+                "idle_cycles": 134087,
+                "busy_fraction_of_span": 0.10888476849359677,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 7,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 149157000,
+                "span_cycles": 149157,
+                "idle_ticks": 132773000,
+                "idle_cycles": 132773,
+                "busy_fraction_of_span": 0.10984398988984762,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 8,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 281188000,
+                "span_cycles": 281188,
+                "idle_ticks": 264804000,
+                "idle_cycles": 264804,
+                "busy_fraction_of_span": 0.05826706687340854,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 9,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 224980000,
+                "span_cycles": 224980,
+                "idle_ticks": 208596000,
+                "idle_cycles": 208596,
+                "busy_fraction_of_span": 0.0728242510445373,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 10,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 216574000,
+                "span_cycles": 216574,
+                "idle_ticks": 200190000,
+                "idle_cycles": 200190,
+                "busy_fraction_of_span": 0.07565081681088219,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 11,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 210524000,
+                "span_cycles": 210524,
+                "idle_ticks": 194140000,
+                "idle_cycles": 194140,
+                "busy_fraction_of_span": 0.07782485607341681,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 12,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 243223000,
+                "span_cycles": 243223,
+                "idle_ticks": 226839000,
+                "idle_cycles": 226839,
+                "busy_fraction_of_span": 0.0673620504639775,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 13,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 180078000,
+                "span_cycles": 180078,
+                "idle_ticks": 163694000,
+                "idle_cycles": 163694,
+                "busy_fraction_of_span": 0.09098279634380657,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 14,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 165770000,
+                "span_cycles": 165770,
+                "idle_ticks": 149386000,
+                "idle_cycles": 149386,
+                "busy_fraction_of_span": 0.09883573626108463,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 15,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 170729000,
+                "span_cycles": 170729,
+                "idle_ticks": 154345000,
+                "idle_cycles": 154345,
+                "busy_fraction_of_span": 0.09596495030135478,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 16,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 245081000,
+                "span_cycles": 245081,
+                "idle_ticks": 228697000,
+                "idle_cycles": 228697,
+                "busy_fraction_of_span": 0.06685136750706909,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 17,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 179728000,
+                "span_cycles": 179728,
+                "idle_ticks": 163344000,
+                "idle_cycles": 163344,
+                "busy_fraction_of_span": 0.09115997507344431,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 18,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 248969000,
+                "span_cycles": 248969,
+                "idle_ticks": 232585000,
+                "idle_cycles": 232585,
+                "busy_fraction_of_span": 0.06580738967501978,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 19,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 251404000,
+                "span_cycles": 251404,
+                "idle_ticks": 235020000,
+                "idle_cycles": 235020,
+                "busy_fraction_of_span": 0.06517000525051311,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              }
+            ]
+          },
+          "o_alu": {
+            "critical_worker": {
+              "core": 19,
+              "busy_ticks": 16384000,
+              "busy_cycles": 16384,
+              "span_ticks": 251404000,
+              "span_cycles": 251404,
+              "idle_ticks": 235020000,
+              "idle_cycles": 235020,
+              "busy_fraction_of_span": 0.06517000525051311,
+              "max_concurrency": 1,
+              "source_unit": "cycles"
+            },
+            "worker_totals": {
+              "busy_ticks": 262144000,
+              "busy_cycles": 262144,
+              "span_ticks": 3425818000,
+              "span_cycles": 3425818,
+              "idle_ticks": 3163674000,
+              "idle_cycles": 3163674
+            },
+            "max_worker_concurrency": 1,
+            "workers": [
+              {
+                "core": 4,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 286280000,
+                "span_cycles": 286280,
+                "idle_ticks": 269896000,
+                "idle_cycles": 269896,
+                "busy_fraction_of_span": 0.0572306832471706,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 5,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 221662000,
+                "span_cycles": 221662,
+                "idle_ticks": 205278000,
+                "idle_cycles": 205278,
+                "busy_fraction_of_span": 0.0739143380462145,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 6,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 150471000,
+                "span_cycles": 150471,
+                "idle_ticks": 134087000,
+                "idle_cycles": 134087,
+                "busy_fraction_of_span": 0.10888476849359677,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 7,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 149157000,
+                "span_cycles": 149157,
+                "idle_ticks": 132773000,
+                "idle_cycles": 132773,
+                "busy_fraction_of_span": 0.10984398988984762,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 8,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 281188000,
+                "span_cycles": 281188,
+                "idle_ticks": 264804000,
+                "idle_cycles": 264804,
+                "busy_fraction_of_span": 0.05826706687340854,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 9,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 224980000,
+                "span_cycles": 224980,
+                "idle_ticks": 208596000,
+                "idle_cycles": 208596,
+                "busy_fraction_of_span": 0.0728242510445373,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 10,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 216574000,
+                "span_cycles": 216574,
+                "idle_ticks": 200190000,
+                "idle_cycles": 200190,
+                "busy_fraction_of_span": 0.07565081681088219,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 11,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 210524000,
+                "span_cycles": 210524,
+                "idle_ticks": 194140000,
+                "idle_cycles": 194140,
+                "busy_fraction_of_span": 0.07782485607341681,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 12,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 243223000,
+                "span_cycles": 243223,
+                "idle_ticks": 226839000,
+                "idle_cycles": 226839,
+                "busy_fraction_of_span": 0.0673620504639775,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 13,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 180078000,
+                "span_cycles": 180078,
+                "idle_ticks": 163694000,
+                "idle_cycles": 163694,
+                "busy_fraction_of_span": 0.09098279634380657,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 14,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 165770000,
+                "span_cycles": 165770,
+                "idle_ticks": 149386000,
+                "idle_cycles": 149386,
+                "busy_fraction_of_span": 0.09883573626108463,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 15,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 170729000,
+                "span_cycles": 170729,
+                "idle_ticks": 154345000,
+                "idle_cycles": 154345,
+                "busy_fraction_of_span": 0.09596495030135478,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 16,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 245081000,
+                "span_cycles": 245081,
+                "idle_ticks": 228697000,
+                "idle_cycles": 228697,
+                "busy_fraction_of_span": 0.06685136750706909,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 17,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 179728000,
+                "span_cycles": 179728,
+                "idle_ticks": 163344000,
+                "idle_cycles": 163344,
+                "busy_fraction_of_span": 0.09115997507344431,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 18,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 248969000,
+                "span_cycles": 248969,
+                "idle_ticks": 232585000,
+                "idle_cycles": 232585,
+                "busy_fraction_of_span": 0.06580738967501978,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              },
+              {
+                "core": 19,
+                "busy_ticks": 16384000,
+                "busy_cycles": 16384,
+                "span_ticks": 251404000,
+                "span_cycles": 251404,
+                "idle_ticks": 235020000,
+                "idle_cycles": 235020,
+                "busy_fraction_of_span": 0.06517000525051311,
+                "max_concurrency": 1,
+                "source_unit": "cycles"
+              }
+            ]
+          }
+        }
+      },
+      "resident_o": {
+        "contexts": 4,
+        "bytes_per_context": 8192,
+        "banks": 16,
+        "max_context_high_water": 4,
+        "worker_totals": {
+          "attention_cluster_o_context_reservations": 64,
+          "attention_cluster_o_context_releases": 64,
+          "attention_cluster_o_context_cancelled": 0,
+          "attention_cluster_o_scale_segments": 253952,
+          "attention_cluster_o_accumulate_segments": 262144,
+          "attention_cluster_o_drain_requests": 64,
+          "attention_cluster_o_drain_bytes": 524288,
+          "attention_cluster_o_read_wait_cycles": 6190080,
+          "attention_cluster_o_write_wait_cycles": 0,
+          "attention_cluster_o_alu_wait_cycles": 145920,
+          "attention_cluster_o_bank_conflict_cycles": 47993344,
+          "attention_cluster_o_drain_wait_cycles": 0
+        }
+      }
+    },
+    "pv_active_k": {
+      "configured": true,
+      "enabled": true,
+      "active_columns": 32,
+      "mac_per_cu_per_cycle": 1.0,
+      "pipeline_depth": 2,
+      "worker_totals": {
+        "active_k_launches": 65536,
+        "active_k_columns": 2097152,
+        "active_k_compute_cycles": 2228224,
+        "active_k_full_width_cycles_avoided": 2097152
+      }
+    },
+    "qk_early_compute": {
+      "configured": true,
+      "enabled": true,
+      "worker_totals": {
+        "arrays": 0
+      }
+    },
+    "qk_input_pipeline": {
+      "configured": false,
+      "enabled": false,
+      "depth": 2,
+      "row_bytes": 512,
+      "capacity_bytes": 1024,
+      "worker_totals": {
+        "rows_fetched": 0,
+        "rows_programmed": 0,
+        "overlap_ticks": 0,
+        "slot_full_stalls": 0,
+        "max_depth": 0,
+        "tag_mismatches": 0
+      }
+    },
+    "cross_tile_operand_pipeline": {
+      "configured": false,
+      "enabled": false,
+      "depth": 2,
+      "max_ahead": 1,
+      "operand_banks": 1,
+      "capacity_bytes_per_worker": 0,
+      "worker_totals": {
+        "candidates": 0,
+        "launches": 0,
+        "matrix_programs": 0,
+        "input_rows": 0,
+        "ready_hits": 0,
+        "waits": 0,
+        "wait_ticks": 0,
+        "promotions": 0,
+        "tag_mismatches": 0
+      }
+    },
+    "pv_v_tile_buffer": {
+      "enabled": true,
+      "group_retention_enabled": true,
+      "capacity_bytes": 32768,
+      "bytes_per_cycle": 64,
+      "base_latency_cycles": 1,
+      "panel_bytes": 2048,
+      "worker_totals": {
+        "hits": 0,
+        "misses": 512,
+        "bytes_read": 8388608,
+        "bytes_reused": 0,
+        "wait_ticks": 0,
+        "capacity_rejections": 0,
+        "group_hits": 0
+      }
+    },
+    "kv_cross_query_prefetch": {
+      "enabled": true,
+      "worker_totals": {
+        "prefetches": 0,
+        "hits": 0,
+        "waits": 0,
+        "wait_ticks": 0
+      }
+    },
+    "kv_pair_reuse": {
+      "enabled": true,
+      "query_group_size": 4,
+      "query_state_slots": 4,
+      "online_softmax_rows": 64,
+      "worker_totals": {
+        "tiles": 1536,
+        "bytes": 50331648
+      }
+    },
+    "dma_runtime_invariants": {
+      "credit_owners": [
+        {
+          "name": "dirctrl_4:highlink",
+          "group": "104",
+          "cap": "128",
+          "available": "128",
+          "chunk_bytes": "4096",
+          "admitted": "272",
+          "released": "272",
+          "blocked_requests": "0",
+          "max_used": "24",
+          "max_queue": "1",
+          "pending": "0",
+          "window_priority": "1",
+          "reorder_cycles": "512",
+          "priority_reorders": "0",
+          "tile_quantum": "4",
+          "bundle_turns": "141",
+          "bundle_admissions": "272",
+          "response_tile_priority": "1",
+          "response_reorder_cycles": "0",
+          "response_quantum": "4",
+          "response_reorders": "8",
+          "response_bundle_turns": "52",
+          "response_sent": "89",
+          "response_max_queue": "5",
+          "response_hold_mean": "989",
+          "response_hold_max": "6552"
+        },
+        {
+          "name": "dirctrl_3:highlink",
+          "group": "103",
+          "cap": "128",
+          "available": "128",
+          "chunk_bytes": "4096",
+          "admitted": "272",
+          "released": "272",
+          "blocked_requests": "0",
+          "max_used": "36",
+          "max_queue": "1",
+          "pending": "0",
+          "window_priority": "1",
+          "reorder_cycles": "512",
+          "priority_reorders": "0",
+          "tile_quantum": "4",
+          "bundle_turns": "141",
+          "bundle_admissions": "272",
+          "response_tile_priority": "1",
+          "response_reorder_cycles": "0",
+          "response_quantum": "4",
+          "response_reorders": "30",
+          "response_bundle_turns": "62",
+          "response_sent": "108",
+          "response_max_queue": "10",
+          "response_hold_mean": "1764",
+          "response_hold_max": "15757"
+        },
+        {
+          "name": "dirctrl_2:highlink",
+          "group": "102",
+          "cap": "128",
+          "available": "128",
+          "chunk_bytes": "4096",
+          "admitted": "272",
+          "released": "272",
+          "blocked_requests": "0",
+          "max_used": "40",
+          "max_queue": "1",
+          "pending": "0",
+          "window_priority": "1",
+          "reorder_cycles": "512",
+          "priority_reorders": "0",
+          "tile_quantum": "4",
+          "bundle_turns": "141",
+          "bundle_admissions": "272",
+          "response_tile_priority": "1",
+          "response_reorder_cycles": "0",
+          "response_quantum": "4",
+          "response_reorders": "132",
+          "response_bundle_turns": "97",
+          "response_sent": "191",
+          "response_max_queue": "12",
+          "response_hold_mean": "3939",
+          "response_hold_max": "65536"
+        },
+        {
+          "name": "dirctrl_1:highlink",
+          "group": "101",
+          "cap": "128",
+          "available": "128",
+          "chunk_bytes": "4096",
+          "admitted": "272",
+          "released": "272",
+          "blocked_requests": "0",
+          "max_used": "120",
+          "max_queue": "1",
+          "pending": "0",
+          "window_priority": "1",
+          "reorder_cycles": "512",
+          "priority_reorders": "0",
+          "tile_quantum": "4",
+          "bundle_turns": "134",
+          "bundle_admissions": "272",
+          "response_tile_priority": "1",
+          "response_reorder_cycles": "0",
+          "response_quantum": "4",
+          "response_reorders": "189",
+          "response_bundle_turns": "124",
+          "response_sent": "256",
+          "response_max_queue": "31",
+          "response_hold_mean": "11231",
+          "response_hold_max": "70823"
+        },
+        {
+          "name": "dirctrl_0:highlink",
+          "group": "100",
+          "cap": "128",
+          "available": "128",
+          "chunk_bytes": "4096",
+          "admitted": "0",
+          "released": "0",
+          "blocked_requests": "0",
+          "max_used": "0",
+          "max_queue": "0",
+          "pending": "0",
+          "window_priority": "1",
+          "reorder_cycles": "512",
+          "priority_reorders": "0",
+          "tile_quantum": "4",
+          "bundle_turns": "0",
+          "bundle_admissions": "0",
+          "response_tile_priority": "1",
+          "response_reorder_cycles": "0",
+          "response_quantum": "4",
+          "response_reorders": "0",
+          "response_bundle_turns": "0",
+          "response_sent": "0",
+          "response_max_queue": "0",
+          "response_hold_mean": "0",
+          "response_hold_max": "0"
+        }
+      ],
+      "response_nodes": [
+        {
+          "component": "dirctrl_4:highlink",
+          "attempted": "272",
+          "immediate": "186",
+          "enqueued": "86",
+          "drained": "86",
+          "high_water": "5",
+          "queue_wait_ticks": "85109995",
+          "queue_wait_max_ticks": "6552000",
+          "priority_reorders": "0",
+          "pending": "0",
+          "response_wait_d0": "21064",
+          "response_wait_d1": "6606",
+          "response_wait_d2": "0",
+          "response_wait_far": "1548",
+          "queue_wait_d0": "68239",
+          "queue_wait_d1": "16870",
+          "queue_wait_d2": "0",
+          "queue_wait_far": "0",
+          "responses_d0": "194",
+          "responses_d1": "62",
+          "responses_d2": "0",
+          "responses_far": "16",
+          "admission_wait_d0": "86400",
+          "admission_wait_d1": "30040",
+          "admission_wait_d2": "0",
+          "admission_wait_far": "0",
+          "credit_blocked": "0",
+          "credit_blocked_cycles": "0",
+          "late_ready": "192",
+          "tile_starvation": "0",
+          "consumer_progress": "512"
+        },
+        {
+          "component": "dirctrl_3:highlink",
+          "attempted": "272",
+          "immediate": "167",
+          "enqueued": "105",
+          "drained": "105",
+          "high_water": "9",
+          "queue_wait_ticks": "174821000",
+          "queue_wait_max_ticks": "15757000",
+          "priority_reorders": "0",
+          "pending": "0",
+          "response_wait_d0": "21134",
+          "response_wait_d1": "6115",
+          "response_wait_d2": "0",
+          "response_wait_far": "1870",
+          "queue_wait_d0": "168044",
+          "queue_wait_d1": "6777",
+          "queue_wait_d2": "0",
+          "queue_wait_far": "0",
+          "responses_d0": "202",
+          "responses_d1": "54",
+          "responses_d2": "0",
+          "responses_far": "16",
+          "admission_wait_d0": "88240",
+          "admission_wait_d1": "31390",
+          "admission_wait_d2": "0",
+          "admission_wait_far": "0",
+          "credit_blocked": "0",
+          "credit_blocked_cycles": "0",
+          "late_ready": "192",
+          "tile_starvation": "0",
+          "consumer_progress": "512"
+        },
+        {
+          "component": "dirctrl_2:highlink",
+          "attempted": "272",
+          "immediate": "89",
+          "enqueued": "183",
+          "drained": "183",
+          "high_water": "10",
+          "queue_wait_ticks": "625829000",
+          "queue_wait_max_ticks": "33238000",
+          "priority_reorders": "0",
+          "pending": "0",
+          "response_wait_d0": "24042",
+          "response_wait_d1": "3519",
+          "response_wait_d2": "0",
+          "response_wait_far": "2124",
+          "queue_wait_d0": "621909",
+          "queue_wait_d1": "1064",
+          "queue_wait_d2": "0",
+          "queue_wait_far": "2856",
+          "responses_d0": "222",
+          "responses_d1": "34",
+          "responses_d2": "0",
+          "responses_far": "16",
+          "admission_wait_d0": "85950",
+          "admission_wait_d1": "28830",
+          "admission_wait_d2": "0",
+          "admission_wait_far": "0",
+          "credit_blocked": "0",
+          "credit_blocked_cycles": "0",
+          "late_ready": "192",
+          "tile_starvation": "1",
+          "consumer_progress": "512"
+        },
+        {
+          "component": "dirctrl_1:highlink",
+          "attempted": "272",
+          "immediate": "16",
+          "enqueued": "256",
+          "drained": "256",
+          "high_water": "31",
+          "queue_wait_ticks": "2875371000",
+          "queue_wait_max_ticks": "70823000",
+          "priority_reorders": "0",
+          "pending": "0",
+          "response_wait_d0": "26919",
+          "response_wait_d1": "835",
+          "response_wait_d2": "0",
+          "response_wait_far": "2461",
+          "queue_wait_d0": "1968892",
+          "queue_wait_d1": "517254",
+          "queue_wait_d2": "0",
+          "queue_wait_far": "389225",
+          "responses_d0": "248",
+          "responses_d1": "8",
+          "responses_d2": "0",
+          "responses_far": "16",
+          "admission_wait_d0": "95000",
+          "admission_wait_d1": "17000",
+          "admission_wait_d2": "0",
+          "admission_wait_far": "0",
+          "credit_blocked": "0",
+          "credit_blocked_cycles": "0",
+          "late_ready": "224",
+          "tile_starvation": "17",
+          "consumer_progress": "512"
+        }
+      ]
+    }
+  }
+}

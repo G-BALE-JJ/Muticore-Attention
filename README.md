@@ -33,54 +33,35 @@ The primary Attention comparison is `B=1,H=1,D=128`, non-causal, with SST
 normalized cycles interpreted at 1 GHz. Host wall time is simulator execution
 time and is not accelerator latency.
 
-| Workload | Query group | Current cycles | 1 GHz latency | RTX 5060 FP32 Scope A | SST/GPU |
-|---|---:|---:|---:|---:|---:|
-| Q256/K256 | 1/2/4 | 71,916 | 0.071915 ms | - | - |
-| Q512/K512, partial-2 | 4 | 168,547 | 0.168546 ms | - | - |
-| Q768/K768, partial-3 | 4 | 311,542 | 0.311541 ms | - | - |
-| Q1024/K1024 | 2 | 560,875 | 0.560874 ms | - | - |
-| Q1024/K1024 | 4 | **491,072** | **0.491071 ms** | 0.097568 ms | 5.033x |
-| Q2048/K2048 | 2 | 1,967,488 | 1.967487 ms | - | - |
-| Q2048/K2048 | 4 | **1,899,765** | **1.899764 ms** | 0.345984 ms | 5.491x |
+The verified cluster model uses four control-only managers and 16 workers. Each
+worker has 64 physical 64x64 arrays, 64 CUs per array, two operand banks, and a
+default 16-QK + 48-PV ownership split. D128 is mapped through paired D64 paths;
+Br16/Bc32 and two K/V buffers are the accepted R6 configuration.
 
-The Q1024 optimization ladder reduced the same completion-latency metric from
-1,143,086 to 491,072 cycles, a cumulative 57.04% reduction:
+| Workload | Current SST cycles | RTX 5060 FP32 Scope A | SST/GPU | Status |
+|---|---:|---:|---:|---|
+| Q256/K128 | 30,607 | - | - | numerical/lifecycle PASS |
+| Q256/K1024 | 308,481 | - | - | numerical/lifecycle PASS |
+| E3 Q1024/K1024 | **330,125** | 97,568 | 3.384x | GPU gate FAIL |
+| E4 Q2048/K2048 | **1,007,628** | 345,984 | 2.912x | GPU gate FAIL |
+| Q256/K128 WCP pressure | 31,657 | - | - | numerical/lifecycle PASS |
 
-| Retained stage | Q1024 cycles | Gain from previous stage |
-|---|---:|---:|
-| Pre-admission baseline | 1,143,086 | - |
-| Consumer-aware DMA response admission | 977,611 | 14.48% |
-| QK 1 KiB row burst | 944,974 | 3.34% |
-| Two-query K/V reuse | 663,804 | 29.75% |
-| Four-query K/V reuse | 620,168 | 6.57% |
-| Physical-group V staging retention | 578,914 | 6.65% |
-| Depth-2 QK K-row input pipeline | 545,851 | 5.71% |
-| PV input residency | 507,341 | 7.05% |
-| Banked operand-only cross-tile pipeline | **491,072** | **3.21%** |
+R1-R6 added ownership-aware QK/PV mapping, direct score/P storage, bounded
+tagged scheduling, resident O, resource interval profiling, and a timed 16-lane
+two-cycle FP32 O FMA. The final review found no remaining Critical or Important
+issues. R7 experiments confirmed that downstream score/SFU/PV users outlive the
+visible QK bank lease; unsafe multi-producer changes were reverted and the R6
+baseline was reproduced.
 
-The public runner defaults to four-query K/V reuse, group-owned 16 KiB V
-staging, the two-slot QK input pipeline, PV input residency, and one-tile-ahead
-QK operand preparation. The cross-tile mechanism adds one inactive matrix/input
-operand bank (136 KiB per worker) while keeping compute, output, score, WCP,
-LocalGM ports, and the two K/V buffers shared. Group1, direct GEMM, and
-transposed QK automatically use the compatible single-bank path.
-
-Rejected experiments remain documented rather than silently folded into the
-default: follower Query DMA prefetch shifted contention to K/V, nonzero response
-reordering added hold latency, a third K/V buffer and deeper lookahead regressed
-end to end, and the old O C-buffer accumulator reduced internal traffic without
-a stable completion-latency gain.
-
-The final build/install, numerical and lifecycle verifiers, 78 Attention tests,
-and 6 GEMM/MPI tests pass. Q1024 and Q2048 repeated runs reproduce identical
-cycles and SST ticks. The current Q2048 critical worker is dominated by PV
-(692,659 cycles, about 36.5% end to end), so the next optimization target is
-bounded reduction of PV matrix/restore/output movement at the array boundary,
-not a third operand bank or wider modeled ports.
+The next task is explicit operand-bank lifetime accounting before retrying QK
+producer overlap. The next larger hardware candidate is bounded four-worker K/V
+distribution and reassembly, not additional arrays or unqualified HBM/O width.
 
 See
 [`src/sst/elements/golem/tests/small/muticore_attention/README.md`](src/sst/elements/golem/tests/small/muticore_attention/README.md)
-for the runner contract and
+for the runner contract,
+[`attention_cluster/R1_R6_OPTIMIZATION_RESULTS.md`](attention_cluster/R1_R6_OPTIMIZATION_RESULTS.md)
+for final measurements and verification, and
 [`GPU_COMPETITIVE_ROADMAP.md`](src/sst/elements/golem/tests/small/muticore_attention/GPU_COMPETITIVE_ROADMAP.md)
 for the GPU comparison and remaining architecture plan.
 

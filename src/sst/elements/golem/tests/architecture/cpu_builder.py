@@ -224,6 +224,12 @@ array_buffer_queue_depth = int(
 array_output_read_credits = int(
     os.getenv("GOLEM_ARRAY_OUTPUT_READ_CREDITS", "1")
 )
+attention_near_array_output_bytes_per_cycle = int(
+    os.getenv("GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE", "512")
+)
+attention_near_array_output_credits = int(
+    os.getenv("GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_CREDITS", "2")
+)
 array_output_read_banks = int(
     os.getenv("GOLEM_ARRAY_OUTPUT_READ_BANKS", "1")
 )
@@ -352,6 +358,9 @@ sfu_reduction_vn = os.getenv("GOLEM_SFU_REDUCTION_VN", "")
 sfu_verbose = os.getenv("GOLEM_SFU_VERBOSE", "0")
 
 num_arrays = int(os.getenv("GOLEM_NUM_ARRAYS", 1))
+attention_cluster_qk_arrays = int(
+    os.getenv("GOLEM_ATTENTION_CLUSTER_QK_ARRAYS", "16")
+)
 array_input_size = int(os.getenv("GOLEM_ARRAY_INPUT_SIZE", "4"))
 array_output_size = int(os.getenv("GOLEM_ARRAY_OUTPUT_SIZE", "4"))
 array_mac_per_cu_per_cycle = float(os.getenv("GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE", "1"))
@@ -583,11 +592,21 @@ roccarrayParams = {
     "workerCommandProcessorEnable": worker_command_processor_enable,
     "attention_window_offset": int(os.getenv("GOLEM_ATTENTION_WINDOW_OFFSET", "0xC0000"), 0),
     "attention_window_bytes": int(os.getenv("GOLEM_ATTENTION_WINDOW_BYTES", "0x10000"), 0),
+    "attention_cluster_enable": int(
+        os.getenv("GOLEM_ATTENTION_CLUSTER_ENABLE", "0")
+    ),
+    "attention_cluster_qk_arrays": attention_cluster_qk_arrays,
     "attention_kv_tile_rotation": int(
         os.getenv("GOLEM_ATTENTION_KV_TILE_ROTATION", "0")
     ),
     "attention_kv_double_buffer": int(
         os.getenv("GOLEM_ATTENTION_KV_DOUBLE_BUFFER", "0")
+    ),
+    "attention_kv_buffer_count": int(
+        os.getenv("GOLEM_ATTENTION_KV_BUFFER_COUNT", "2")
+    ),
+    "attention_key_block_rows": int(
+        os.getenv("GOLEM_ATTENTION_KEY_BLOCK_ROWS", "32")
     ),
     "attention_kv_second_lookahead": int(
         os.getenv("GOLEM_ATTENTION_KV_SECOND_LOOKAHEAD", "1")
@@ -693,9 +712,12 @@ arrayParams = {
     "arrayBufferBytesPerCycle": array_buffer_bytes_per_cycle,
     "arrayBufferPorts": array_buffer_ports,
     "operandContextBanks": array_operand_context_banks,
+    "attention_cluster_qk_arrays": attention_cluster_qk_arrays,
     "arrayBufferQueueDepth": array_buffer_queue_depth,
     "arrayOutputReadCredits": array_output_read_credits,
     "arrayOutputReadBanks": array_output_read_banks,
+    "attentionNearArrayOutputBytesPerCycle": attention_near_array_output_bytes_per_cycle,
+    "attentionNearArrayOutputCredits": attention_near_array_output_credits,
     "matrixBroadcastMaxFanout": matrix_broadcast_max_fanout,
     "matrixBroadcastBytesPerCycle": matrix_broadcast_bytes_per_cycle,
     "matrixBroadcastBaseLatencyCycles": matrix_broadcast_base_latency_cycles,
@@ -967,6 +989,9 @@ class CPU_Builder:
                 "dma_read_max_retries": gm_dma_max_retries,
                 "dma_burst_bytes": gm_dma_burst_bytes,
                 "globalMemTransLatency": gm_trans_latency,
+                "attention_cluster_enable": int(
+                    os.getenv("GOLEM_ATTENTION_CLUSTER_ENABLE", "0")
+                ),
                 "local_access_clock": cpu_clock,
                 "local_access_base_latency_cycles": local_gm_base_latency_cycles,
                 "local_access_bytes_per_cycle": local_gm_bytes_per_cycle,
@@ -1011,6 +1036,9 @@ class CPU_Builder:
                         "row_contexts": sfu_row_contexts,
                         "attention_kv_pair_reuse": attention_kv_pair_reuse,
                         "attention_kv_query_group_size": attention_kv_query_group_size,
+                        "attention_cluster_enable": int(
+                            os.getenv("GOLEM_ATTENTION_CLUSTER_ENABLE", "0")
+                        ),
                         "scratchpad_bytes": sfu_scratchpad_bytes,
                         "distributed_reduction_transport": sfu_distributed_reduction_transport,
                         "verbose": sfu_verbose,
@@ -1085,6 +1113,7 @@ class CPU_Builder:
                         "verbose": worker_command_processor_verbose,
                         "dtype_is_float": 1 if "Float" in rocc_type else 0,
                         "stage3_trace": os.getenv("GOLEM_WCP_STAGE3_TRACE", "0"),
+                        "attention_cluster_qk_arrays": attention_cluster_qk_arrays,
                         "prefetch_windows": wcp_prefetch_windows,
                         "cross_macro_prefetch": wcp_cross_macro_prefetch,
                         "window_k_tiles": os.getenv("GOLEM_DMA_WINDOW_K_TILES", "4"),

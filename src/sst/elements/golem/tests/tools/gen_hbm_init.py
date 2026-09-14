@@ -881,7 +881,7 @@ def main(argv=None):
             f"GOLEM_GEMM_M/N/K must be positive, got {GEMM_M}/{GEMM_N}/{GEMM_K}"
         )
     block_k = MATMUL_OP_DESC["block_k"]
-    if (
+    if not ATTENTION_FUSED and (
         MATMUL_OP_DESC["block_m"] % ARRAY_OUTPUT_SIZE != 0
         or (block_k > ARRAY_INPUT_SIZE and block_k % ARRAY_INPUT_SIZE != 0)
     ):

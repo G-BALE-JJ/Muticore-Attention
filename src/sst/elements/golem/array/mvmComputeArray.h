@@ -18,6 +18,7 @@
 
 #include <sst/elements/golem/array/computeArray.h>
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <type_traits>
 #include <filesystem>
@@ -62,6 +63,8 @@ public:
         }
 
         functionalCompute = params.find<int>("functionalCompute", 1) != 0;
+        attentionClusterQkArrays = params.find<uint32_t>(
+            "attention_cluster_qk_arrays", 16);
         dumpEnabled = params.find<int>("mvm_dump_enable", 0) != 0;
         coreId = params.find<int>("core_id", -1);
         dumpRootDir = params.find<std::string>("mvm_dump_dir", "mvm_dumps");
@@ -209,6 +212,30 @@ public:
             });
     }
 
+    virtual bool programMatrixGroupClassBankAsync(
+        const std::vector<uint32_t>& arrayIDs, uint32_t operandBank,
+        const std::vector<double>& matrix, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        if (!validateMatrixBroadcastRequest(
+                arrayIDs, matrix.size(), elemBytes) ||
+            operandBank >= operandContextBanks ||
+            trafficClass == AttentionClusterTrafficClass::Legacy) {
+            return false;
+        }
+        return enqueueMatrixBroadcastTransfer(
+            matrix.size() * elemBytes, arrayIDs.size(), tag,
+            [this, arrayIDs, operandBank, matrix, tag,
+             callback = std::move(callback)]() {
+                for (uint32_t arrayID : arrayIDs) {
+                    auto& target = matrixData[operandIndex(arrayID, operandBank)];
+                    std::transform(matrix.begin(), matrix.end(), target.begin(),
+                                   [](double value) { return static_cast<T>(value); });
+                }
+                if (callback) callback(true, tag);
+            }, trafficClass);
+    }
+
     virtual bool programMatrixActiveAsync(
         uint32_t arrayID,
         const std::vector<double>& matrix,
@@ -304,6 +331,45 @@ public:
             });
     }
 
+    virtual bool programInputGroupBankAsync(
+        const std::vector<uint32_t>& arrayIDs, uint32_t operandBank,
+        const std::vector<double>& input, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        const bool validPvTopology =
+            trafficClass != AttentionClusterTrafficClass::PvPInput ||
+            (arrayIDs.size() == 2 &&
+             (input.size() == 32 || input.size() == 64) &&
+             arrayIDs[0] >= attentionClusterQkArrays &&
+             arrayIDs[1] == arrayIDs[0] + 1 &&
+             (arrayIDs[0] % 2) == 0 && arrayIDs[1] < 64);
+        const bool validQkTopology =
+            trafficClass != AttentionClusterTrafficClass::QkQPair ||
+            (arrayIDs.size() == 1 &&
+             arrayIDs.front() < attentionClusterQkArrays &&
+             input.size() == 64);
+        if (!validateInputMulticastRequest(
+                arrayIDs, input.size(), elemBytes) ||
+            operandBank >= operandContextBanks ||
+            (trafficClass != AttentionClusterTrafficClass::QkQPair &&
+             trafficClass != AttentionClusterTrafficClass::PvPInput) ||
+            !validQkTopology || !validPvTopology) {
+            return false;
+        }
+        return enqueueMatrixBroadcastTransfer(
+            input.size() * elemBytes, arrayIDs.size(), tag,
+            [this, arrayIDs, operandBank, input, tag,
+             callback = std::move(callback)]() {
+                for (uint32_t arrayID : arrayIDs) {
+                    auto& target = inputVectors[operandIndex(arrayID, operandBank)];
+                    std::fill(target.begin(), target.end(), T());
+                    std::transform(input.begin(), input.end(), target.begin(),
+                                   [](double value) { return static_cast<T>(value); });
+                }
+                if (callback) callback(true, tag);
+            }, trafficClass);
+    }
+
     virtual bool programInputActiveAsync(
         uint32_t arrayID,
         const std::vector<double>& input,
@@ -384,6 +450,75 @@ public:
                     callback(true, tag, values);
                 }
             });
+    }
+
+    virtual bool readOutputClassAsync(
+        uint32_t arrayID, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        typename ComputeArray::BufferReadCallback callback) override {
+        if (arrayID >= outputVectors.size() || elemBytes == 0 ||
+            trafficClass != AttentionClusterTrafficClass::QkScoreOut) {
+            return false;
+        }
+        return enqueueOutputReadTransfer(
+            arrayID, outputArraySize * elemBytes, tag,
+            [this, arrayID, tag, callback = std::move(callback)]() {
+                std::vector<double> values(outputVectors[arrayID].size(), 0.0);
+                std::transform(outputVectors[arrayID].begin(),
+                               outputVectors[arrayID].end(), values.begin(),
+                               [](T value) { return static_cast<double>(value); });
+                if (callback) callback(true, tag, values);
+            }, trafficClass);
+    }
+
+    virtual bool readOutputGroupClassAsync(
+        const std::vector<uint32_t>& arrayIDs, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        typename ComputeArray::BufferReadCallback callback) override {
+        if (!validateOutputGroupRequest(arrayIDs, elemBytes, trafficClass)) {
+            return false;
+        }
+        return enqueueNearArrayOutputTransfer(
+            arrayIDs.size() * outputArraySize * elemBytes, tag,
+            [this, arrayIDs, tag, callback = std::move(callback)]() {
+                std::vector<double> values;
+                values.reserve(arrayIDs.size() * outputArraySize);
+                for (uint32_t arrayID : arrayIDs) {
+                    if (arrayID >= outputVectors.size()) {
+                        if (callback) callback(false, tag, {});
+                        return;
+                    }
+                    std::transform(
+                        outputVectors[arrayID].begin(),
+                        outputVectors[arrayID].end(),
+                        std::back_inserter(values),
+                        [](T value) { return static_cast<double>(value); });
+                }
+                if (callback) callback(true, tag, values);
+            }, trafficClass);
+    }
+
+    bool validateOperandContextRequest(
+            uint32_t arrayID, uint32_t operandBank) const override {
+        return validOperandContext(arrayID, operandBank);
+    }
+
+    bool validateOutputGroupRequest(
+            const std::vector<uint32_t>& arrayIDs, size_t elemBytes,
+            AttentionClusterTrafficClass trafficClass) const override {
+        const bool correctElementWidth = elemBytes == sizeof(T);
+        if (numArrays != 64 || inputArraySize != 64 ||
+            outputArraySize != 64 || !correctElementWidth ||
+            arrayIDs.size() != 2 ||
+            arrayIDs[1] != arrayIDs[0] + 1 || (arrayIDs[0] % 2) != 0) {
+            return false;
+        }
+        if (trafficClass == AttentionClusterTrafficClass::QkScoreOut)
+            return arrayIDs[1] < attentionClusterQkArrays;
+        if (trafficClass == AttentionClusterTrafficClass::PvOFinalDrain)
+            return arrayIDs[0] >= attentionClusterQkArrays &&
+                arrayIDs[1] < 64;
+        return false;
     }
 
     virtual bool readOutputBytesAsync(
@@ -543,6 +678,7 @@ protected:
     std::vector<OutputMode> outputModes;
     std::vector<uint32_t> activeInputColumns;
     bool functionalCompute = true;
+    uint32_t attentionClusterQkArrays = 24;
     bool dumpEnabled = false;
     int coreId = -1;
     std::string dumpRootDir;

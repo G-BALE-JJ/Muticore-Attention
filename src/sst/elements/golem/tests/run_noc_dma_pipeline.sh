@@ -1617,7 +1617,10 @@ if [[ -z "$GOLEM_ORIG_K" ]]; then
 	GOLEM_ORIG_K="$GOLEM_GEMM_K"
 fi
 
-if (( GOLEM_GEMM_BLOCK_M % GOLEM_ARRAY_OUTPUT_SIZE != 0 || (GOLEM_GEMM_BLOCK_K > GOLEM_ARRAY_INPUT_SIZE && GOLEM_GEMM_BLOCK_K % GOLEM_ARRAY_INPUT_SIZE != 0) )); then
+if [[ "$GOLEM_ATTENTION_FUSED" != "1" ]] &&
+   (( GOLEM_GEMM_BLOCK_M % GOLEM_ARRAY_OUTPUT_SIZE != 0 ||
+      (GOLEM_GEMM_BLOCK_K > GOLEM_ARRAY_INPUT_SIZE &&
+       GOLEM_GEMM_BLOCK_K % GOLEM_ARRAY_INPUT_SIZE != 0) )); then
 	echo "[ERROR] 当前运行要求 block_M 是 ARRAY_OUTPUT 的整数倍；block_K 必须不大于 ARRAY_INPUT，或是 ARRAY_INPUT 的整数倍。收到 block_M=$GOLEM_GEMM_BLOCK_M block_K=$GOLEM_GEMM_BLOCK_K, ARRAY_OUTPUT/INPUT=$GOLEM_ARRAY_OUTPUT_SIZE/$GOLEM_ARRAY_INPUT_SIZE" >&2
 	exit 1
 fi
@@ -1627,7 +1630,9 @@ if (( GOLEM_GEMM_BLOCK_K < GOLEM_ARRAY_INPUT_SIZE )) && [[ "$GOLEM_WORKER_COMMAN
 	exit 1
 fi
 
-if [[ "$GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE" == "1" && "$GOLEM_GEMM_BLOCK_M" -ne "$GOLEM_ARRAY_OUTPUT_SIZE" ]]; then
+if [[ "$GOLEM_ATTENTION_FUSED" != "1" &&
+      "$GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE" == "1" &&
+      "$GOLEM_GEMM_BLOCK_M" -ne "$GOLEM_ARRAY_OUTPUT_SIZE" ]]; then
 	echo "[ERROR] 当前 WorkerCommandProcessor 仅支持 block_M == ARRAY_OUTPUT_SIZE。" >&2
 	echo "        收到 block_M=$GOLEM_GEMM_BLOCK_M, ARRAY_OUTPUT_SIZE=$GOLEM_ARRAY_OUTPUT_SIZE。" >&2
 	echo "        block_M 大于硬件输出宽度的 M 向 micro-tiling 尚未实现；继续运行会使 worker 停在 wcp_wait。" >&2

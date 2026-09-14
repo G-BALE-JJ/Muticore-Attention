@@ -70,14 +70,17 @@ int main(int argc, char** argv) {
     uint32_t manager_queries = GOLEM_ATTENTION_QUERIES;
     uint32_t keys = GOLEM_ATTENTION_KEYS;
     uint32_t head_dim = GOLEM_ATTENTION_HEAD_DIM;
-    if (GOLEM_ATTENTION_SCALE && argc != 5) {
-        std::fprintf(stderr, "Attention guest expects core-id, manager-queries, keys, head-dim\n");
+    uint32_t key_block_rows = 32;
+    if (GOLEM_ATTENTION_SCALE && argc != 6) {
+        std::fprintf(stderr, "Attention guest expects core-id, manager-queries, keys, head-dim, key-block-rows\n");
         return 1;
     }
     if (GOLEM_ATTENTION_SCALE &&
         (!parse_positive_u32(argv[2], &manager_queries) ||
          !parse_positive_u32(argv[3], &keys) ||
-         !parse_positive_u32(argv[4], &head_dim))) {
+         !parse_positive_u32(argv[4], &head_dim) ||
+         !parse_positive_u32(argv[5], &key_block_rows) ||
+         (key_block_rows != 32 && key_block_rows != 64))) {
         std::fprintf(stderr, "Invalid Attention guest dimensions\n");
         return 1;
     }
@@ -123,7 +126,7 @@ int main(int argc, char** argv) {
     desc.keys = keys;
     desc.head_dim = head_dim;
     desc.query_block_rows = 16;
-    desc.key_block_rows = 32;
+    desc.key_block_rows = key_block_rows;
     desc.worker_count = topology.worker_count;
     desc.flags = GOLEM_ATTENTION_CAUSAL ? GOLEM_ATTENTION_FLAG_CAUSAL : 0;
     desc.tensor_root_core = 0;

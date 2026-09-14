@@ -310,6 +310,7 @@ if _attention_fused:
         "GOLEM_ATTENTION_GUEST_MANAGER_QUERIES",
         "GOLEM_ATTENTION_GUEST_KEYS",
         "GOLEM_ATTENTION_GUEST_HEAD_DIM",
+        "GOLEM_ATTENTION_GUEST_KEY_BLOCK_ROWS",
     )
     missing_attention_args = [
         name for name in attention_guest_arg_names if name not in os.environ

@@ -26,6 +26,7 @@
 #include <sst/core/interfaces/stdMem.h>
 #include <sst/elements/memHierarchy/memLinkBase.h>
 #include <sst/elements/memHierarchy/util.h>
+#include <sst/elements/golem/attention/attentionCluster.h>
 
 namespace SST {
 namespace Golem {
@@ -198,7 +199,7 @@ public:
                 DMA_CONSUMER_PROGRESS };
 
     // 默认构造函数 (序列化需要)
-    NetworkDataEvent() : Event(), type(READ), addr(0), length(0), data(), returnAddr(0), returnEndpoint(-1), completionFlagAddr(0), completionValue(0), requestId(0), dmaRequestKind(DmaRequestKind::Unknown), dmaConsumer() {}
+    NetworkDataEvent() : Event(), type(READ), addr(0), length(0), data(), returnAddr(0), returnEndpoint(-1), completionFlagAddr(0), completionValue(0), requestId(0), dmaRequestKind(DmaRequestKind::Unknown), dmaConsumer(), ownerGenerationToken(0) {}
 
     // 带参数构造函数
     NetworkDataEvent(Type type, uint64_t addr, size_t length, const std::vector<uint8_t>& data)
@@ -207,14 +208,14 @@ public:
     NetworkDataEvent(Type type, uint64_t addr, size_t length, const std::vector<uint8_t>& data, uint64_t returnAddr)
         : Event(), type(type), addr(addr), length(length), data(data), returnAddr(returnAddr),
           returnEndpoint(-1), completionFlagAddr(0), completionValue(0), requestId(0),
-          dmaRequestKind(DmaRequestKind::Unknown), dmaConsumer() {}
+          dmaRequestKind(DmaRequestKind::Unknown), dmaConsumer(), ownerGenerationToken(0) {}
 
     NetworkDataEvent(Type type, uint64_t addr, size_t length, const std::vector<uint8_t>& data,
                      uint64_t returnAddr, int returnEndpoint, uint64_t completionFlagAddr, uint64_t completionValue,
                      uint64_t requestId = 0, DmaRequestKind dmaRequestKind = DmaRequestKind::Unknown,
                      const DmaConsumerMetadata& dmaConsumer = DmaConsumerMetadata())
         : Event(), type(type), addr(addr), length(length), data(data), returnAddr(returnAddr),
-          returnEndpoint(returnEndpoint), completionFlagAddr(completionFlagAddr), completionValue(completionValue), requestId(requestId), dmaRequestKind(dmaRequestKind), dmaConsumer(dmaConsumer) {}
+          returnEndpoint(returnEndpoint), completionFlagAddr(completionFlagAddr), completionValue(completionValue), requestId(requestId), dmaRequestKind(dmaRequestKind), dmaConsumer(dmaConsumer), ownerGenerationToken(0) {}
 
     // 获取事件类型
     Type getType() const { return type; }
@@ -232,6 +233,8 @@ public:
     uint64_t getRequestId() const { return requestId; }
     DmaRequestKind getDmaRequestKind() const { return dmaRequestKind; }
     const DmaConsumerMetadata& getDmaConsumerMetadata() const { return dmaConsumer; }
+    uint64_t getOwnerGenerationToken() const { return ownerGenerationToken; }
+    void setOwnerGenerationToken(uint64_t token) { ownerGenerationToken = token; }
     // 序列化函数: 序列化所有字段以支持跨节点传输
     void serialize_order(SST::Core::Serialization::serializer &ser) override {
         Event::serialize_order(ser);
@@ -246,6 +249,7 @@ public:
         ser & requestId;
         ser & dmaRequestKind;
         ser & dmaConsumer;
+        ser & ownerGenerationToken;
     }
 
     ImplementSerializable(SST::Golem::NetworkDataEvent);
@@ -262,6 +266,7 @@ private:
     uint64_t requestId;             // optional scheduler transaction identifier
     DmaRequestKind dmaRequestKind;  // semantic tag for DMA response trace attribution
     DmaConsumerMetadata dmaConsumer;
+    uint64_t ownerGenerationToken;
 };
 
 
@@ -315,6 +320,14 @@ public:
     virtual bool sendReductionMessage(uint32_t destinationCore,
                                       const ReductionTransportMessage& message) = 0;
     virtual void setReductionMessageHandler(ReductionMessageHandler handler) = 0;
+    virtual bool beginAttentionGeneration(uint64_t generation) {
+        return generation != 0;
+    }
+    virtual bool attentionGenerationDrained(uint64_t) const { return true; }
+    virtual bool retireAttentionGeneration(uint64_t generation) {
+        return generation != 0;
+    }
+    virtual uint32_t cancelAttentionGeneration(uint64_t) { return 0; }
 };
 
 
@@ -356,6 +369,7 @@ public:
         {"local_access_write_ports", "Number of modeled local-memory write ports", "1"},
         {"local_access_queue_depth", "Maximum queued plus in-flight local-memory requests", "32"},
         {"local_access_max_request_bytes", "Maximum bytes accepted by one local-memory request", "4096"},
+        {"attention_cluster_enable", "Enable Attention cluster Local-GM interval statistics", "0"},
         {"identityWindowBase", "Base address of Identity Window for DMA access to main memory", "0x04000000"},
         {"dma_read_retry_ticks", "Retry timeout ticks per DMA READ chunk (in selfLink ticks)", "96"},
         {"dma_read_max_retries", "Maximum retry attempts per DMA READ chunk", "8"},
@@ -370,7 +384,15 @@ public:
         {"gmem_reduction_send_immediate", "Reduction messages sent immediately", "messages", 1},
         {"gmem_reduction_send_queued", "Reduction messages queued for later send", "messages", 1},
         {"gmem_reduction_send_rejected", "Reduction messages rejected before transport ownership", "messages", 1},
-        {"gmem_reduction_received", "Reduction messages received from the network", "messages", 1})
+        {"gmem_reduction_received", "Reduction messages received from the network", "messages", 1},
+        {"attention_cluster_local_read_busy_union_ticks", "Union of Local-GM read-port intervals while cluster mode is enabled", "ticks", 1},
+        {"attention_cluster_local_read_busy_span_ticks", "Span of Local-GM read-port intervals while cluster mode is enabled", "ticks", 1},
+        {"attention_cluster_local_read_idle_gap_ticks", "Idle gaps within the cluster Local-GM read span", "ticks", 1},
+        {"attention_cluster_local_read_max_concurrency", "Maximum concurrent cluster Local-GM reads", "requests", 1},
+        {"attention_cluster_local_write_busy_union_ticks", "Union of Local-GM write-port intervals while cluster mode is enabled", "ticks", 1},
+        {"attention_cluster_local_write_busy_span_ticks", "Span of Local-GM write-port intervals while cluster mode is enabled", "ticks", 1},
+        {"attention_cluster_local_write_idle_gap_ticks", "Idle gaps within the cluster Local-GM write span", "ticks", 1},
+        {"attention_cluster_local_write_max_concurrency", "Maximum concurrent cluster Local-GM writes", "requests", 1})
 
     SST_ELI_DOCUMENT_SUBCOMPONENT_SLOTS(
         {"networkIF", "Network interface (SimpleNetwork)", "SST::Interfaces::SimpleNetwork"},
@@ -424,6 +446,10 @@ public:
     bool sendReductionMessage(uint32_t destinationCore,
                               const ReductionTransportMessage& message) override;
     void setReductionMessageHandler(ReductionMessageHandler handler) override;
+    bool beginAttentionGeneration(uint64_t generation) override;
+    bool attentionGenerationDrained(uint64_t generation) const override;
+    bool retireAttentionGeneration(uint64_t generation) override;
+    uint32_t cancelAttentionGeneration(uint64_t generation) override;
     uint64_t dma_write_to_host_async(uint64_t dst_pa, size_t length,
                                      const std::vector<uint8_t>& data) override;
     uint64_t dma_read_from_host_to_globalmem_async(uint64_t src_pa, size_t length, uint64_t gm_dst_addr,
@@ -509,6 +535,8 @@ private:
         uint64_t first_send_cycle = 0;
         uint64_t last_send_cycle = 0;
         uint64_t issue_cycle = 0;
+        uint64_t ownerGeneration = 0;
+        uint64_t ownerGenerationToken = 0;
     };
 
     struct PendingReadReply {
@@ -534,6 +562,9 @@ private:
         LocalMemoryClient client = LocalMemoryClient::Control;
         uint64_t tag = 0;
         uint64_t submitCycle = 0;
+        uint64_t ownerGeneration = 0;
+        bool issued = false;
+        bool cancelled = false;
         std::vector<uint8_t> writeData;
         LocalReadCallback readCallback;
         LocalWriteCallback writeCallback;
@@ -584,6 +615,7 @@ private:
     void finishDmaReadLanding(PendingDmaOp& op, bool ok);
 
     SST::Link* localAccessSelfLink_ = nullptr;
+    TimeConverter* localAccessTC_ = nullptr;
     uint32_t localAccessBaseLatencyCycles_ = 1;
     uint32_t localAccessBytesPerCycle_ = 64;
     uint32_t localAccessReadPorts_ = 1;
@@ -602,6 +634,10 @@ private:
     uint64_t localQueueRejected_ = 0;
     uint64_t localReadQueueCycles_ = 0;
     uint64_t localWriteQueueCycles_ = 0;
+    bool attentionClusterEnable_ = false;
+    AttentionGenerationFence attentionGenerationFence_;
+    BusyIntervalUnion attentionClusterLocalReadIntervals_;
+    BusyIntervalUnion attentionClusterLocalWriteIntervals_;
     std::deque<uint64_t> localReadQueue_;
     std::deque<uint64_t> localWriteQueue_;
     std::unordered_map<uint64_t, PendingLocalAccess> localAccessPending_;
@@ -700,6 +736,14 @@ private:
     Statistic<uint64_t>* statReductionSendQueued_ = nullptr;
     Statistic<uint64_t>* statReductionSendRejected_ = nullptr;
     Statistic<uint64_t>* statReductionReceived_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterLocalReadBusyUnion_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterLocalReadBusySpan_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterLocalReadIdleGap_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterLocalReadMaxConcurrency_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterLocalWriteBusyUnion_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterLocalWriteBusySpan_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterLocalWriteIdleGap_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterLocalWriteMaxConcurrency_ = nullptr;
     ReductionMessageHandler reduction_message_handler;
     size_t send_retry_queue_max_depth = 0;
     std::unordered_map<SST::Interfaces::SimpleNetwork::Request*, uint64_t> dma_read_req_to_key;

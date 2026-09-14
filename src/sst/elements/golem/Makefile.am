@@ -27,6 +27,7 @@ libgolem_la_SOURCES = \
 	sfu/sfu.h \
 	sfu/sfu.cc \
 	workercmdproc/workercmdproc.h \
+	attention/attentionCluster.h \
 	rocc/roccAnalog.h \
 	rocc/roccAnalogFloat.h \
 	rocc/roccAnalogInt.h \

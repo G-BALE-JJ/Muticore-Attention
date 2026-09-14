@@ -18,6 +18,7 @@
 
 #include <sst/core/component.h>
 #include <sst/core/subcomponent.h>
+#include <sst/elements/golem/attention/attentionCluster.h>
 #include <sst/core/event.h>
 #include <sst/core/link.h>
 #include <sst/core/output.h>
@@ -101,11 +102,14 @@ public:
         {"arrayBufferQueueDepth", "Maximum queued plus active array-buffer transfers", "64"},
         {"arrayOutputReadCredits", "Maximum output reads in flight", "1"},
         {"arrayOutputReadBanks", "Number of independent output-read banks", "1"},
+        {"attentionNearArrayOutputBytesPerCycle", "Bandwidth of the dedicated Attention near-array output fabric", "512"},
+        {"attentionNearArrayOutputCredits", "Maximum grouped PV drains in flight", "2"},
         {"operandContextBanks", "Number of matrix/input operand contexts per physical array", "1"},
         {"matrixBroadcastMaxFanout", "Maximum number of array matrix banks reached by one broadcast", "16"},
         {"matrixBroadcastBytesPerCycle", "Ingress bytes delivered per cycle by the matrix broadcast tree", "64"},
         {"matrixBroadcastBaseLatencyCycles", "Base setup latency for a matrix broadcast", "1"},
         {"matrixBroadcastStageLatencyCycles", "Additional startup latency per binary fanout-tree stage", "1"},
+        {"attention_cluster_enable", "Enable Attention cluster traffic classification and interval statistics", "0"},
     )
 
     SST_ELI_DOCUMENT_STATISTICS(
@@ -122,6 +126,19 @@ public:
         {"output_read_credit_stalls", "Output reads blocked by credit or bank ownership", "stalls", 1},
         {"output_read_bank_conflicts", "Output reads blocked by a busy output bank", "conflicts", 1},
         {"output_read_max_in_flight", "Maximum concurrent output reads", "reads", 1},
+        {"attention_cluster_buffer_busy_union_ticks", "Union of cluster array-buffer service intervals", "ticks", 1},
+        {"attention_cluster_buffer_busy_span_ticks", "Span of cluster array-buffer service intervals", "ticks", 1},
+        {"attention_cluster_buffer_idle_gap_ticks", "Idle gaps inside the cluster array-buffer span", "ticks", 1},
+        {"attention_cluster_buffer_max_concurrency", "Maximum simultaneous cluster array-buffer transfers", "requests", 1},
+        {"attention_cluster_qk_k_matrix_requests", "Cluster K-panel ingress requests", "requests", 1},
+        {"attention_cluster_qk_k_matrix_bytes", "Cluster K-panel ingress bytes", "bytes", 1},
+        {"attention_cluster_qk_q_pair_requests", "Cluster Q pair multicast requests", "requests", 1},
+        {"attention_cluster_qk_q_pair_bytes", "Cluster Q pair multicast ingress bytes", "bytes", 1},
+        {"attention_cluster_qk_score_out_requests", "Cluster QK score output requests", "requests", 1},
+        {"attention_cluster_qk_score_out_bytes", "Cluster QK score output bytes", "bytes", 1},
+        {"attention_cluster_pv_group_drains", "Grouped PV output drains on the near-array fabric", "drains", 1},
+        {"attention_cluster_pv_group_drain_bytes", "PV bytes moved by the near-array fabric", "bytes", 1},
+        {"attention_cluster_pv_group_drain_cycles", "Modeled near-array fabric service cycles", "cycles", 1},
     )
 
     ComputeArray(ComponentId_t id, Params& params,
@@ -168,6 +185,10 @@ public:
         arrayOutputReadBanks_ =
             std::max<uint64_t>(params.find<uint64_t>("arrayOutputReadBanks", 1), 1);
         outputReadBankInFlight_.assign(arrayOutputReadBanks_, 0);
+        attentionNearArrayOutputBytesPerCycle_ = std::max<uint64_t>(
+            params.find<uint64_t>("attentionNearArrayOutputBytesPerCycle", 512), 1);
+        attentionNearArrayOutputCredits_ = std::max<uint64_t>(
+            params.find<uint64_t>("attentionNearArrayOutputCredits", 2), 1);
         matrixBroadcastMaxFanout_ =
             std::max<uint64_t>(params.find<uint64_t>("matrixBroadcastMaxFanout", 16), 1);
         matrixBroadcastBytesPerCycle_ =
@@ -176,6 +197,8 @@ public:
             std::max<uint64_t>(params.find<uint64_t>("matrixBroadcastBaseLatencyCycles", 1), 1);
         matrixBroadcastStageLatencyCycles_ =
             params.find<uint64_t>("matrixBroadcastStageLatencyCycles", 1);
+        attentionClusterEnable_ =
+            params.find<bool>("attention_cluster_enable", false);
         bufferLink_ = configureSelfLink(
             "BufferSelf", *tc,
             new Event::Handler2<ComputeArray, &ComputeArray::handleBufferEvent>(this));
@@ -204,6 +227,32 @@ public:
             registerStatistic<uint64_t>("output_read_bank_conflicts");
         statOutputReadMaxInFlight_ =
             registerStatistic<uint64_t>("output_read_max_in_flight");
+        statAttentionClusterBufferBusyUnion_ =
+            registerStatistic<uint64_t>("attention_cluster_buffer_busy_union_ticks");
+        statAttentionClusterBufferBusySpan_ =
+            registerStatistic<uint64_t>("attention_cluster_buffer_busy_span_ticks");
+        statAttentionClusterBufferIdleGap_ =
+            registerStatistic<uint64_t>("attention_cluster_buffer_idle_gap_ticks");
+        statAttentionClusterBufferMaxConcurrency_ =
+            registerStatistic<uint64_t>("attention_cluster_buffer_max_concurrency");
+        statAttentionClusterQkKMatrixRequests_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_k_matrix_requests");
+        statAttentionClusterQkKMatrixBytes_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_k_matrix_bytes");
+        statAttentionClusterQkQPairRequests_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_q_pair_requests");
+        statAttentionClusterQkQPairBytes_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_q_pair_bytes");
+        statAttentionClusterQkScoreOutRequests_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_score_out_requests");
+        statAttentionClusterQkScoreOutBytes_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_score_out_bytes");
+        statAttentionClusterPvGroupDrains_ =
+            registerStatistic<uint64_t>("attention_cluster_pv_group_drains");
+        statAttentionClusterPvGroupDrainBytes_ =
+            registerStatistic<uint64_t>("attention_cluster_pv_group_drain_bytes");
+        statAttentionClusterPvGroupDrainCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_pv_group_drain_cycles");
     }
 
     virtual ~ComputeArray() {}
@@ -213,6 +262,16 @@ public:
     virtual void init(unsigned int phase) override {}
     virtual void setup() override {}
     virtual void finish() override {
+        if (attentionClusterEnable_) {
+            statAttentionClusterBufferBusyUnion_->addData(
+                attentionClusterBufferIntervals_.unionCycles());
+            statAttentionClusterBufferBusySpan_->addData(
+                attentionClusterBufferIntervals_.spanCycles());
+            statAttentionClusterBufferIdleGap_->addData(
+                attentionClusterBufferIntervals_.idleCycles());
+            statAttentionClusterBufferMaxConcurrency_->addData(
+                attentionClusterBufferIntervals_.maxConcurrency());
+        }
         out.output(
             "GOLEM_ARRAY_BUFFER_STATS core=%d requests=%" PRIu64
             " bytes=%" PRIu64 " rejected=%" PRIu64
@@ -296,6 +355,15 @@ public:
         return operandBank == 0 && programMatrixGroupAsync(
             arrayIDs, matrix, elemBytes, tag, std::move(callback));
     }
+    virtual bool programMatrixGroupClassBankAsync(
+            const std::vector<uint32_t>& arrayIDs, uint32_t operandBank,
+            const std::vector<double>& matrix, size_t elemBytes,
+            AttentionClusterTrafficClass trafficClass, uint64_t tag,
+            BufferCallback callback) {
+        if (trafficClass != AttentionClusterTrafficClass::Legacy) return false;
+        return programMatrixGroupBankAsync(
+            arrayIDs, operandBank, matrix, elemBytes, tag, std::move(callback));
+    }
     virtual bool programInputAsync(uint32_t arrayID,
                                    const std::vector<double>& input,
                                    size_t elemBytes,
@@ -307,6 +375,20 @@ public:
             uint64_t tag, BufferCallback callback) {
         return operandBank == 0 && programInputAsync(
             arrayID, input, elemBytes, tag, std::move(callback));
+    }
+    virtual bool programInputGroupBankAsync(
+            const std::vector<uint32_t>& arrayIDs, uint32_t operandBank,
+            const std::vector<double>& input, size_t elemBytes,
+            AttentionClusterTrafficClass trafficClass, uint64_t tag,
+            BufferCallback callback) {
+        (void)arrayIDs;
+        (void)operandBank;
+        (void)input;
+        (void)elemBytes;
+        (void)trafficClass;
+        (void)tag;
+        (void)callback;
+        return false;
     }
     virtual bool programMatrixActiveAsync(
             uint32_t arrayID, const std::vector<double>& matrix,
@@ -364,6 +446,25 @@ public:
     virtual bool readOutputBytesAsync(uint32_t arrayID, size_t elemBytes,
                                       uint64_t tag,
                                       BufferByteReadCallback callback) = 0;
+    virtual bool readOutputClassAsync(
+            uint32_t arrayID, size_t elemBytes,
+            AttentionClusterTrafficClass trafficClass, uint64_t tag,
+            BufferReadCallback callback) {
+        if (trafficClass != AttentionClusterTrafficClass::Legacy) return false;
+        return readOutputAsync(
+            arrayID, elemBytes, tag, std::move(callback));
+    }
+    virtual bool readOutputGroupClassAsync(
+            const std::vector<uint32_t>& arrayIDs, size_t elemBytes,
+            AttentionClusterTrafficClass trafficClass, uint64_t tag,
+            BufferReadCallback callback) {
+        (void)arrayIDs;
+        (void)elemBytes;
+        (void)trafficClass;
+        (void)tag;
+        (void)callback;
+        return false;
+    }
     virtual bool writeOutputAsync(uint32_t arrayID,
                                   const std::vector<double>& output,
                                   size_t elemBytes,
@@ -400,6 +501,20 @@ public:
         return arrayID < numArrays && validateActiveColumnRequest(activeColumns);
     }
 
+    virtual bool validateOperandContextRequest(
+            uint32_t arrayID, uint32_t operandBank) const {
+        return arrayID < numArrays && operandBank == 0;
+    }
+
+    virtual bool validateOutputGroupRequest(
+            const std::vector<uint32_t>& arrayIDs, size_t elemBytes,
+            AttentionClusterTrafficClass trafficClass) const {
+        (void)arrayIDs;
+        (void)elemBytes;
+        (void)trafficClass;
+        return false;
+    }
+
     bool validateMatrixBroadcastRequest(
             const std::vector<uint32_t>& arrayIDs, size_t matrixElements,
             size_t elemBytes, uint32_t activeColumns = 0) {
@@ -422,34 +537,89 @@ public:
         return valid;
     }
 
+    bool validateInputMulticastRequest(
+            const std::vector<uint32_t>& arrayIDs, size_t inputElements,
+            size_t elemBytes) const {
+        const std::unordered_set<uint32_t> uniqueIDs(
+            arrayIDs.begin(), arrayIDs.end());
+        return !arrayIDs.empty() &&
+            arrayIDs.size() <= matrixBroadcastMaxFanout_ &&
+            uniqueIDs.size() == arrayIDs.size() &&
+            inputElements > 0 && inputElements <= inputArraySize &&
+            elemBytes > 0 &&
+            std::all_of(arrayIDs.begin(), arrayIDs.end(),
+                [this](uint32_t id) { return id < numArrays; });
+    }
+
 protected:
-    bool enqueueBufferTransfer(size_t bytes, uint64_t tag,
-                               std::function<void()> completion) {
+    bool enqueueBufferTransfer(
+            size_t bytes, uint64_t tag, std::function<void()> completion,
+            AttentionClusterTrafficClass trafficClass =
+                AttentionClusterTrafficClass::Legacy) {
         const uint64_t transferCycles = arrayBufferBaseLatencyCycles_ +
             (bytes + arrayBufferBytesPerCycle_ - 1) / arrayBufferBytesPerCycle_;
         return enqueueModeledBufferTransfer(
-            bytes, transferCycles, tag, std::move(completion));
+            bytes, transferCycles, tag, std::move(completion), false, 0,
+            trafficClass);
     }
 
-    bool enqueueOutputReadTransfer(uint32_t arrayID, size_t bytes, uint64_t tag,
-                                   std::function<void()> completion) {
+    bool enqueueOutputReadTransfer(
+            uint32_t arrayID, size_t bytes, uint64_t tag,
+            std::function<void()> completion,
+            AttentionClusterTrafficClass trafficClass =
+                AttentionClusterTrafficClass::Legacy) {
         const uint32_t bank = arrayOutputReadBanks_ == 0 ? 0 :
             arrayID % arrayOutputReadBanks_;
         const uint64_t transferCycles = arrayBufferBaseLatencyCycles_ +
             (bytes + arrayBufferBytesPerCycle_ - 1) / arrayBufferBytesPerCycle_;
         return enqueueModeledBufferTransfer(
-            bytes, transferCycles, tag, std::move(completion), true, bank);
+            bytes, transferCycles, tag, std::move(completion), true, bank,
+            trafficClass);
     }
 
-    bool enqueueMatrixBroadcastTransfer(size_t bytes, size_t fanout, uint64_t tag,
-                                        std::function<void()> completion) {
+    bool enqueueNearArrayOutputTransfer(
+            size_t bytes, uint64_t tag, std::function<void()> completion,
+            AttentionClusterTrafficClass trafficClass =
+                AttentionClusterTrafficClass::PvOFinalDrain) {
+        if (!completion || !attentionClusterEnable_ ||
+            nearArrayOutputInFlight_ >= attentionNearArrayOutputCredits_ ||
+            bufferRequests_.size() >= arrayBufferQueueDepth_) return false;
+        const uint64_t transferCycles = arrayBufferBaseLatencyCycles_ +
+            (bytes + attentionNearArrayOutputBytesPerCycle_ - 1) /
+                attentionNearArrayOutputBytesPerCycle_;
+        const uint64_t requestId = nextBufferRequestId_++;
+        bufferRequests_.emplace(
+            requestId,
+            BufferRequest{
+                requestId, tag, bytes, transferCycles, std::move(completion),
+                false, 0, trafficClass, true
+            });
+        ++nearArrayOutputInFlight_;
+        if (trafficClass == AttentionClusterTrafficClass::PvOFinalDrain) {
+            statAttentionClusterPvGroupDrains_->addData(1);
+            statAttentionClusterPvGroupDrainBytes_->addData(bytes);
+            statAttentionClusterPvGroupDrainCycles_->addData(transferCycles);
+        } else if (trafficClass == AttentionClusterTrafficClass::QkScoreOut) {
+            statAttentionClusterQkScoreOutRequests_->addData(1);
+            statAttentionClusterQkScoreOutBytes_->addData(bytes);
+        }
+        bufferLink_->send(transferCycles, new ArrayBufferEvent(requestId));
+        return true;
+    }
+
+    bool enqueueMatrixBroadcastTransfer(
+            size_t bytes, size_t fanout, uint64_t tag,
+            std::function<void()> completion,
+            AttentionClusterTrafficClass trafficClass =
+                AttentionClusterTrafficClass::Legacy) {
         const uint64_t treeStages = ceilLog2(fanout);
         const uint64_t transferCycles = matrixBroadcastBaseLatencyCycles_ +
             (bytes + matrixBroadcastBytesPerCycle_ - 1) /
                 matrixBroadcastBytesPerCycle_ +
             treeStages * matrixBroadcastStageLatencyCycles_;
         if (!enqueueModeledBufferTransfer(
-                bytes, transferCycles, tag, std::move(completion))) {
+                bytes, transferCycles, tag, std::move(completion), false, 0,
+                trafficClass)) {
             matrixBroadcastRejected_ += 1;
             statMatrixBroadcastRejected_->addData(1);
             return false;
@@ -483,7 +653,9 @@ private:
                                       uint64_t tag,
                                       std::function<void()> completion,
                                       bool outputRead = false,
-                                      uint32_t outputBank = 0) {
+                                      uint32_t outputBank = 0,
+                                      AttentionClusterTrafficClass trafficClass =
+                                          AttentionClusterTrafficClass::Legacy) {
         if (!completion || bufferRequests_.size() >= arrayBufferQueueDepth_) {
             arrayBufferRejected_ += 1;
             return false;
@@ -493,7 +665,7 @@ private:
             requestId,
             BufferRequest{
                 requestId, tag, bytes, transferCycles, std::move(completion),
-                outputRead, outputBank
+                outputRead, outputBank, trafficClass, false
             });
         bufferQueue_.push_back(requestId);
         arrayBufferRequests_ += 1;
@@ -552,6 +724,9 @@ private:
         std::function<void()> completion;
         bool outputRead = false;
         uint32_t outputBank = 0;
+        AttentionClusterTrafficClass trafficClass =
+            AttentionClusterTrafficClass::Legacy;
+        bool dedicatedOutput = false;
     };
 
     void tryIssueBufferTransfers() {
@@ -584,6 +759,36 @@ private:
                 continue;
             }
             const uint64_t transferCycles = it->second.transferCycles;
+            if (attentionClusterEnable_ &&
+                it->second.trafficClass != AttentionClusterTrafficClass::Legacy) {
+                const uint64_t start = getCurrentSimCycle();
+                if (!attentionClusterBufferIntervals_.add(
+                        start, start + clockTC->convertToCoreTime(transferCycles))) {
+                    out.fatal(CALL_INFO, -1,
+                              "Attention cluster buffer interval order violation\n");
+                }
+                const size_t classIndex =
+                    static_cast<size_t>(it->second.trafficClass);
+                attentionClusterTrafficRequests_[classIndex] += 1;
+                attentionClusterTrafficBytes_[classIndex] += it->second.bytes;
+                attentionClusterTrafficServiceCycles_[classIndex] += transferCycles;
+                switch (it->second.trafficClass) {
+                case AttentionClusterTrafficClass::QkKMatrix:
+                    statAttentionClusterQkKMatrixRequests_->addData(1);
+                    statAttentionClusterQkKMatrixBytes_->addData(it->second.bytes);
+                    break;
+                case AttentionClusterTrafficClass::QkQPair:
+                    statAttentionClusterQkQPairRequests_->addData(1);
+                    statAttentionClusterQkQPairBytes_->addData(it->second.bytes);
+                    break;
+                case AttentionClusterTrafficClass::QkScoreOut:
+                    statAttentionClusterQkScoreOutRequests_->addData(1);
+                    statAttentionClusterQkScoreOutBytes_->addData(it->second.bytes);
+                    break;
+                default:
+                    break;
+                }
+            }
             arrayBufferTransferCycles_ += transferCycles;
             arrayBufferInFlight_ += 1;
             if (it->second.outputRead) {
@@ -603,8 +808,12 @@ private:
             return;
         }
         const auto it = bufferRequests_.find(bufferEvent->requestId());
+        bool usedArrayBufferPort = false;
         if (it != bufferRequests_.end()) {
-            if (it->second.outputRead) {
+            usedArrayBufferPort = !it->second.dedicatedOutput;
+            if (it->second.dedicatedOutput) {
+                if (nearArrayOutputInFlight_ > 0) --nearArrayOutputInFlight_;
+            } else if (it->second.outputRead) {
                 if (outputReadInFlight_ > 0) outputReadInFlight_ -= 1;
                 if (it->second.outputBank < outputReadBankInFlight_.size() &&
                     outputReadBankInFlight_[it->second.outputBank] > 0) {
@@ -617,7 +826,7 @@ private:
                 completion();
             }
         }
-        if (arrayBufferInFlight_ > 0) {
+        if (usedArrayBufferPort && arrayBufferInFlight_ > 0) {
             arrayBufferInFlight_ -= 1;
         }
         delete bufferEvent;
@@ -633,6 +842,17 @@ private:
     uint64_t matrixBroadcastBytesPerCycle_ = 64;
     uint64_t matrixBroadcastBaseLatencyCycles_ = 1;
     uint64_t matrixBroadcastStageLatencyCycles_ = 1;
+    bool attentionClusterEnable_ = false;
+    BusyIntervalUnion attentionClusterBufferIntervals_;
+    std::array<uint64_t,
+        static_cast<size_t>(AttentionClusterTrafficClass::Count)>
+        attentionClusterTrafficRequests_ = {};
+    std::array<uint64_t,
+        static_cast<size_t>(AttentionClusterTrafficClass::Count)>
+        attentionClusterTrafficBytes_ = {};
+    std::array<uint64_t,
+        static_cast<size_t>(AttentionClusterTrafficClass::Count)>
+        attentionClusterTrafficServiceCycles_ = {};
     uint64_t arrayBufferInFlight_ = 0;
     uint64_t nextBufferRequestId_ = 1;
     uint64_t arrayBufferRequests_ = 0;
@@ -642,6 +862,9 @@ private:
     uint64_t arrayBufferTransferCycles_ = 0;
     uint64_t arrayOutputReadCredits_ = 1;
     uint64_t arrayOutputReadBanks_ = 1;
+    uint64_t attentionNearArrayOutputBytesPerCycle_ = 512;
+    uint64_t attentionNearArrayOutputCredits_ = 2;
+    uint64_t nearArrayOutputInFlight_ = 0;
     uint64_t outputReadInFlight_ = 0;
     uint64_t outputReadMaxInFlight_ = 0;
     uint64_t outputReadCreditStalls_ = 0;
@@ -671,6 +894,19 @@ private:
     Statistic<uint64_t>* statOutputReadCreditStalls_ = nullptr;
     Statistic<uint64_t>* statOutputReadBankConflicts_ = nullptr;
     Statistic<uint64_t>* statOutputReadMaxInFlight_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterBufferBusyUnion_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterBufferBusySpan_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterBufferIdleGap_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterBufferMaxConcurrency_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterQkKMatrixRequests_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterQkKMatrixBytes_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterQkQPairRequests_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterQkQPairBytes_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterQkScoreOutRequests_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterQkScoreOutBytes_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterPvGroupDrains_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterPvGroupDrainBytes_ = nullptr;
+    Statistic<uint64_t>* statAttentionClusterPvGroupDrainCycles_ = nullptr;
     std::deque<uint64_t> bufferQueue_;
     std::unordered_map<uint64_t, BufferRequest> bufferRequests_;
 };

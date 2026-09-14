@@ -3,6 +3,7 @@
 
 #include <cinttypes>
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -10,6 +11,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -159,6 +161,31 @@ public:
         return operandBank == 0 && programGemmInputAsync(
             arrayId, input, elemBytes, tag, enqueueCycle, std::move(callback));
     }
+    virtual bool programGemmMatrixGroupClassBankAsync(
+        const std::vector<uint32_t>& arrayIds, uint32_t operandBank,
+        const std::vector<double>& matrix, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmBufferCallback callback) {
+        return trafficClass == AttentionClusterTrafficClass::Legacy &&
+            programGemmMatrixGroupBankAsync(
+                arrayIds, operandBank, matrix, elemBytes, tag, enqueueCycle,
+                std::move(callback));
+    }
+    virtual bool programGemmInputGroupBankAsync(
+        const std::vector<uint32_t>& arrayIds, uint32_t operandBank,
+        const std::vector<double>& input, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmBufferCallback callback) {
+        (void)arrayIds;
+        (void)operandBank;
+        (void)input;
+        (void)elemBytes;
+        (void)trafficClass;
+        (void)tag;
+        (void)enqueueCycle;
+        (void)callback;
+        return false;
+    }
     virtual bool programGemmMatrixActiveBankAsync(
         uint32_t arrayId, uint32_t operandBank,
         const std::vector<double>& matrix, uint32_t activeColumns,
@@ -192,6 +219,22 @@ public:
     virtual bool readGemmOutputAsync(
         uint32_t arrayId, size_t elemBytes, uint64_t tag, uint64_t enqueueCycle,
         GemmReadCallback callback) = 0;
+    virtual bool readGemmOutputClassAsync(
+        uint32_t arrayId, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmReadCallback callback) {
+        return trafficClass == AttentionClusterTrafficClass::Legacy &&
+            readGemmOutputAsync(arrayId, elemBytes, tag, enqueueCycle,
+                                std::move(callback));
+    }
+    virtual bool readGemmOutputGroupClassAsync(
+        const std::vector<uint32_t>& arrayIds, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmReadCallback callback) {
+        (void)arrayIds; (void)elemBytes; (void)trafficClass;
+        (void)tag; (void)enqueueCycle; (void)callback;
+        return false;
+    }
     virtual bool launchGemmArray(
         uint32_t arrayId, uint64_t outputMode, uint64_t enqueueCycle,
         GemmArrayDoneCallback callback) = 0;
@@ -211,6 +254,14 @@ public:
         return operandBank == 0 && launchGemmArrayActive(
             arrayId, outputMode, activeColumns, enqueueCycle,
             std::move(callback));
+    }
+    virtual bool launchGemmArrayGroupActiveBank(
+        const std::vector<uint32_t>& arrayIds, uint32_t operandBank,
+        uint64_t outputMode, uint32_t activeColumns, uint64_t enqueueCycle,
+        GemmArrayDoneCallback callback) {
+        (void)arrayIds; (void)operandBank; (void)outputMode;
+        (void)activeColumns; (void)enqueueCycle; (void)callback;
+        return false;
     }
     virtual bool beginAttentionTileStorage(
         uint32_t rows, uint32_t columns, size_t elemBytes,
@@ -254,6 +305,7 @@ public:
         {"verbose", "Verbosity", "0"},
         {"dtype_is_float", "Output vector stores float elements", "0"},
         {"stage3_trace", "Enable Stage3 2D window trace", "0"},
+        {"attention_cluster_qk_arrays", "First PV array id in the 64-array Attention partition", "16"},
         {"prefetch_windows", "Number of 2D K-windows to prefetch ahead of the active window", "1"},
         {"cross_macro_prefetch", "Prefetch the next macro task's first K-window while the current final window computes", "0"},
         {"window_k_tiles", "WCP K-tiles per scheduler transaction", "4"},
@@ -303,6 +355,8 @@ public:
           verbose_(params.find<int>("verbose", 0)),
           outputIsFloat_(params.find<int>("dtype_is_float", 0) != 0),
           stage3Trace_(params.find<int>("stage3_trace", 0) != 0),
+          attentionClusterQkArrays_(params.find<uint32_t>(
+              "attention_cluster_qk_arrays", 16)),
           prefetchWindowDepth_(static_cast<uint32_t>(std::max(1, params.find<int>("prefetch_windows", 1)))),
           crossMacroPrefetch_(params.find<int>("cross_macro_prefetch", 0) != 0),
           windowKtiles_(std::max(1, params.find<int>("window_k_tiles", 4))),
@@ -324,6 +378,19 @@ public:
           fusionDumpDir_(params.find<std::string>("fusion_dump_dir", "")),
           cBufferStorage_(cBufferBytes_, 0),
           output_("WorkerCommandProcessor[@p:@l]: ", verbose_, 0, SST::Output::STDOUT) {
+        if (attentionClusterQkArrays_ == 0 ||
+            attentionClusterQkArrays_ >= 64 ||
+            (attentionClusterQkArrays_ % 2) != 0) {
+            output_.fatal(
+                CALL_INFO, -1,
+                "attention_cluster_qk_arrays must be even and in range [2, 62]\n");
+        }
+        if (gemmProxyCommandLatencyCycles_ == 0 ||
+            gemmProxyCompletionLatencyCycles_ == 0) {
+            output_.fatal(
+                CALL_INFO, -1,
+                "gemm_proxy command and completion latency must be positive\n");
+        }
         if (attentionTileStorageBanks_ == 0 || attentionTileStorageBanks_ > 16) {
             output_.fatal(
                 CALL_INFO, -1,
@@ -512,7 +579,9 @@ public:
         const std::vector<double>& matrix, size_t elemBytes,
         uint64_t tag, uint64_t enqueueCycle,
         GemmBufferCallback callback) override {
-        if (array_ == nullptr || !array_->validateMatrixBroadcastRequest(
+        if (array_ == nullptr || arrayIds.empty() ||
+            !array_->validateOperandContextRequest(arrayIds.front(), operandBank) ||
+            !array_->validateMatrixBroadcastRequest(
                 arrayIds, matrix.size(), elemBytes)) return false;
         GemmProxyCommand command;
         command.kind = GemmProxyCommandKind::PROGRAM_MATRIX_GROUP;
@@ -537,6 +606,67 @@ public:
         command.operandBank = operandBank;
         command.payload = input;
         command.elemBytes = elemBytes;
+        command.tag = tag;
+        command.enqueueCycle = enqueueCycle;
+        command.bufferCallback = std::move(callback);
+        return enqueueGemmProxyCommand(std::move(command));
+    }
+
+    bool programGemmMatrixGroupClassBankAsync(
+        const std::vector<uint32_t>& arrayIds, uint32_t operandBank,
+        const std::vector<double>& matrix, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmBufferCallback callback) override {
+        if (array_ == nullptr || arrayIds.empty() ||
+            !array_->validateOperandContextRequest(arrayIds.front(), operandBank) ||
+            trafficClass == AttentionClusterTrafficClass::Legacy ||
+            !array_->validateMatrixBroadcastRequest(
+                arrayIds, matrix.size(), elemBytes)) return false;
+        GemmProxyCommand command;
+        command.kind = GemmProxyCommandKind::PROGRAM_MATRIX_GROUP;
+        command.arrayIds = arrayIds;
+        command.operandBank = operandBank;
+        command.payload = matrix;
+        command.elemBytes = elemBytes;
+        command.trafficClass = trafficClass;
+        command.tag = tag;
+        command.enqueueCycle = enqueueCycle;
+        command.bufferCallback = std::move(callback);
+        return enqueueGemmProxyCommand(std::move(command));
+    }
+
+    bool programGemmInputGroupBankAsync(
+        const std::vector<uint32_t>& arrayIds, uint32_t operandBank,
+        const std::vector<double>& input, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmBufferCallback callback) override {
+        const bool validPvTopology =
+            trafficClass != AttentionClusterTrafficClass::PvPInput ||
+            (arrayIds.size() == 2 &&
+             (input.size() == 32 || input.size() == 64) &&
+             arrayIds[0] >= attentionClusterQkArrays_ &&
+             arrayIds[1] == arrayIds[0] + 1 &&
+             (arrayIds[0] % 2) == 0 && arrayIds[1] < 64);
+        const bool validQkTopology =
+            trafficClass != AttentionClusterTrafficClass::QkQPair ||
+            (arrayIds.size() == 1 &&
+             arrayIds.front() < attentionClusterQkArrays_ &&
+             input.size() == 64);
+        if (array_ == nullptr || arrayIds.empty() ||
+            !array_->validateOperandContextRequest(arrayIds.front(), operandBank) ||
+            (trafficClass != AttentionClusterTrafficClass::QkQPair &&
+             trafficClass != AttentionClusterTrafficClass::PvPInput) ||
+            !validQkTopology ||
+            !validPvTopology ||
+            !array_->validateInputMulticastRequest(
+                arrayIds, input.size(), elemBytes)) return false;
+        GemmProxyCommand command;
+        command.kind = GemmProxyCommandKind::PROGRAM_INPUT;
+        command.arrayIds = arrayIds;
+        command.operandBank = operandBank;
+        command.payload = input;
+        command.elemBytes = elemBytes;
+        command.trafficClass = trafficClass;
         command.tag = tag;
         command.enqueueCycle = enqueueCycle;
         command.bufferCallback = std::move(callback);
@@ -568,7 +698,9 @@ public:
         const std::vector<double>& matrix, uint32_t activeColumns,
         size_t elemBytes, uint64_t tag, uint64_t enqueueCycle,
         GemmBufferCallback callback) override {
-        if (array_ == nullptr || !array_->validateMatrixBroadcastRequest(
+        if (array_ == nullptr || arrayIds.empty() ||
+            !array_->validateOperandContextRequest(arrayIds.front(), operandBank) ||
+            !array_->validateMatrixBroadcastRequest(
                 arrayIds, matrix.size(), elemBytes, activeColumns)) return false;
         GemmProxyCommand command;
         command.kind = GemmProxyCommandKind::PROGRAM_MATRIX_GROUP;
@@ -624,6 +756,39 @@ public:
         command.kind = GemmProxyCommandKind::READ_OUTPUT;
         command.arrayId = arrayId;
         command.elemBytes = elemBytes;
+        command.tag = tag;
+        command.enqueueCycle = enqueueCycle;
+        command.readCallback = std::move(callback);
+        return enqueueGemmProxyCommand(std::move(command));
+    }
+
+    bool readGemmOutputClassAsync(
+        uint32_t arrayId, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmReadCallback callback) override {
+        if (trafficClass != AttentionClusterTrafficClass::QkScoreOut) return false;
+        GemmProxyCommand command;
+        command.kind = GemmProxyCommandKind::READ_OUTPUT;
+        command.arrayId = arrayId;
+        command.elemBytes = elemBytes;
+        command.trafficClass = trafficClass;
+        command.tag = tag;
+        command.enqueueCycle = enqueueCycle;
+        command.readCallback = std::move(callback);
+        return enqueueGemmProxyCommand(std::move(command));
+    }
+
+    bool readGemmOutputGroupClassAsync(
+        const std::vector<uint32_t>& arrayIds, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmReadCallback callback) override {
+        if (array_ == nullptr || !array_->validateOutputGroupRequest(
+                arrayIds, elemBytes, trafficClass)) return false;
+        GemmProxyCommand command;
+        command.kind = GemmProxyCommandKind::READ_OUTPUT_GROUP;
+        command.arrayIds = arrayIds;
+        command.elemBytes = elemBytes;
+        command.trafficClass = trafficClass;
         command.tag = tag;
         command.enqueueCycle = enqueueCycle;
         command.readCallback = std::move(callback);
@@ -694,6 +859,39 @@ public:
         return launchGemmArrayBankImpl(
             arrayId, operandBank, outputMode, activeColumns, enqueueCycle,
             std::move(callback));
+    }
+
+    bool launchGemmArrayGroupActiveBank(
+        const std::vector<uint32_t>& arrayIds, uint32_t operandBank,
+        uint64_t outputMode, uint32_t activeColumns, uint64_t enqueueCycle,
+        GemmArrayDoneCallback callback) override {
+        if (array_ == nullptr || busy_ || !callback || arrayIds.empty() ||
+            gemmProxyCommands_.size() >= gemmProxyQueueDepth_) {
+            if (gemmProxyCommands_.size() >= gemmProxyQueueDepth_)
+                statGemmProxyQueueFullStalls_->addData(1);
+            return false;
+        }
+        std::unordered_set<uint32_t> unique;
+        for (uint32_t arrayId : arrayIds) {
+            if (!unique.insert(arrayId).second ||
+                gemmArrayDoneCallbacks_.count(arrayId) != 0 ||
+                !array_->validateOperandContextRequest(arrayId, operandBank) ||
+                (activeColumns != 0 &&
+                 !array_->validateActiveLaunchRequest(arrayId, activeColumns))) {
+                return false;
+            }
+        }
+        for (uint32_t arrayId : arrayIds)
+            gemmArrayDoneCallbacks_.emplace(arrayId, callback);
+        GemmProxyCommand command;
+        command.kind = GemmProxyCommandKind::LAUNCH_GROUP;
+        command.arrayIds = arrayIds;
+        command.operandBank = operandBank;
+        command.outputMode = outputMode;
+        command.activeColumns = activeColumns;
+        command.enqueueCycle = enqueueCycle;
+        gemmProxyCommands_.push_back(std::move(command));
+        return true;
     }
 
     bool beginAttentionTileStorage(
@@ -1212,17 +1410,12 @@ public:
         if (inlineIt != gemmArrayDoneCallbacks_.end()) {
             auto callback = std::move(inlineIt->second);
             gemmArrayDoneCallbacks_.erase(inlineIt);
-            if (gemmProxyCompletionLatencyCycles_ == 0) {
-                statGemmProxyCompletionCallbacks_->addData(1);
-                callback(arrayId, cycle);
-            } else {
-                PendingGemmCompletion completion;
-                completion.arrayId = arrayId;
-                completion.arrayDoneCycle = cycle;
-                completion.readyCycle = cycle + gemmProxyCompletionLatencyCycles_;
-                completion.callback = std::move(callback);
-                pendingGemmCompletions_.push_back(std::move(completion));
-            }
+            PendingGemmCompletion completion;
+            completion.arrayId = arrayId;
+            completion.arrayDoneCycle = cycle;
+            completion.readyCycle = cycle + gemmProxyCompletionLatencyCycles_;
+            completion.callback = std::move(callback);
+            pendingGemmCompletions_.push_back(std::move(completion));
             return true;
         }
         if (!busy_ || !computeInFlight_ || phase_ != Phase::RUN) {
@@ -1266,7 +1459,9 @@ private:
         PROGRAM_INPUT,
         WRITE_OUTPUT,
         READ_OUTPUT,
+        READ_OUTPUT_GROUP,
         LAUNCH,
+        LAUNCH_GROUP,
         ATTENTION_TILE_COLUMN_WRITE,
         ATTENTION_TILE_ROW_READ,
         ATTENTION_ACCUMULATOR_ROW_WRITE,
@@ -1283,6 +1478,8 @@ private:
         uint64_t tag = 0;
         uint64_t outputMode = 0;
         uint32_t activeColumns = 0;
+        AttentionClusterTrafficClass trafficClass =
+            AttentionClusterTrafficClass::Legacy;
         uint32_t index = 0;
         uint64_t storageGeneration = 0;
         uint64_t enqueueCycle = 0;
@@ -1324,7 +1521,9 @@ private:
         uint32_t arrayId, uint32_t operandBank, uint64_t outputMode,
         uint32_t activeColumns, uint64_t enqueueCycle,
         GemmArrayDoneCallback callback) {
-        if (array_ == nullptr || busy_ || !callback ||
+        if (array_ == nullptr ||
+            !array_->validateOperandContextRequest(arrayId, operandBank) ||
+            busy_ || !callback ||
             gemmArrayDoneCallbacks_.find(arrayId) !=
                 gemmArrayDoneCallbacks_.end()) {
             return false;
@@ -1363,6 +1562,12 @@ private:
         }
         case GemmProxyCommandKind::PROGRAM_MATRIX_GROUP: {
             auto callback = command.bufferCallback;
+            if (command.trafficClass != AttentionClusterTrafficClass::Legacy) {
+                return array_->programMatrixGroupClassBankAsync(
+                    command.arrayIds, command.operandBank, command.payload,
+                    command.elemBytes, command.trafficClass, command.tag,
+                    std::move(callback));
+            }
             if (command.activeColumns != 0) {
                 return array_->programMatrixGroupActiveBankAsync(
                     command.arrayIds, command.operandBank, command.payload,
@@ -1376,6 +1581,12 @@ private:
         }
         case GemmProxyCommandKind::PROGRAM_INPUT: {
             auto callback = command.bufferCallback;
+            if (!command.arrayIds.empty()) {
+                return array_->programInputGroupBankAsync(
+                    command.arrayIds, command.operandBank, command.payload,
+                    command.elemBytes, command.trafficClass, command.tag,
+                    std::move(callback));
+            }
             if (command.activeColumns != 0) {
                 return array_->programInputActiveBankAsync(
                     command.arrayId, command.operandBank, command.payload,
@@ -1395,9 +1606,20 @@ private:
         }
         case GemmProxyCommandKind::READ_OUTPUT: {
             auto callback = command.readCallback;
+            if (command.trafficClass != AttentionClusterTrafficClass::Legacy) {
+                return array_->readOutputClassAsync(
+                    command.arrayId, command.elemBytes, command.trafficClass,
+                    command.tag, std::move(callback));
+            }
             return array_->readOutputAsync(
                 command.arrayId, command.elemBytes, command.tag,
                 std::move(callback));
+        }
+        case GemmProxyCommandKind::READ_OUTPUT_GROUP: {
+            auto callback = command.readCallback;
+            return array_->readOutputGroupClassAsync(
+                command.arrayIds, command.elemBytes, command.trafficClass,
+                command.tag, std::move(callback));
         }
         case GemmProxyCommandKind::LAUNCH:
             array_->configureOutputMode(command.arrayId, command.outputMode);
@@ -1408,6 +1630,17 @@ private:
             } else {
                 array_->beginComputationBank(
                     command.arrayId, command.operandBank);
+            }
+            return true;
+        case GemmProxyCommandKind::LAUNCH_GROUP:
+            for (uint32_t arrayId : command.arrayIds) {
+                array_->configureOutputMode(arrayId, command.outputMode);
+                if (command.activeColumns != 0) {
+                    array_->beginComputationActiveBank(
+                        arrayId, command.operandBank, command.activeColumns);
+                } else {
+                    array_->beginComputationBank(arrayId, command.operandBank);
+                }
             }
             return true;
         case GemmProxyCommandKind::ATTENTION_TILE_COLUMN_WRITE: {
@@ -1494,7 +1727,8 @@ private:
             }
             statGemmProxyCommandsIssued_->addData(1);
             statGemmProxyQueueWaitCycles_->addData(cycle - command.enqueueCycle);
-            if (command.kind == GemmProxyCommandKind::LAUNCH) {
+            if (command.kind == GemmProxyCommandKind::LAUNCH ||
+                command.kind == GemmProxyCommandKind::LAUNCH_GROUP) {
                 statGemmProxyLaunchCommands_->addData(1);
             }
             issued++;
@@ -3874,6 +4108,7 @@ private:
     int verbose_ = 0;
     bool outputIsFloat_ = false;
     bool stage3Trace_ = false;
+    uint32_t attentionClusterQkArrays_ = 16;
     uint32_t prefetchWindowDepth_ = 1;
     bool crossMacroPrefetch_ = false;
     uint32_t windowKtiles_ = 4;

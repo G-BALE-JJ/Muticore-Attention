@@ -19,6 +19,7 @@
 #include <sst/core/subcomponent.h>
 
 #include <sst/elements/golem/globalmemory/globalmemory.h>
+#include <sst/elements/golem/attention/attentionCluster.h>
 
 namespace SST {
 namespace Golem {
@@ -34,6 +35,10 @@ enum class TensorRowEngineEventKind : uint8_t {
     LocalReadRetry,
     LocalWriteRetry,
     AttentionStart,
+    DirectReadDone,
+    DirectWriteDone,
+    ScoreFifoWriteDone,
+    PFifoReadDone,
 };
 
 class TensorRowEngineEvent : public SST::Event {
@@ -44,9 +49,10 @@ public:
                          uint32_t context,
                          TensorRowEngineStage stage,
                          TensorRowEngineEventKind kind,
-                         uint64_t localTag)
+                         uint64_t localTag,
+                         uint64_t generation = 0)
         : tag_(tag), bandRow_(bandRow), context_(context), stage_(stage),
-          kind_(kind), localTag_(localTag) {}
+          kind_(kind), localTag_(localTag), generation_(generation) {}
 
     uint64_t tag() const { return tag_; }
     uint32_t bandRow() const { return bandRow_; }
@@ -54,6 +60,7 @@ public:
     TensorRowEngineStage stage() const { return stage_; }
     TensorRowEngineEventKind kind() const { return kind_; }
     uint64_t localTag() const { return localTag_; }
+    uint64_t generation() const { return generation_; }
 
     void serialize_order(SST::Core::Serialization::serializer& ser) override {
         Event::serialize_order(ser);
@@ -63,6 +70,7 @@ public:
         ser & stage_;
         ser & kind_;
         ser & localTag_;
+        ser & generation_;
     }
 
     ImplementSerializable(SST::Golem::TensorRowEngineEvent);
@@ -74,6 +82,7 @@ private:
     TensorRowEngineStage stage_ = TensorRowEngineStage::Max;
     TensorRowEngineEventKind kind_ = TensorRowEngineEventKind::ResourceDone;
     uint64_t localTag_ = 0;
+    uint64_t generation_ = 0;
 };
 
 struct SFUSoftmaxTileDesc {
@@ -266,6 +275,19 @@ struct AttentionTileRequest {
     uint32_t keyTiles = 1;
     bool causal = false;
     bool firstTileForJob = false;
+    bool directScoreMode = false;
+    uint64_t generation = 0;
+    uint32_t scoreSlot = UINT32_MAX;
+    AttentionClusterTag scoreTag = {};
+    bool directPMode = false;
+    uint32_t pSlot = UINT32_MAX;
+    AttentionClusterTag pTag = {};
+};
+
+enum class AttentionClusterAdmission : uint8_t {
+    Ready,
+    Retry,
+    Invalid,
 };
 
 struct AttentionTileResult {
@@ -285,7 +307,31 @@ public:
     virtual bool issuePrimitiveBatch(uint64_t descAddr, uint64_t tag) = 0;
     virtual bool issueJob(uint64_t descAddr, uint64_t tag) = 0;
     virtual bool issueAttentionTile(const AttentionTileRequest& request,
-                                    std::function<void(bool, const AttentionTileResult&)> callback) = 0;
+        std::function<void(bool, const AttentionTileResult&)> callback) = 0;
+    virtual AttentionClusterAdmission attentionTileAdmission(
+        const AttentionTileRequest& request) const = 0;
+    using AttentionScoreWriteCallback = std::function<void(bool, uint64_t)>;
+    using AttentionPReadCallback =
+        std::function<void(bool, uint64_t, const std::vector<float>&)>;
+    virtual bool reserveAttentionScoreSlot(
+        uint32_t slot, const AttentionClusterTag& tag, size_t elements) = 0;
+    virtual bool writeAttentionScoreBeatAsync(
+        uint32_t slot, const AttentionClusterTag& tag, size_t offset,
+        const std::vector<float>& values, uint64_t transferTag,
+        AttentionScoreWriteCallback callback) = 0;
+    virtual bool releaseAttentionScoreSlot(
+        uint32_t slot, const AttentionClusterTag& tag) = 0;
+    virtual bool reserveAttentionPSlot(
+        uint32_t slot, const AttentionClusterTag& tag, size_t elements) = 0;
+    virtual AttentionClusterAdmission attentionPSlotAdmission(
+        uint32_t slot, const AttentionClusterTag& tag,
+        size_t elements) const = 0;
+    virtual bool readAttentionPRowAsync(
+        uint32_t slot, const AttentionClusterTag& tag, size_t offset,
+        size_t count, uint64_t transferTag, AttentionPReadCallback callback) = 0;
+    virtual bool releaseAttentionPSlot(
+        uint32_t slot, const AttentionClusterTag& tag) = 0;
+    virtual void cancelAttentionClusterGeneration(uint64_t generation) = 0;
     virtual bool completionTick(uint64_t tag, uint64_t* tick) const = 0;
     virtual bool wait(uint64_t tag, uint64_t* status) = 0;
     virtual void bindGlobalMemory(GlobalMemoryAPI* globalMem) = 0;
@@ -320,6 +366,10 @@ public:
         {"row_contexts", "Row contexts per physical Row Engine", "4"},
         {"attention_kv_pair_reuse", "Retain online Softmax state for grouped Attention query blocks", "0"},
         {"attention_kv_query_group_size", "Interleaved Attention query blocks: 2 or 4", "2"},
+        {"attention_cluster_enable", "Enable Attention cluster SFU lifecycle statistics", "0"},
+        {"attention_score_fifo_bytes_per_cycle", "Shared score FIFO read/write port bandwidth", "64"},
+        {"attention_score_fifo_latency_cycles", "Score FIFO access latency", "1"},
+        {"attention_score_fifo_queue_depth", "Maximum pending producer writes", "64"},
         {"scratchpad_bytes", "Row Engine scratchpad capacity", "65536"},
         {"distributed_reduction_transport", "Distributed softmax reduction transport: shared, modeled_noc, or explicit_noc", "shared"},
         {"verbose", "Verbosity", "0"})
@@ -369,6 +419,28 @@ public:
         {"sfu_attention_scale_mask_done_tick", "SST tick when attention SCALE/MASK completes", "ticks", 1},
         {"sfu_attention_scaled_elements", "Attention score elements scaled", "elements", 1},
         {"sfu_attention_masked_elements", "Future attention score elements masked", "elements", 1},
+        {"attention_cluster_sfu_busy_union_ticks", "Union of cluster SFU job intervals", "ticks", 1},
+        {"attention_cluster_sfu_busy_span_ticks", "Span of cluster SFU job intervals", "ticks", 1},
+        {"attention_cluster_sfu_idle_gap_ticks", "Idle gaps within the cluster SFU span", "ticks", 1},
+        {"attention_cluster_sfu_max_concurrency", "Maximum concurrent cluster SFU jobs", "jobs", 1},
+        {"attention_cluster_sfu_backpressure_stalls", "Cluster Attention tiles rejected while SFU resources are busy", "stalls", 1},
+        {"attention_cluster_score_fifo_producer_writes", "Timed array-to-score-FIFO beat writes", "writes", 1},
+        {"attention_cluster_score_fifo_producer_bytes", "Array-to-score-FIFO bytes", "bytes", 1},
+        {"attention_cluster_score_fifo_reads", "Timed score-FIFO reads by Softmax", "reads", 1},
+        {"attention_cluster_score_fifo_read_bytes", "Score-FIFO bytes read by Softmax", "bytes", 1},
+        {"attention_cluster_score_fifo_internal_writes", "Timed intermediate Softmax writes to the score FIFO", "writes", 1},
+        {"attention_cluster_score_fifo_internal_write_bytes", "Intermediate Softmax bytes written to the score FIFO", "bytes", 1},
+        {"attention_cluster_score_fifo_port_wait_cycles", "Cycles waiting for score FIFO read or write ports", "cycles", 1},
+        {"attention_cluster_score_fifo_backpressure_stalls", "Rejected score FIFO producer writes", "stalls", 1},
+        {"attention_cluster_p_fifo_reservations", "Reserved direct-P tile slots", "slots", 1},
+        {"attention_cluster_p_fifo_releases", "Released direct-P tile slots", "slots", 1},
+        {"attention_cluster_p_fifo_cancelled", "Direct-P tile slots released by cancellation", "slots", 1},
+        {"attention_cluster_p_fifo_writes", "Timed SFU normalize writes to direct-P SRAM", "writes", 1},
+        {"attention_cluster_p_fifo_write_bytes", "Bytes written to direct-P SRAM", "bytes", 1},
+        {"attention_cluster_p_fifo_reads", "Timed PV reads from direct-P SRAM", "reads", 1},
+        {"attention_cluster_p_fifo_read_bytes", "Bytes read from direct-P SRAM", "bytes", 1},
+        {"attention_cluster_p_fifo_port_wait_cycles", "Cycles waiting for direct-P SRAM ports", "cycles", 1},
+        {"attention_cluster_p_fifo_backpressure_stalls", "Rejected direct-P reservations or reads", "stalls", 1},
         {"sfu_primitive_elems", "Logical primitive elements processed by SFU", "elements", 1},
         {"sfu_partial_submits", "Softmax partial stats submitted", "partials", 1},
         {"sfu_partial_done", "Softmax partial stats completed", "partials", 1},
@@ -394,7 +466,29 @@ public:
     bool issuePrimitiveBatch(uint64_t descAddr, uint64_t tag) override;
     bool issueJob(uint64_t descAddr, uint64_t tag) override;
     bool issueAttentionTile(const AttentionTileRequest& request,
-                            std::function<void(bool, const AttentionTileResult&)> callback) override;
+        std::function<void(bool, const AttentionTileResult&)> callback) override;
+    AttentionClusterAdmission attentionTileAdmission(
+        const AttentionTileRequest& request) const override;
+    bool reserveAttentionScoreSlot(
+        uint32_t slot, const AttentionClusterTag& tag, size_t elements) override;
+    bool writeAttentionScoreBeatAsync(
+        uint32_t slot, const AttentionClusterTag& tag, size_t offset,
+        const std::vector<float>& values, uint64_t transferTag,
+        AttentionScoreWriteCallback callback) override;
+    bool releaseAttentionScoreSlot(
+        uint32_t slot, const AttentionClusterTag& tag) override;
+    bool reserveAttentionPSlot(
+        uint32_t slot, const AttentionClusterTag& tag, size_t elements) override;
+    AttentionClusterAdmission attentionPSlotAdmission(
+        uint32_t slot, const AttentionClusterTag& tag,
+        size_t elements) const override;
+    bool readAttentionPRowAsync(
+        uint32_t slot, const AttentionClusterTag& tag, size_t offset,
+        size_t count, uint64_t transferTag,
+        AttentionPReadCallback callback) override;
+    bool releaseAttentionPSlot(
+        uint32_t slot, const AttentionClusterTag& tag) override;
+    void cancelAttentionClusterGeneration(uint64_t generation) override;
     bool completionTick(uint64_t tag, uint64_t* tick) const override;
     bool wait(uint64_t tag, uint64_t* status) override;
     void bindGlobalMemory(GlobalMemoryAPI* globalMem) override;
@@ -506,6 +600,13 @@ private:
         uint32_t attentionKeyTiles = 1;
         uint32_t attentionKeyBegin = 0;
         bool attentionFirstTileForJob = false;
+        bool directScoreMode = false;
+        uint64_t generation = 0;
+        uint32_t scoreSlot = UINT32_MAX;
+        AttentionClusterTag scoreTag = {};
+        bool directPMode = false;
+        uint32_t pSlot = UINT32_MAX;
+        AttentionClusterTag pTag = {};
         AttentionTileResult attentionResult;
         std::function<void(bool, const AttentionTileResult&)> localTileCallback;
         std::vector<Context> contexts;
@@ -519,7 +620,27 @@ private:
         double l = 0.0;
     };
 
-    using TensorWorkerKey = std::pair<uint64_t, uint32_t>;
+    using TensorWorkerKey = std::tuple<uint64_t, uint64_t, uint32_t>;
+
+    struct PendingAttentionScoreWrite {
+        uint64_t generation = 0;
+        uint32_t slot = UINT32_MAX;
+        AttentionClusterTag tag = {};
+        size_t offset = 0;
+        std::vector<float> values;
+        uint64_t transferTag = 0;
+        AttentionScoreWriteCallback callback;
+    };
+
+    struct PendingAttentionPRead {
+        uint64_t generation = 0;
+        uint32_t slot = UINT32_MAX;
+        AttentionClusterTag tag = {};
+        size_t offset = 0;
+        size_t count = 0;
+        uint64_t transferTag = 0;
+        AttentionPReadCallback callback;
+    };
 
     bool readSoftmaxDescriptor(uint64_t descAddr, SFUSoftmaxTileDesc* desc);
     SFUStatus validateSoftmaxDescriptor(const SFUSoftmaxTileDesc& desc) const;
@@ -573,6 +694,10 @@ private:
                                 TensorRowEngineStage stage);
     void handleTensorRowEngineEvent(SST::Event* event);
     void finishTensorWorker(const TensorWorkerKey& key, bool ok);
+    uint64_t scheduleScoreFifoPort(uint64_t bytes, bool write);
+    void completeAttentionScoreWrite(uint64_t pendingId);
+    void completeAttentionPRead(uint64_t pendingId);
+    uint64_t schedulePFifoPort(uint64_t bytes, bool write);
     uint64_t rowEngineCurrentCycle() const;
     uint64_t tensorWorkerHostAddress(const ReductionTransportMessage& message,
                                      uint32_t row,
@@ -622,6 +747,22 @@ private:
     std::map<DistributedReductionResponseInboxKey, ReductionTransportMessage>
         distributedReductionResponseInbox_;
     uint64_t distributedReductionResponseInboxHighWater_ = 0;
+    bool attentionClusterEnable_ = false;
+    BusyActivityTracker attentionClusterSfuActivity_;
+    AttentionScoreFifo attentionScoreFifo_;
+    uint64_t attentionScoreFifoBytesPerCycle_ = 64;
+    uint64_t attentionScoreFifoLatencyCycles_ = 1;
+    uint32_t attentionScoreFifoQueueDepth_ = 64;
+    uint64_t attentionScoreFifoNextReadCycle_ = 0;
+    uint64_t attentionScoreFifoNextWriteCycle_ = 0;
+    uint64_t nextAttentionScoreWriteId_ = 1;
+    std::unordered_map<uint64_t, PendingAttentionScoreWrite>
+        pendingAttentionScoreWrites_;
+    AttentionScoreFifo attentionPFifo_;
+    uint64_t attentionPFifoNextReadCycle_ = 0;
+    uint64_t attentionPFifoNextWriteCycle_ = 0;
+    uint64_t nextAttentionPReadId_ = 1;
+    std::unordered_map<uint64_t, PendingAttentionPRead> pendingAttentionPReads_;
 
     GlobalMemoryAPI* globalMem_;
     SST::Output output_;
@@ -677,6 +818,28 @@ private:
     Statistic<uint64_t>* statAttentionScaleMaskDoneTick_;
     Statistic<uint64_t>* statAttentionScaledElements_;
     Statistic<uint64_t>* statAttentionMaskedElements_;
+    Statistic<uint64_t>* statAttentionClusterSfuBusyUnion_;
+    Statistic<uint64_t>* statAttentionClusterSfuBusySpan_;
+    Statistic<uint64_t>* statAttentionClusterSfuIdleGap_;
+    Statistic<uint64_t>* statAttentionClusterSfuMaxConcurrency_;
+    Statistic<uint64_t>* statAttentionClusterSfuBackpressureStalls_;
+    Statistic<uint64_t>* statAttentionClusterScoreFifoProducerWrites_;
+    Statistic<uint64_t>* statAttentionClusterScoreFifoProducerBytes_;
+    Statistic<uint64_t>* statAttentionClusterScoreFifoReads_;
+    Statistic<uint64_t>* statAttentionClusterScoreFifoReadBytes_;
+    Statistic<uint64_t>* statAttentionClusterScoreFifoInternalWrites_;
+    Statistic<uint64_t>* statAttentionClusterScoreFifoInternalWriteBytes_;
+    Statistic<uint64_t>* statAttentionClusterScoreFifoPortWaitCycles_;
+    Statistic<uint64_t>* statAttentionClusterScoreFifoBackpressureStalls_;
+    Statistic<uint64_t>* statAttentionClusterPFifoReservations_;
+    Statistic<uint64_t>* statAttentionClusterPFifoReleases_;
+    Statistic<uint64_t>* statAttentionClusterPFifoCancelled_;
+    Statistic<uint64_t>* statAttentionClusterPFifoWrites_;
+    Statistic<uint64_t>* statAttentionClusterPFifoWriteBytes_;
+    Statistic<uint64_t>* statAttentionClusterPFifoReads_;
+    Statistic<uint64_t>* statAttentionClusterPFifoReadBytes_;
+    Statistic<uint64_t>* statAttentionClusterPFifoPortWaitCycles_;
+    Statistic<uint64_t>* statAttentionClusterPFifoBackpressureStalls_;
     Statistic<uint64_t>* statPrimitiveElems_;
     Statistic<uint64_t>* statPartialSubmits_;
     Statistic<uint64_t>* statPartialDone_;

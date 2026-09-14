@@ -14,6 +14,9 @@ Run one parameter-driven Attention test from this worktree.
   --timeout SEC        Test timeout (default: 7200)
   --artifact-root DIR  Output directory (default: /tmp/<case-id>[_mpiN])
   --baseline FILE      Optionally compare against an explicit frozen baseline
+  --attention-cluster  Enable the worker-local 32+32 QK/PV cluster (D128 only)
+  --no-attention-cluster
+                       Keep the legacy Attention datapath (default)
   --qk-panel-row-burst Use the 1 KiB WCP C-buffer QK row-burst path (default)
   --no-qk-panel-row-burst
                        Disable the QK row-burst path for an explicit control run
@@ -34,6 +37,7 @@ MPI_RANKS=1
 ARTIFACT_ROOT=""
 BASELINE_JSON=""
 SHOW_CONFIG=0
+ATTENTION_CLUSTER="${GOLEM_ATTENTION_CLUSTER_ENABLE:-0}"
 GOLEM_MATRIX_BROADCAST_MAX_FANOUT=16
 GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=64
 GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1
@@ -76,6 +80,8 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --show-config) SHOW_CONFIG=1; shift ;;
+    --attention-cluster) ATTENTION_CLUSTER=1; QK_PANEL_ROW_BURST=0; shift ;;
+    --no-attention-cluster) ATTENTION_CLUSTER=0; shift ;;
     --qk-panel-row-burst) QK_PANEL_ROW_BURST=1; shift ;;
     --no-qk-panel-row-burst) QK_PANEL_ROW_BURST=0; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -119,6 +125,14 @@ if [[ "$QK_PANEL_ROW_BURST" != 0 && "$QK_PANEL_ROW_BURST" != 1 ]]; then
   echo "GOLEM_ATTENTION_QK_PANEL_ROW_BURST must be 0 or 1" >&2
   exit 2
 fi
+if [[ "$ATTENTION_CLUSTER" != 0 && "$ATTENTION_CLUSTER" != 1 ]]; then
+  echo "GOLEM_ATTENTION_CLUSTER_ENABLE must be 0 or 1" >&2
+  exit 2
+fi
+if (( ATTENTION_CLUSTER && HEAD_DIM != 128 )); then
+  echo "Attention cluster L2-L4 requires --head-dim 128" >&2
+  exit 2
+fi
 if [[ "$KV_PAIR_REUSE" != 0 && "$KV_PAIR_REUSE" != 1 ]]; then
   echo "GOLEM_ATTENTION_KV_PAIR_REUSE must be 0 or 1" >&2
   exit 2
@@ -157,6 +171,21 @@ if [[ -z "$ARTIFACT_ROOT" ]]; then
   if (( MPI_RANKS > 1 )); then ARTIFACT_ROOT="${ARTIFACT_ROOT}_mpi${MPI_RANKS}"; fi
 fi
 
+DISPLAY_PV_V_TILE_REUSE=1
+DISPLAY_PV_INPUT_PIPELINE=1
+DISPLAY_PV_RESTORE_PIPELINE=1
+DISPLAY_PV_OUTPUT_PIPELINE=1
+DISPLAY_PV_EARLY_COMPUTE=1
+DISPLAY_PV_MATRIX_SOFTMAX_OVERLAP=1
+if (( ATTENTION_CLUSTER )); then
+  DISPLAY_PV_V_TILE_REUSE=0
+  DISPLAY_PV_INPUT_PIPELINE=0
+  DISPLAY_PV_RESTORE_PIPELINE=0
+  DISPLAY_PV_OUTPUT_PIPELINE=0
+  DISPLAY_PV_EARLY_COMPUTE=0
+  DISPLAY_PV_MATRIX_SOFTMAX_OVERLAP=0
+fi
+
 if [[ "$SHOW_CONFIG" == "1" ]]; then
   printf '%s\n' \
     "CASE_ID=$CASE_ID" \
@@ -172,17 +201,18 @@ if [[ "$SHOW_CONFIG" == "1" ]]; then
     "PV_MATRIX_BROADCAST=1" \
     "QK_MATRIX_BROADCAST=1" \
     "QK_PANEL_ROW_BURST=$QK_PANEL_ROW_BURST" \
+    "ATTENTION_CLUSTER=$ATTENTION_CLUSTER" \
     "KV_DOUBLE_BUFFER=1" \
     "KV_SECOND_LOOKAHEAD=1" \
     "KV_PAIR_REUSE=$KV_PAIR_REUSE" \
     "KV_QUERY_GROUP_SIZE=$KV_QUERY_GROUP_SIZE" \
-    "PV_V_TILE_REUSE=1" \
-    "PV_INPUT_PIPELINE=1" \
+    "PV_V_TILE_REUSE=$DISPLAY_PV_V_TILE_REUSE" \
+    "PV_INPUT_PIPELINE=$DISPLAY_PV_INPUT_PIPELINE" \
     "PV_COMPACT_INPUT=1" \
-    "PV_RESTORE_PIPELINE=1" \
-    "PV_OUTPUT_PIPELINE=1" \
-    "PV_EARLY_COMPUTE=1" \
-    "PV_MATRIX_SOFTMAX_OVERLAP=1" \
+    "PV_RESTORE_PIPELINE=$DISPLAY_PV_RESTORE_PIPELINE" \
+    "PV_OUTPUT_PIPELINE=$DISPLAY_PV_OUTPUT_PIPELINE" \
+    "PV_EARLY_COMPUTE=$DISPLAY_PV_EARLY_COMPUTE" \
+    "PV_MATRIX_SOFTMAX_OVERLAP=$DISPLAY_PV_MATRIX_SOFTMAX_OVERLAP" \
     "PV_ACTIVE_K=1" \
     "GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES=$GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES" \
     "GOLEM_ATTENTION_PV_V_TILE_BUFFER_HIT_TICKS=$GOLEM_ATTENTION_PV_V_TILE_BUFFER_HIT_TICKS" \
@@ -213,6 +243,10 @@ QK_ROW_BURST_ARGS=(--no-qk-panel-row-burst)
 if (( QK_PANEL_ROW_BURST )); then
   QK_ROW_BURST_ARGS=(--qk-panel-row-burst)
 fi
+CLUSTER_ARGS=(--no-attention-cluster)
+if (( ATTENTION_CLUSTER )); then
+  CLUSTER_ARGS=(--attention-cluster)
+fi
 
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/env_local_install.sh"
@@ -227,6 +261,10 @@ env -u GOLEM_ATTENTION_PV_INPUT_RESIDENCY \
     -u GOLEM_ATTENTION_O_ACCUMULATOR_CBUFFER \
     -u GOLEM_ATTENTION_KV_PAIR_REUSE \
     -u GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE \
+    -u GOLEM_WCP_GEMM_PROXY_QUEUE_DEPTH \
+    -u GOLEM_WCP_GEMM_PROXY_ISSUE_WIDTH \
+    -u GOLEM_WCP_GEMM_PROXY_COMMAND_LATENCY_CYCLES \
+    -u GOLEM_WCP_GEMM_PROXY_COMPLETION_LATENCY_CYCLES \
   python3 -m unittest \
   "$ATTENTION_DIR/test_flash_attention_baseline_contract.py" \
   "$ATTENTION_DIR/test_attention_metrics_report.py"
@@ -240,11 +278,13 @@ GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES="$GOLEM_MATRIX_BROADCAST_BASE_LATENCY
 GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES="$GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES" \
 GOLEM_ATTENTION_KV_PAIR_REUSE="$KV_PAIR_REUSE" \
 GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE="$KV_QUERY_GROUP_SIZE" \
+GOLEM_ATTENTION_CLUSTER_ENABLE="$ATTENTION_CLUSTER" \
   "$ATTENTION_DIR/run_flash_attention.sh" \
   --queries "$QUERIES" --keys "$KEYS" --head-dim "$HEAD_DIM" \
   --timeout "$TIMEOUT" --artifact-root "$ARTIFACT_ROOT" \
   --generic-gemm --pv-matrix-broadcast --qk-matrix-broadcast --kv-double-buffer \
   --kv-second-lookahead "${QK_ROW_BURST_ARGS[@]}" \
+  "${CLUSTER_ARGS[@]}" \
   "${BASELINE_ARGS[@]}"
 
 echo "[ATTENTION] $CASE_ID PASS"

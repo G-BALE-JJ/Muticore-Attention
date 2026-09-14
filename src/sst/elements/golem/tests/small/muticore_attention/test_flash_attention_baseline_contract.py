@@ -15,10 +15,14 @@ if str(HERE) not in sys.path:
 from verify_attention_mpi_partition import expected_component_ranks
 from verify_fused_attention_scale_stats import (
     PROFILES,
+    attention_cluster_ii_sample_counts,
+    expected_attention_cluster_broadcast_activity,
     expected_matrix_broadcast_activity,
     expected_v_tile_buffer_activity,
+    make_attention_activity,
     make_clock_contract,
     parse_dma_runtime_invariants,
+    summarize_attention_cluster_resource_profile,
 )
 from report_attention_gpu_comparison import build_report
 from gpu_attention_stage_benchmark import make_correctness, make_result
@@ -43,6 +47,53 @@ BASELINE_VERIFIER = HERE / "verify_flash_attention_baseline.py"
 
 
 class FlashAttentionBaselineContractTest(unittest.TestCase):
+    def test_attention_resource_profile_separates_union_from_worker_sum(self):
+        observed = {}
+        maxima = {}
+        resources = (
+            ("rocc", "attention_cluster_qk_array"),
+            ("rocc", "attention_cluster_pv_array"),
+            ("rocc:array", "attention_cluster_buffer"),
+            ("rocc:global_memory", "attention_cluster_local_read"),
+            ("rocc:global_memory", "attention_cluster_local_write"),
+            ("rocc:sfu", "attention_cluster_sfu"),
+        )
+        for core in range(4, 20):
+            for suffix, prefix in resources:
+                component = f"core{core}:{suffix}"
+                observed[(component, f"{prefix}_busy_union_ticks")] = core * 1000
+                observed[(component, f"{prefix}_busy_span_ticks")] = core * 2000
+                observed[(component, f"{prefix}_idle_gap_ticks")] = core * 1000
+                maxima[(component, f"{prefix}_max_concurrency")] = core
+        profile = summarize_attention_cluster_resource_profile(
+            observed, maxima, 19, 1_000_000_000, 1_000_000_000_000,
+        )
+        qk = profile["resources"]["qk_array_active"]
+        self.assertEqual(qk["critical_worker"]["busy_ticks"], 19000)
+        self.assertEqual(qk["critical_worker"]["busy_cycles"], 19)
+        self.assertEqual(qk["critical_worker"]["busy_fraction_of_span"], 0.5)
+        self.assertEqual(qk["worker_totals"]["busy_ticks"], 184000)
+        self.assertEqual(qk["max_worker_concurrency"], 19)
+        self.assertIn("not end-to-end latency", profile["interval_semantics"])
+
+    def test_attention_cluster_ii_counts_cover_partial_and_small_groups(self):
+        self.assertEqual(
+            attention_cluster_ii_sample_counts(1, 1, 4),
+            {"steady": 0, "boundary": 0},
+        )
+        self.assertEqual(
+            attention_cluster_ii_sample_counts(2, 1, 4),
+            {"steady": 0, "boundary": 0},
+        )
+        self.assertEqual(
+            attention_cluster_ii_sample_counts(4, 1, 4),
+            {"steady": 2, "boundary": 0},
+        )
+        self.assertEqual(
+            attention_cluster_ii_sample_counts(5, 3, 4),
+            {"steady": 6, "boundary": 5},
+        )
+
     def test_dma_runtime_invariants_check_real_queue_and_credit_conservation(self):
         valid_lines = "".join(
             f"[memNICBase bridge] CREDIT_OWNER_SUMMARY "
@@ -289,6 +340,73 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertEqual(mixed_active["ingress_bytes"], 3 * 1024 * 1024)
         self.assertEqual(mixed_active["sink_bytes"], 48 * 1024 * 1024)
         self.assertEqual(mixed_active["transfer_cycles"], 54912)
+
+        cluster = expected_attention_cluster_broadcast_activity(
+            make_attention_activity(256, 256, 128), 64, 1, 1
+        )
+        self.assertEqual(cluster["requests"], 416)
+        self.assertEqual(cluster["ingress_bytes"], 475136)
+        self.assertEqual(cluster["sink_bytes"], 4292608)
+        self.assertEqual(cluster["transfer_cycles"], 8080)
+        self.assertEqual(cluster["fanout_sum"], 896)
+        self.assertEqual(
+            [cluster["min_fanout"], cluster["max_observed_fanout_expected"]],
+            [1, 16],
+        )
+
+        cluster_24_40 = expected_attention_cluster_broadcast_activity(
+            make_attention_activity(256, 128, 128, key_block_rows=64),
+            64, 1, 1, qk_arrays=24,
+        )
+        self.assertEqual(cluster_24_40["fanout_sum"], 240)
+        self.assertEqual(cluster_24_40["sink_bytes"], 1867776)
+
+        cluster_32_32 = expected_attention_cluster_broadcast_activity(
+            make_attention_activity(256, 256, 128), 64, 1, 1, qk_arrays=32
+        )
+        self.assertEqual(cluster_32_32["fanout_sum"], 1024)
+        self.assertEqual(cluster_32_32["sink_bytes"], 6389760)
+
+    def test_cluster_uses_chapter4_64_array_contract(self):
+        cluster = (HERE.parents[2] / "attention" / "attentionCluster.h").read_text()
+        runner = SCALE_RUNNER.read_text()
+        rocc = ROCC_SOURCE.read_text()
+
+        for contract in (
+            "uint32_t arrays = 64",
+            "uint32_t qkArrays = 16",
+            "uint32_t pvArrays = 48",
+            "uint32_t arrayInputs = 64",
+            "uint32_t arrayOutputs = 64",
+        ):
+            self.assertIn(contract, cluster)
+        self.assertIn("ARRAY_INPUT=64", runner)
+        self.assertIn("ARRAY_OUTPUT=64", runner)
+        self.assertIn("NUM_ARRAYS=64", runner)
+        self.assertIn("attentionClusterQkArray", rocc)
+        self.assertIn("attentionClusterPvArray", rocc)
+        self.assertIn("readAttentionClusterScorePairAsync", rocc)
+
+        array = (HERE.parents[2] / "array" / "mvmComputeArray.h").read_text()
+        wcp = WCP_SOURCE.read_text()
+        builder = CPU_BUILDER.read_text()
+        for source in (array, wcp):
+            self.assertIn("attention_cluster_qk_arrays", source)
+            self.assertIn("attentionClusterQkArrays", source)
+        self.assertGreaterEqual(
+            builder.count('"attention_cluster_qk_arrays": attention_cluster_qk_arrays'),
+            3,
+        )
+
+        cluster_bc64 = expected_attention_cluster_broadcast_activity(
+            make_attention_activity(256, 256, 128, key_block_rows=64),
+            64, 1, 1,
+        )
+        self.assertEqual(cluster_bc64["requests"], 208)
+        self.assertEqual(cluster_bc64["ingress_bytes"], 311296)
+        self.assertEqual(cluster_bc64["sink_bytes"], 3211264)
+        self.assertEqual(cluster_bc64["transfer_cycles"], 5192)
+        self.assertEqual(cluster_bc64["fanout_sum"], 448)
 
     def test_qk_matrix_broadcast_has_an_explicit_disable_option(self):
         result = subprocess.run(
@@ -765,7 +883,8 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             source.count("recordAttentionKvOperandRelease(false);"), 2
         )
         self.assertIn("launchAttentionKvSecondLookahead", source)
-        self.assertIn("completeAttentionKvPrefetch(uint32_t buffer", source)
+        self.assertIn("completeAttentionKvPrefetch(\n            uint64_t generation", source)
+        self.assertIn("attentionCallbackGenerationMatches(generation)", source)
         self.assertIn("attention_kv_second_lookahead_prefetches", source)
 
     def test_attention_dma_response_admission_uses_explicit_consumer_metadata(self):
@@ -995,6 +1114,55 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             "attentionWorker_->attentionPvRestoreReadRetry)",
             rocc,
         )
+
+    def test_cluster_pv_pipelines_o_commits_until_the_tile_boundary(self):
+        rocc = ROCC_SOURCE.read_text()
+        start = rocc.index("    void readAttentionClusterPvOutput()")
+        end = rocc.index("    void continueAttentionAfterSoftmaxAndPvMatrix()", start)
+        output_path = rocc[start:end]
+
+        self.assertIn(
+            "state.index + 1 == attentionQueryRows(state) &&\n"
+            "                state.attentionClusterOCommitsPending != 0",
+            output_path,
+        )
+        self.assertNotIn(
+            "state.clusterPvOutputInFlight == 0 &&\n"
+            "            state.attentionClusterOCommitsPending == 0",
+            output_path,
+        )
+        self.assertIn(
+            "attentionWorker_->attentionClusterOCommitsPending == 0",
+            rocc,
+        )
+
+    def test_cluster_group_commands_reject_permanent_errors_before_enqueue(self):
+        array = ARRAY_SOURCE.read_text()
+        mvm = MVM_ARRAY_SOURCE.read_text()
+        wcp = WCP_SOURCE.read_text()
+
+        self.assertIn("validateOperandContextRequest", array + mvm + wcp)
+        self.assertIn("validateOutputGroupRequest", array + mvm + wcp)
+        self.assertIn("elemBytes == sizeof(T)", mvm)
+        self.assertIn(
+            "!array_->validateOperandContextRequest(arrayId, operandBank)",
+            wcp,
+        )
+        self.assertIn(
+            "!array_->validateOutputGroupRequest(\n"
+            "                arrayIds, elemBytes, trafficClass)",
+            wcp,
+        )
+
+    def test_near_array_verifier_uses_resolved_hardware_timing(self):
+        verifier = (HERE / "verify_fused_attention_scale_stats.py").read_text()
+        runner = SCALE_RUNNER.read_text()
+
+        self.assertIn("near_array_output_bytes_per_cycle", verifier)
+        self.assertIn("array_buffer_base_latency_cycles", verifier)
+        self.assertIn("--near-array-output-bytes-per-cycle", runner)
+        self.assertIn("--array-buffer-base-latency-cycles", runner)
+        self.assertIn("the two durable PV overlaps", verifier)
 
     def test_pv_residency_and_o_accumulator_have_independent_ablations(self):
         clean_env = os.environ.copy()
@@ -1744,13 +1912,15 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         )
         verifier = (HERE / "verify_fused_attention_scale_stats.py").read_text()
         self.assertIn('lifecycle["wcp_gemm_proxy"]', verifier)
-        self.assertIn("gemm_launches * wcp_gemm_proxy_completion_latency_cycles", verifier)
+        self.assertIn("gemm_completions * wcp_gemm_proxy_completion_latency_cycles", verifier)
 
     def test_attention_wcp_control_timing_rejects_invalid_configuration(self):
         invalid_environments = (
             {"GOLEM_WCP_GEMM_PROXY_QUEUE_DEPTH": "15"},
             {"GOLEM_WCP_GEMM_PROXY_ISSUE_WIDTH": "0"},
             {"GOLEM_WCP_GEMM_PROXY_COMMAND_LATENCY_CYCLES": "-1"},
+            {"GOLEM_WCP_GEMM_PROXY_COMMAND_LATENCY_CYCLES": "0"},
+            {"GOLEM_WCP_GEMM_PROXY_COMPLETION_LATENCY_CYCLES": "0"},
             {"GOLEM_WCP_GEMM_PROXY_COMPLETION_LATENCY_CYCLES": "bad"},
         )
         for override in invalid_environments:

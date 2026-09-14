@@ -70,3 +70,22 @@ src/sst/elements/golem/tests/small/muticore_softmax/figures/**/*.tiff
 
 # Local agent plans and generated performance artifacts
 .planning/
+
+# Attention cluster simulator runs. Keep only compact final verification JSON.
+attention_cluster/h64_*/
+attention_cluster/l[0-9]_*/
+attention_cluster/r[0-9]_*/
+attention_cluster/results/**
+src/sst/elements/golem/tests/attention_cluster/
+!attention_cluster/results/.gitkeep
+!attention_cluster/results/r6_final_manifest.sha256
+!attention_cluster/results/r6_final_default_q256_k128/
+!attention_cluster/results/r6_final_default_q256_k128/*.json
+!attention_cluster/results/r6_final_default_q256_k1024/
+!attention_cluster/results/r6_final_default_q256_k1024/*.json
+!attention_cluster/results/r6_final_default_e3/
+!attention_cluster/results/r6_final_default_e3/*.json
+!attention_cluster/results/r6_final_default_e4/
+!attention_cluster/results/r6_final_default_e4/*.json
+!attention_cluster/results/r6_final_pressure_q256_k128/
+!attention_cluster/results/r6_final_pressure_q256_k128/*.json

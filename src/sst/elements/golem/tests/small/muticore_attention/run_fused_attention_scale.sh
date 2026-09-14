@@ -12,6 +12,8 @@ ARTIFACT_ROOT=""
 BASELINE_JSON=""
 TIMEOUT_SECONDS=7200
 DRY_RUN=0
+ATTENTION_CLUSTER="${GOLEM_ATTENTION_CLUSTER_ENABLE:-0}"
+ATTENTION_CLUSTER_QK_ARRAYS="${GOLEM_ATTENTION_CLUSTER_QK_ARRAYS:-16}"
 GENERIC_GEMM=1
 PV_MATRIX_BROADCAST=1
 QK_MATRIX_BROADCAST=1
@@ -36,6 +38,8 @@ if [[ -n "${GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE+x}" ]]; then
 fi
 KV_TILE_ROTATION=0
 KV_DOUBLE_BUFFER=1
+KV_BUFFER_COUNT="${GOLEM_ATTENTION_KV_BUFFER_COUNT:-2}"
+KEY_BLOCK_ROWS="${GOLEM_ATTENTION_KEY_BLOCK_ROWS:-0}"
 KV_SECOND_LOOKAHEAD=1
 KV_CROSS_QUERY_PREFETCH=1
 KV_PAIR_REUSE="${GOLEM_ATTENTION_KV_PAIR_REUSE:-1}"
@@ -82,6 +86,11 @@ ARRAY_MAC_PER_CU_PER_CYCLE="${GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE:-1}"
 ARRAY_PIPELINE_DEPTH="${GOLEM_ARRAY_PIPELINE_DEPTH:-2}"
 ARRAY_OUTPUT_READ_CREDITS="${GOLEM_ARRAY_OUTPUT_READ_CREDITS:-1}"
 ARRAY_OUTPUT_READ_BANKS="${GOLEM_ARRAY_OUTPUT_READ_BANKS:-1}"
+ARRAY_BUFFER_PORTS="${GOLEM_ARRAY_BUFFER_PORTS:-1}"
+ARRAY_BUFFER_BASE_LATENCY_CYCLES="${GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES:-1}"
+LOCAL_GM_READ_PORTS="${GOLEM_LOCAL_GM_READ_PORTS:-1}"
+NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE="${GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE:-512}"
+NEAR_ARRAY_OUTPUT_CREDITS="${GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_CREDITS:-2}"
 PV_V_TILE_BUFFER_BYTES="${GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES:-16384}"
 PV_V_TILE_BUFFER_HIT_TICKS="${GOLEM_ATTENTION_PV_V_TILE_BUFFER_HIT_TICKS:-1}"
 PV_V_TILE_BUFFER_BYTES_PER_CYCLE="${GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES_PER_CYCLE:-64}"
@@ -93,7 +102,7 @@ HEAD_DIM=128
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --artifact-root|--baseline|--timeout|--queries|--keys|--head-dim|--kv-query-group-size)
+    --artifact-root|--baseline|--timeout|--queries|--keys|--head-dim|--key-block-rows|--kv-query-group-size)
       option="$1"
       if [[ $# -lt 2 ]]; then
         echo "Missing value for $option" >&2
@@ -106,6 +115,7 @@ while [[ $# -gt 0 ]]; do
         --queries) TOTAL_QUERIES="$2" ;;
         --keys) KEYS="$2" ;;
         --head-dim) HEAD_DIM="$2" ;;
+        --key-block-rows) KEY_BLOCK_ROWS="$2" ;;
         --kv-query-group-size)
           KV_QUERY_GROUP_SIZE="$2"
           KV_QUERY_GROUP_SIZE_EXPLICIT=1
@@ -159,19 +169,69 @@ while [[ $# -gt 0 ]]; do
     --no-pv-matrix-softmax-overlap) PV_MATRIX_SOFTMAX_OVERLAP=0; shift ;;
     --pv-active-k) PV_ACTIVE_K=1; shift ;;
     --no-pv-active-k) PV_ACTIVE_K=0; shift ;;
+    --attention-cluster)
+      ATTENTION_CLUSTER=1
+      GENERIC_GEMM=1
+      KV_DOUBLE_BUFFER=1
+      KV_PAIR_REUSE=1
+      KV_QUERY_GROUP_SIZE=4
+      QK_PANEL_ROW_BURST=0
+      QK_INPUT_PIPELINE=0
+      QK_READOUT_OVERLAP=0
+      CROSS_TILE_OPERAND_PIPELINE=0
+      PV_INPUT_PIPELINE=0
+      PV_INPUT_RESIDENCY=0
+      PV_RESTORE_PIPELINE=0
+      PV_OUTPUT_PIPELINE=0
+      PV_EARLY_COMPUTE=0
+      PV_MATRIX_SOFTMAX_OVERLAP=0
+      shift
+      ;;
+    --no-attention-cluster) ATTENTION_CLUSTER=0; shift ;;
     --generic-gemm) GENERIC_GEMM=1; shift ;;
     --direct-gemm) GENERIC_GEMM=0; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help)
+      echo "Cluster mode: [--attention-cluster|--no-attention-cluster]"
+      echo "Key tile override: [--key-block-rows 32|64]"
       echo "Usage: run_fused_attention_scale.sh [--queries N] [--keys N] [--head-dim N] [--baseline FILE] [--generic-gemm|--direct-gemm] [--pv-matrix-broadcast|--no-pv-matrix-broadcast] [--qk-matrix-broadcast|--no-qk-matrix-broadcast] [--qk-dataflow-transpose] [--qk-early-compute|--no-qk-early-compute] [--qk-input-pipeline|--no-qk-input-pipeline] [--qk-readout-overlap|--no-qk-readout-overlap] [--qk-panel-row-burst|--no-qk-panel-row-burst] [--cross-tile-operand-pipeline|--no-cross-tile-operand-pipeline] [--kv-tile-rotation] [--kv-double-buffer|--no-kv-double-buffer] [--kv-second-lookahead|--no-kv-second-lookahead] [--kv-cross-query-prefetch|--no-kv-cross-query-prefetch] [--kv-pair-reuse|--no-kv-pair-reuse] [--kv-query-group-size 1|2|4] [--pv-v-tile-reuse|--no-pv-v-tile-reuse] [--pv-v-tile-group-retention|--no-pv-v-tile-group-retention] [--pv-input-pipeline|--no-pv-input-pipeline] [--pv-compact-input|--no-pv-compact-input] [--pv-input-residency|--no-pv-input-residency] [--o-accumulator-cbuffer|--no-o-accumulator-cbuffer] [--pv-restore-pipeline|--no-pv-restore-pipeline] [--pv-output-pipeline|--no-pv-output-pipeline] [--pv-early-compute|--no-pv-early-compute] [--pv-matrix-softmax-overlap|--no-pv-matrix-softmax-overlap] [--pv-active-k|--no-pv-active-k] [--artifact-root DIR] [--timeout SEC] [--dry-run]"
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
+if (( ATTENTION_CLUSTER )); then
+  GENERIC_GEMM=1
+  KV_DOUBLE_BUFFER=1
+  KV_PAIR_REUSE=1
+  KV_QUERY_GROUP_SIZE=4
+  QK_PANEL_ROW_BURST=0
+  QK_INPUT_PIPELINE=0
+  QK_READOUT_OVERLAP=0
+  CROSS_TILE_OPERAND_PIPELINE=0
+  PV_V_TILE_REUSE=1
+  PV_V_TILE_GROUP_RETENTION=1
+  PV_INPUT_PIPELINE=0
+  PV_INPUT_RESIDENCY=0
+  PV_RESTORE_PIPELINE=0
+  PV_OUTPUT_PIPELINE=0
+  PV_EARLY_COMPUTE=0
+  PV_MATRIX_SOFTMAX_OVERLAP=0
+  PV_ACTIVE_K=1
+  PV_V_TILE_BUFFER_BYTES=32768
+  ARRAY_BUFFER_PORTS=2
+  LOCAL_GM_READ_PORTS=2
+  ARRAY_OUTPUT_READ_CREDITS=8
+  ARRAY_OUTPUT_READ_BANKS=8
+fi
+
 if [[ "$CROSS_TILE_OPERAND_PIPELINE" != 0 &&
       "$CROSS_TILE_OPERAND_PIPELINE" != 1 ]]; then
   echo "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE must be 0 or 1" >&2
+  exit 2
+fi
+if [[ "$ATTENTION_CLUSTER" != 0 && "$ATTENTION_CLUSTER" != 1 ]]; then
+  echo "GOLEM_ATTENTION_CLUSTER_ENABLE must be 0 or 1" >&2
   exit 2
 fi
 if [[ "$KV_QUERY_GROUP_SIZE" != 1 && "$KV_QUERY_GROUP_SIZE" != 2 &&
@@ -202,7 +262,12 @@ if (( !GENERIC_GEMM && (PV_INPUT_RESIDENCY || O_ACCUMULATOR_CBUFFER) )); then
   echo "PV input residency and O accumulator C-buffer require generic GEMM/WCP" >&2
   exit 2
 fi
-if (( KV_PAIR_REUSE && (!GENERIC_GEMM || !KV_DOUBLE_BUFFER || O_ACCUMULATOR_CBUFFER) )); then
+if (( ATTENTION_CLUSTER && O_ACCUMULATOR_CBUFFER )); then
+  echo "attention cluster O accumulator C-buffer is not compatible with group-4 pair reuse" >&2
+  exit 2
+fi
+if (( KV_PAIR_REUSE && (!GENERIC_GEMM || !KV_DOUBLE_BUFFER ||
+      O_ACCUMULATOR_CBUFFER ) )); then
   if (( KV_PAIR_REUSE_EXPLICIT )); then
     echo "K/V pair reuse requires generic GEMM/WCP and K/V double buffering, and is incompatible with O accumulator C-buffer" >&2
     exit 2
@@ -292,7 +357,7 @@ fi
 if (( GENERIC_GEMM )); then
   if ! [[ "$WCP_GEMM_PROXY_QUEUE_DEPTH" =~ ^[1-9][0-9]*$ ]] ||
       (( 10#$WCP_GEMM_PROXY_QUEUE_DEPTH < 16 )); then
-    echo "GOLEM_WCP_GEMM_PROXY_QUEUE_DEPTH must be an integer >= 16 for the 16-array Attention launch burst" >&2
+    echo "GOLEM_WCP_GEMM_PROXY_QUEUE_DEPTH must be an integer >= 16 for a bounded Attention group launch" >&2
     exit 2
   fi
   if ! [[ "$WCP_GEMM_PROXY_ISSUE_WIDTH" =~ ^[1-9][0-9]*$ ]]; then
@@ -301,8 +366,8 @@ if (( GENERIC_GEMM )); then
   fi
   for latency in "$WCP_GEMM_PROXY_COMMAND_LATENCY_CYCLES" \
                  "$WCP_GEMM_PROXY_COMPLETION_LATENCY_CYCLES"; do
-    if ! [[ "$latency" =~ ^[0-9]+$ ]]; then
-      echo "WCP GEMM proxy latency values must be non-negative integers" >&2
+    if ! [[ "$latency" =~ ^[1-9][0-9]*$ ]]; then
+      echo "WCP GEMM proxy latency values must be positive integers" >&2
       exit 2
     fi
   done
@@ -382,6 +447,17 @@ if (( HEAD_DIM != 64 && HEAD_DIM != 128 )); then
   echo "--head-dim must be 64 or 128" >&2
   exit 2
 fi
+if (( ATTENTION_CLUSTER && HEAD_DIM != 128 )); then
+  echo "Attention cluster L2-L4 requires head dimension 128" >&2
+  exit 2
+fi
+if [[ "$ATTENTION_CLUSTER_QK_ARRAYS" != 16 &&
+      "$ATTENTION_CLUSTER_QK_ARRAYS" != 24 &&
+      "$ATTENTION_CLUSTER_QK_ARRAYS" != 32 &&
+      "$ATTENTION_CLUSTER_QK_ARRAYS" != 40 ]]; then
+  echo "GOLEM_ATTENTION_CLUSTER_QK_ARRAYS must be 16, 24, 32, or 40" >&2
+  exit 2
+fi
 MANAGER_QUERIES=$((TOTAL_QUERIES / 4))
 if (( MANAGER_QUERIES * HEAD_DIM * 4 > 1024 * 1024 )); then
   echo "query band exceeds the 1 MiB per-manager tensor window" >&2
@@ -392,15 +468,40 @@ if (( (KEYS / 4) * HEAD_DIM * 4 > 1024 * 1024 )); then
   exit 2
 fi
 ARRAY_INPUT=$HEAD_DIM
+ARRAY_OUTPUT=16
+NUM_ARRAYS=16
+if (( ATTENTION_CLUSTER )); then
+  ARRAY_INPUT=64
+  ARRAY_OUTPUT=64
+  NUM_ARRAYS=64
+fi
 RUN_ID="fused_attention_q${TOTAL_QUERIES}_k${KEYS}_d${HEAD_DIM}"
 GUEST_NAME=fused_attention
 
-ATTENTION_WINDOW_BYTES=$((KV_DOUBLE_BUFFER ? 0x14880 : 0x10000))
-if (( KV_PAIR_REUSE )); then
+if (( !ATTENTION_CLUSTER )); then
+  KEY_BLOCK_ROWS=32
+elif (( KEY_BLOCK_ROWS == 0 )); then
+  KEY_BLOCK_ROWS=$((KEYS <= 128 ? 64 : 32))
+fi
+if (( KEY_BLOCK_ROWS != 32 && KEY_BLOCK_ROWS != 64 )); then
+  echo "--key-block-rows must be 32 or 64" >&2
+  exit 2
+fi
+KV_BUFFER_COUNT_EFFECTIVE=$((KV_DOUBLE_BUFFER ? KV_BUFFER_COUNT : 1))
+if (( ATTENTION_CLUSTER )); then
+  ATTENTION_WINDOW_OFFSET=0xC0000
+  ATTENTION_WINDOW_BYTES=$((128 + 5 * 16 * HEAD_DIM * 4 +
+    16 * KEY_BLOCK_ROWS * 4 +
+    2 * KV_BUFFER_COUNT_EFFECTIVE * KEY_BLOCK_ROWS * HEAD_DIM * 4))
+else
+  ATTENTION_WINDOW_OFFSET=0xC0000
+  ATTENTION_WINDOW_BYTES=$((KV_DOUBLE_BUFFER ? 0x14880 : 0x10000))
+fi
+if (( KV_PAIR_REUSE && !ATTENTION_CLUSTER )); then
   ATTENTION_WINDOW_BYTES=$((ATTENTION_WINDOW_BYTES + \
     (KV_QUERY_GROUP_SIZE - 1) * 2 * 16 * HEAD_DIM * 4))
 fi
-if (( PV_V_TILE_REUSE )); then
+if (( PV_V_TILE_REUSE && !ATTENTION_CLUSTER )); then
   ATTENTION_WINDOW_BYTES=$((ATTENTION_WINDOW_BYTES + PV_V_TILE_BUFFER_BYTES))
 fi
 if (( ATTENTION_WINDOW_BYTES > 0x40000 )); then
@@ -464,14 +565,17 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ATTENTION_GUEST_MANAGER_QUERIES=$MANAGER_QUERIES"
   "GOLEM_ATTENTION_GUEST_KEYS=$KEYS"
   "GOLEM_ATTENTION_GUEST_HEAD_DIM=$HEAD_DIM"
+  "GOLEM_ATTENTION_GUEST_KEY_BLOCK_ROWS=$KEY_BLOCK_ROWS"
   "GOLEM_ATTENTION_Q_FILE=$Q_FILE"
   "GOLEM_ATTENTION_K_FILE=$K_FILE"
   "GOLEM_ATTENTION_V_FILE=$V_FILE"
   "GOLEM_ATTENTION_Q_OFFSET=$Q_OFFSET"
   "GOLEM_ATTENTION_K_OFFSET=$K_OFFSET"
   "GOLEM_ATTENTION_V_OFFSET=$V_OFFSET"
-  GOLEM_ATTENTION_WINDOW_OFFSET=0xC0000
+  "GOLEM_ATTENTION_WINDOW_OFFSET=$ATTENTION_WINDOW_OFFSET"
   "GOLEM_ATTENTION_WINDOW_BYTES=$ATTENTION_WINDOW_BYTES"
+  "GOLEM_ATTENTION_CLUSTER_ENABLE=$ATTENTION_CLUSTER"
+  "GOLEM_ATTENTION_CLUSTER_QK_ARRAYS=$ATTENTION_CLUSTER_QK_ARRAYS"
   "GOLEM_ATTENTION_QK_DATAFLOW_TRANSPOSE=$QK_DATAFLOW_TRANSPOSE"
   "GOLEM_ATTENTION_QK_MATRIX_BROADCAST=$QK_MATRIX_BROADCAST"
   "GOLEM_ATTENTION_PV_MATRIX_BROADCAST=$PV_MATRIX_BROADCAST"
@@ -482,8 +586,10 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ATTENTION_QK_READOUT_WINDOW=$QK_READOUT_WINDOW"
   "GOLEM_ATTENTION_QK_PANEL_ROW_BURST=$QK_PANEL_ROW_BURST"
   "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE=$CROSS_TILE_OPERAND_PIPELINE"
-  "GOLEM_ARRAY_OPERAND_CONTEXT_BANKS=$((CROSS_TILE_OPERAND_PIPELINE ? 2 : 1))"
+  "GOLEM_ARRAY_OPERAND_CONTEXT_BANKS=$(((CROSS_TILE_OPERAND_PIPELINE || ATTENTION_CLUSTER) ? 2 : 1))"
   "GOLEM_ATTENTION_KV_DOUBLE_BUFFER=$KV_DOUBLE_BUFFER"
+  "GOLEM_ATTENTION_KV_BUFFER_COUNT=$KV_BUFFER_COUNT"
+  "GOLEM_ATTENTION_KEY_BLOCK_ROWS=$KEY_BLOCK_ROWS"
   "GOLEM_DMA_RESPONSE_VN=$DMA_RESPONSE_VN"
   "GOLEM_ATTENTION_KV_SECOND_LOOKAHEAD=$KV_SECOND_LOOKAHEAD"
   "GOLEM_ATTENTION_KV_CROSS_QUERY_PREFETCH=$KV_CROSS_QUERY_PREFETCH"
@@ -504,6 +610,11 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ARRAY_PIPELINE_DEPTH=$ARRAY_PIPELINE_DEPTH"
   "GOLEM_ARRAY_OUTPUT_READ_CREDITS=$ARRAY_OUTPUT_READ_CREDITS"
   "GOLEM_ARRAY_OUTPUT_READ_BANKS=$ARRAY_OUTPUT_READ_BANKS"
+  "GOLEM_ARRAY_BUFFER_PORTS=$ARRAY_BUFFER_PORTS"
+  "GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=$ARRAY_BUFFER_BASE_LATENCY_CYCLES"
+  "GOLEM_LOCAL_GM_READ_PORTS=$LOCAL_GM_READ_PORTS"
+  "GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE=$NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE"
+  "GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_CREDITS=$NEAR_ARRAY_OUTPUT_CREDITS"
   "GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES=$PV_V_TILE_BUFFER_BYTES"
   "GOLEM_ATTENTION_PV_V_TILE_BUFFER_HIT_TICKS=$PV_V_TILE_BUFFER_HIT_TICKS"
   "GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES_PER_CYCLE=$PV_V_TILE_BUFFER_BYTES_PER_CYCLE"
@@ -537,7 +648,7 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   --gemm-m "$TOTAL_QUERIES" --gemm-n "$KEYS" --gemm-k "$HEAD_DIM"
   --orig-m "$TOTAL_QUERIES" --orig-n "$KEYS" --orig-k "$HEAD_DIM"
   --gemm-block-m 16 --gemm-block-n 16 --gemm-block-k "$HEAD_DIM"
-  --array-in "$ARRAY_INPUT" --array-out 16 --num-arrays 16
+  --array-in "$ARRAY_INPUT" --array-out "$ARRAY_OUTPUT" --num-arrays "$NUM_ARRAYS"
   --groups 4 --num-cores 20 --gemm-cores 20 --num-mem-nodes 5 --mesh-dim-x 4
   --global-stride-kb 1024 --mem-node-size "$MEM_NODE_SIZE"
   --log "$SST_LOG_BASENAME"
@@ -551,6 +662,8 @@ VERIFY_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_output.py"
 VERIFY_STATS_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_stats.py"
   --case-id "$RUN_ID"
   --queries "$TOTAL_QUERIES" --keys "$KEYS" --head-dim "$HEAD_DIM"
+  --key-block-rows "$KEY_BLOCK_ROWS"
+  --attention-cluster-qk-arrays "$ATTENTION_CLUSTER_QK_ARRAYS"
   --normalization-clock "$NORMALIZATION_CLOCK"
   --run-config "$RUN_CONFIG_FILE"
   --model-platform-clock "$MODEL_PLATFORM_CLOCK"
@@ -564,6 +677,8 @@ VERIFY_STATS_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_stats.py"
   --matrix-broadcast-stage-latency-cycles "$MATRIX_BROADCAST_STAGE_LATENCY_CYCLES"
   --array-mac-per-cu-per-cycle "$ARRAY_MAC_PER_CU_PER_CYCLE"
   --array-pipeline-depth "$ARRAY_PIPELINE_DEPTH"
+  --near-array-output-bytes-per-cycle "$NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE"
+  --array-buffer-base-latency-cycles "$ARRAY_BUFFER_BASE_LATENCY_CYCLES"
   --pv-v-tile-buffer-bytes "$PV_V_TILE_BUFFER_BYTES"
   --pv-v-tile-buffer-hit-ticks "$PV_V_TILE_BUFFER_HIT_TICKS"
   --pv-v-tile-buffer-bytes-per-cycle "$PV_V_TILE_BUFFER_BYTES_PER_CYCLE"
@@ -643,6 +758,9 @@ else
 fi
 if (( KV_DOUBLE_BUFFER )); then
   VERIFY_STATS_CMD+=(--kv-double-buffer)
+fi
+if (( ATTENTION_CLUSTER )); then
+  VERIFY_STATS_CMD+=(--attention-cluster)
 fi
 if (( KV_SECOND_LOOKAHEAD )); then
   VERIFY_STATS_CMD+=(--kv-second-lookahead)

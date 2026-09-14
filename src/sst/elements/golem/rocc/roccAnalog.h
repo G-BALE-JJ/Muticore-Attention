@@ -26,6 +26,7 @@
 #include <sst/elements/golem/requestscheduler/requestscheduler.h>
 #include <sst/elements/golem/sfu/sfu.h>
 #include <sst/elements/golem/workercmdproc/workercmdproc.h>
+#include <sst/elements/golem/attention/attentionCluster.h>
 #include <sst/elements/vanadis/rocc/vroccinterface.h>
 #include <sst/elements/golem/globalmemory/globalmemory.h>
 #include <sst/elements/golem/fp16.h>
@@ -35,6 +36,8 @@
 #include <cinttypes>
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <deque>
 #include <cstring>
 #include <cstdint>
 #include <limits>
@@ -242,6 +245,138 @@ public:
         statAttentionOAccumulatorRestores_ = registerStatistic<uint64_t>("attention_o_accumulator_restores");
         statAttentionOAccumulatorBytes_ = registerStatistic<uint64_t>("attention_o_accumulator_bytes");
         statAttentionSpHbmBytes_ = registerStatistic<uint64_t>("attention_sp_hbm_bytes");
+        statAttentionClusterConfigFingerprint_ =
+            registerStatistic<uint64_t>("attention_cluster_config_fingerprint");
+        statAttentionClusterWorkerJobs_ =
+            registerStatistic<uint64_t>("attention_cluster_worker_jobs");
+        statAttentionClusterContextsIssued_ =
+            registerStatistic<uint64_t>("attention_cluster_contexts_issued");
+        statAttentionClusterContextsCompleted_ =
+            registerStatistic<uint64_t>("attention_cluster_contexts_completed");
+        statAttentionClusterContextsCancelled_ =
+            registerStatistic<uint64_t>("attention_cluster_contexts_cancelled");
+        statAttentionClusterBankRefsCancelled_ =
+            registerStatistic<uint64_t>("attention_cluster_bank_refs_cancelled");
+        statAttentionClusterMemoryRequestsCancelled_ =
+            registerStatistic<uint64_t>("attention_cluster_memory_requests_cancelled");
+        statAttentionClusterContextHighWater_ =
+            registerStatistic<uint64_t>("attention_cluster_context_high_water");
+        statAttentionClusterStaleCallbacks_ =
+            registerStatistic<uint64_t>("attention_cluster_stale_callbacks");
+        statAttentionClusterIllegalTransitions_ =
+            registerStatistic<uint64_t>("attention_cluster_illegal_transitions");
+        statAttentionClusterScoreSlotReservations_ =
+            registerStatistic<uint64_t>("attention_cluster_score_slot_reservations");
+        statAttentionClusterScoreSlotReleases_ =
+            registerStatistic<uint64_t>("attention_cluster_score_slot_releases");
+        statAttentionClusterScoreSlotFullStalls_ =
+            registerStatistic<uint64_t>("attention_cluster_score_slot_full_stalls");
+        statAttentionClusterScoreSlotHighWater_ =
+            registerStatistic<uint64_t>("attention_cluster_score_slot_high_water");
+        statAttentionClusterOContextReservations_ =
+            registerStatistic<uint64_t>("attention_cluster_o_context_reservations");
+        statAttentionClusterOContextReleases_ =
+            registerStatistic<uint64_t>("attention_cluster_o_context_releases");
+        statAttentionClusterOContextCancelled_ =
+            registerStatistic<uint64_t>("attention_cluster_o_context_cancelled");
+        statAttentionClusterOContextHighWater_ =
+            registerStatistic<uint64_t>("attention_cluster_o_context_high_water");
+        statAttentionClusterOScaleSegments_ =
+            registerStatistic<uint64_t>("attention_cluster_o_scale_segments");
+        statAttentionClusterOAccumulateSegments_ =
+            registerStatistic<uint64_t>("attention_cluster_o_accumulate_segments");
+        statAttentionClusterODrainRequests_ =
+            registerStatistic<uint64_t>("attention_cluster_o_drain_requests");
+        statAttentionClusterODrainBytes_ =
+            registerStatistic<uint64_t>("attention_cluster_o_drain_bytes");
+        statAttentionClusterOReadWaitCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_o_read_wait_cycles");
+        statAttentionClusterOWriteWaitCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_o_write_wait_cycles");
+        statAttentionClusterOAluWaitCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_o_alu_wait_cycles");
+        statAttentionClusterOBankConflictCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_o_bank_conflict_cycles");
+        statAttentionClusterODrainWaitCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_o_drain_wait_cycles");
+        statAttentionClusterOReadBusyUnionCycles_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_read_busy_union_cycles");
+        statAttentionClusterOReadBusySpanCycles_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_read_busy_span_cycles");
+        statAttentionClusterOReadIdleGapCycles_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_read_idle_gap_cycles");
+        statAttentionClusterOReadMaxConcurrency_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_read_max_concurrency");
+        statAttentionClusterOWriteBusyUnionCycles_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_write_busy_union_cycles");
+        statAttentionClusterOWriteBusySpanCycles_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_write_busy_span_cycles");
+        statAttentionClusterOWriteIdleGapCycles_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_write_idle_gap_cycles");
+        statAttentionClusterOWriteMaxConcurrency_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_write_max_concurrency");
+        statAttentionClusterOAluBusyUnionCycles_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_alu_busy_union_cycles");
+        statAttentionClusterOAluBusySpanCycles_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_alu_busy_span_cycles");
+        statAttentionClusterOAluIdleGapCycles_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_alu_idle_gap_cycles");
+        statAttentionClusterOAluMaxConcurrency_ = registerStatistic<uint64_t>(
+            "attention_cluster_o_alu_max_concurrency");
+        statAttentionClusterQkArrayBusyUnionTicks_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_array_busy_union_ticks");
+        statAttentionClusterQkArrayBusySpanTicks_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_array_busy_span_ticks");
+        statAttentionClusterQkArrayIdleGapTicks_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_array_idle_gap_ticks");
+        statAttentionClusterQkArrayMaxConcurrency_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_array_max_concurrency");
+        statAttentionClusterPvArrayBusyUnionTicks_ =
+            registerStatistic<uint64_t>("attention_cluster_pv_array_busy_union_ticks");
+        statAttentionClusterPvArrayBusySpanTicks_ =
+            registerStatistic<uint64_t>("attention_cluster_pv_array_busy_span_ticks");
+        statAttentionClusterPvArrayIdleGapTicks_ =
+            registerStatistic<uint64_t>("attention_cluster_pv_array_idle_gap_ticks");
+        statAttentionClusterPvArrayMaxConcurrency_ =
+            registerStatistic<uint64_t>("attention_cluster_pv_array_max_concurrency");
+        statAttentionClusterKPanelBroadcasts_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_k_panel_broadcasts");
+        statAttentionClusterKPanelBytes_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_k_panel_bytes");
+        statAttentionClusterQPairMulticasts_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_q_pair_multicasts");
+        statAttentionClusterQPairBytes_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_q_pair_bytes");
+        statAttentionClusterScoreBeats_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_score_beats");
+        statAttentionClusterScoreBytes_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_score_bytes");
+        statAttentionClusterAheadContextsLaunched_ =
+            registerStatistic<uint64_t>("attention_cluster_ahead_contexts_launched");
+        statAttentionClusterAheadContextsCompleted_ =
+            registerStatistic<uint64_t>("attention_cluster_ahead_contexts_completed");
+        statAttentionClusterAheadContextsPromoted_ =
+            registerStatistic<uint64_t>("attention_cluster_ahead_contexts_promoted");
+        statAttentionClusterPromotionWaits_ =
+            registerStatistic<uint64_t>("attention_cluster_promotion_waits");
+        statAttentionClusterInitialEnqueueRetries_ =
+            registerStatistic<uint64_t>("attention_cluster_initial_enqueue_retries");
+        statAttentionClusterQkTileStarts_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_tile_starts");
+        statAttentionClusterQkTileIiCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_tile_ii_cycles");
+        statAttentionClusterQkBoundaryIiCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_boundary_ii_cycles");
+        statAttentionClusterQkSteadyIiOverTarget_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_steady_ii_over_target");
+        statAttentionClusterQkSfuOverlapCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_sfu_overlap_cycles");
+        statAttentionClusterSfuPvOverlapCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_sfu_pv_overlap_cycles");
+        statAttentionClusterQkPvOverlapCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_pv_overlap_cycles");
+        statAttentionClusterThreeStageOverlapCycles_ =
+            registerStatistic<uint64_t>("attention_cluster_three_stage_overlap_cycles");
 
         latency_mvm_ovec2gm = params.find<uint64_t>("latency_mvm_ovec2gm", 10);
         latency_mvm_gm2ivec = params.find<uint64_t>("latency_mvm_gm2ivec", 15);
@@ -293,6 +428,13 @@ public:
         attentionWindowBytes_ = params.find<uint64_t>("attention_window_bytes", 0x10000);
         attentionKvTileRotation_ = params.find<bool>("attention_kv_tile_rotation", false);
         attentionKvDoubleBuffer_ = params.find<bool>("attention_kv_double_buffer", false);
+        attentionKvBufferCount_ = params.find<uint32_t>(
+            "attention_kv_buffer_count", attentionKvDoubleBuffer_ ? 2u : 1u);
+        if (attentionKvBufferCount_ == 0 || attentionKvBufferCount_ > 3 ||
+            (!attentionKvDoubleBuffer_ && attentionKvBufferCount_ != 1)) {
+            output->fatal(CALL_INFO, -1,
+                "attention_kv_buffer_count must be 1 without prefetch or 2..3 with prefetch\n");
+        }
         attentionKvSecondLookahead_ = params.find<bool>("attention_kv_second_lookahead", true);
         attentionKvCrossQueryPrefetch_ = params.find<bool>("attention_kv_cross_query_prefetch", false);
         attentionKvPairReuse_ = params.find<bool>("attention_kv_pair_reuse", false);
@@ -340,6 +482,12 @@ public:
         attentionMilestoneTrace_ =
             params.find<bool>("attention_milestone_trace", false);
         attentionTileTrace_ = params.find<bool>("attention_tile_trace", false);
+        attentionClusterEnable_ =
+            params.find<bool>("attention_cluster_enable", false);
+        attentionClusterConfig_.qkArrays = params.find<uint32_t>(
+            "attention_cluster_qk_arrays", 16);
+        attentionClusterConfig_.keyBlockRows = params.find<uint32_t>(
+            "attention_key_block_rows", 32);
 
         vectorStrideBytes = params.find<uint64_t>(
             "vectorStrideBytes", static_cast<uint64_t>(arrayInputSize) * inputOperandSize);
@@ -505,6 +653,31 @@ public:
                 CALL_INFO, -1,
                 "Error: PV V-tile group retention requires PV V-tile reuse.\n");
         }
+        if (attentionClusterEnable_) {
+            attentionClusterConfig_.arrays = numArrays;
+            attentionClusterConfig_.pvArrays = attentionClusterConfig_.arrays >=
+                    attentionClusterConfig_.qkArrays
+                ? attentionClusterConfig_.arrays - attentionClusterConfig_.qkArrays
+                : 0;
+            attentionClusterConfig_.arrayInputs = arrayInputSize;
+            attentionClusterConfig_.arrayOutputs = arrayOutputSize;
+            attentionClusterConfig_.operandBanks = attentionOperandContextBanks_;
+            attentionClusterConfig_.groupSize = attentionKvQueryGroupSize_;
+            attentionClusterConfig_.elemBytes = inputOperandSize;
+            const std::string error = attentionClusterConfig_.validate();
+            if (!error.empty() || outputOperandSize != 4 ||
+                !attentionGenericGemmEnable_ || workerCommandProcessor == nullptr ||
+                sfu == nullptr || !attentionKvPairReuse_ || !attentionPvActiveK_) {
+                output->fatal(
+                    CALL_INFO, -1,
+                    "Error: attention_cluster_enable configuration rejected: %s; "
+                    "requires FP32 generic WCP/SFU, group-4 K/V reuse, and "
+                    "active-K PV.\n",
+                    error.empty() ? "component contract" : error.c_str());
+            }
+            statAttentionClusterConfigFingerprint_->addData(
+                attentionClusterConfig_.fingerprint());
+        }
 
     }
   
@@ -644,6 +817,59 @@ public:
 
     void finish() override {
         maybeReportMvmProgress(true);
+        if (attentionClusterEnable_) {
+            const uint64_t now = getCurrentSimCycle();
+            statAttentionClusterQkArrayBusyUnionTicks_->addData(
+                attentionClusterQkArrayActivity_.unionCycles(now));
+            statAttentionClusterQkArrayBusySpanTicks_->addData(
+                attentionClusterQkArrayActivity_.spanCycles(now));
+            statAttentionClusterQkArrayIdleGapTicks_->addData(
+                attentionClusterQkArrayActivity_.idleCycles(now));
+            statAttentionClusterQkArrayMaxConcurrency_->addData(
+                attentionClusterQkArrayActivity_.maxConcurrency());
+            statAttentionClusterPvArrayBusyUnionTicks_->addData(
+                attentionClusterPvArrayActivity_.unionCycles(now));
+            statAttentionClusterPvArrayBusySpanTicks_->addData(
+                attentionClusterPvArrayActivity_.spanCycles(now));
+            statAttentionClusterPvArrayIdleGapTicks_->addData(
+                attentionClusterPvArrayActivity_.idleCycles(now));
+            statAttentionClusterPvArrayMaxConcurrency_->addData(
+                attentionClusterPvArrayActivity_.maxConcurrency());
+            statAttentionClusterOReadWaitCycles_->addData(
+                attentionOAccumulator_.readWaitCycles());
+            statAttentionClusterOWriteWaitCycles_->addData(
+                attentionOAccumulator_.writeWaitCycles());
+            statAttentionClusterOAluWaitCycles_->addData(
+                attentionOAccumulator_.aluWaitCycles());
+            statAttentionClusterOBankConflictCycles_->addData(
+                attentionOAccumulator_.bankConflictCycles());
+            statAttentionClusterODrainWaitCycles_->addData(
+                attentionOAccumulator_.drainWaitCycles());
+            statAttentionClusterOReadBusyUnionCycles_->addData(
+                attentionOAccumulator_.readBusyCycles());
+            statAttentionClusterOReadBusySpanCycles_->addData(
+                attentionOAccumulator_.readBusySpanCycles());
+            statAttentionClusterOReadIdleGapCycles_->addData(
+                attentionOAccumulator_.readIdleCycles());
+            statAttentionClusterOReadMaxConcurrency_->addData(
+                attentionOAccumulator_.readMaxConcurrency());
+            statAttentionClusterOWriteBusyUnionCycles_->addData(
+                attentionOAccumulator_.writeBusyCycles());
+            statAttentionClusterOWriteBusySpanCycles_->addData(
+                attentionOAccumulator_.writeBusySpanCycles());
+            statAttentionClusterOWriteIdleGapCycles_->addData(
+                attentionOAccumulator_.writeIdleCycles());
+            statAttentionClusterOWriteMaxConcurrency_->addData(
+                attentionOAccumulator_.writeMaxConcurrency());
+            statAttentionClusterOAluBusyUnionCycles_->addData(
+                attentionOAccumulator_.aluBusyCycles());
+            statAttentionClusterOAluBusySpanCycles_->addData(
+                attentionOAccumulator_.aluBusySpanCycles());
+            statAttentionClusterOAluIdleGapCycles_->addData(
+                attentionOAccumulator_.aluIdleCycles());
+            statAttentionClusterOAluMaxConcurrency_->addData(
+                attentionOAccumulator_.aluMaxConcurrency());
+        }
         if (memInterface) {
             memInterface->finish();
         }
@@ -1554,6 +1780,50 @@ public:
         std::vector<uint8_t> inputBytes;
     };
 
+    enum class AttentionClusterAheadPhase : uint8_t {
+        Idle,
+        QueryDma,
+        QueryRead,
+        InputProgram,
+        Launch,
+        Compute,
+        OutputRead,
+        ScoreWrite,
+        SoftmaxIssue,
+        SoftmaxRunning,
+        Ready,
+    };
+
+    struct AttentionClusterAheadContext {
+        AttentionClusterAheadPhase phase = AttentionClusterAheadPhase::Idle;
+        uint64_t generation = 0;
+        uint32_t queryBlock = UINT32_MAX;
+        uint32_t keyTileOrdinal = UINT32_MAX;
+        uint32_t keyTile = UINT32_MAX;
+        uint32_t operandBank = 0;
+        uint64_t qLocal = 0;
+        AttentionClusterTag tag = {};
+        int32_t qkContext = -1;
+        int32_t scoreContext = -1;
+        int32_t pContext = -1;
+        size_t queryOffset = 0;
+        uint32_t wave = 0;
+        uint32_t pair = 0;
+        uint32_t launchIndex = 0;
+        uint32_t arraysPending = 0;
+        uint32_t outputIndex = 0;
+        uint64_t transferTag = 0;
+        bool requestInFlight = false;
+        uint64_t qkStartCycle = 0;
+        uint64_t qkEndCycle = 0;
+        uint64_t sfuStartCycle = 0;
+        uint64_t sfuEndCycle = 0;
+        std::vector<uint8_t> queryBytes;
+        std::vector<double> qPayload;
+        std::vector<float> pendingScoreBeat;
+        std::vector<float> outputScales;
+    };
+
     struct AttentionWorkerState {
         ReductionTransportMessage dispatch = {};
         uint64_t generation = 0;
@@ -1569,6 +1839,19 @@ public:
         std::vector<uint64_t> oLocalBuffers;
         uint32_t activeOperandBank = 0;
         AttentionAheadOperandContext aheadOperands;
+        std::array<AttentionClusterAheadContext, 4> clusterAhead = {};
+        std::array<bool, 4> clusterQueryLoaded = {{false, false, false, false}};
+        bool clusterAheadPromotionWaiting = false;
+        bool clusterAheadEnabledForTile = false;
+        std::function<void()> clusterOwnerRetry;
+        std::deque<std::function<void()>> clusterOwnerRetryQueue;
+        uint32_t clusterOwnerLaunchNext = 0;
+        uint32_t clusterOwnerLaunchEnd = 0;
+        bool clusterOwnerLaunchQk = false;
+        bool clusterQkTileStartValid = false;
+        uint64_t clusterLastQkTileStartCycle = 0;
+        uint32_t clusterLastQkTileStartGroup = UINT32_MAX;
+        uint32_t clusterLastQkTileStartKeyTile = UINT32_MAX;
         uint64_t vTileBufferLocal = 0;
         uint32_t queryBlock = 0;
         uint32_t keyTile = 0;
@@ -1577,6 +1860,30 @@ public:
         uint32_t index = 0;
         uint32_t lane = 0;
         uint32_t arraysPending = 0;
+        int32_t clusterQkContext = -1;
+        int32_t clusterScoreContext = -1;
+        int32_t clusterPContext = -1;
+        int32_t clusterPvContext = -1;
+        std::array<int32_t, 4> clusterOContextSlots = {{-1, -1, -1, -1}};
+        std::array<AttentionClusterTag, 4> clusterOTags = {};
+        AttentionClusterTag clusterTileTag = {};
+        uint32_t clusterQkMatrixPanel = 0;
+        uint32_t clusterQkWave = 0;
+        uint32_t clusterQkPair = 0;
+        uint32_t clusterPvWave = 0;
+        uint32_t clusterPvOperandBank = 0;
+        bool clusterPvBankLeaseHeld = false;
+        AttentionClusterTag clusterPvBankLeaseTag = {};
+        bool clusterPvMatrixResident = false;
+        uint32_t clusterPvMatrixKeyTile = UINT32_MAX;
+        uint32_t clusterPvMatrixGroupOwner = UINT32_MAX;
+        uint32_t clusterPvOutputIssued = 0;
+        uint32_t clusterPvOutputCompleted = 0;
+        uint32_t clusterPvOutputInFlight = 0;
+        std::vector<double> clusterPvNextInput;
+        uint32_t clusterPvNextInputRow = UINT32_MAX;
+        bool clusterPvNextInputReady = false;
+        bool clusterPvNextInputInFlight = false;
         uint32_t attentionKvLoadsPending = 0;
         uint32_t attentionPvInputsPending = 0;
         uint32_t attentionPvRestoresPending = 0;
@@ -1595,6 +1902,9 @@ public:
         bool attentionPvRestoreReadRetry = false;
         bool attentionPvOutputWriteRetry = false;
         bool attentionPvOutputWriteToCBuffer = false;
+        uint32_t attentionClusterOCommitsPending = 0;
+        bool attentionClusterODrainPending = false;
+        uint64_t attentionClusterODrainId = 0;
         bool attentionPvPreparationComplete = false;
         bool attentionPvInputResidentValid = false;
         uint32_t attentionPvInputResidentQueryBlock = UINT32_MAX;
@@ -1662,7 +1972,11 @@ public:
         uint32_t arrayId, const std::vector<double>& matrix, size_t elemBytes,
         uint64_t tag, Golem::ComputeArray::BufferCallback callback) {
         const uint32_t bank = attentionWorker_
-            ? attentionWorker_->activeOperandBank : 0;
+            ? (attentionClusterEnable_ &&
+                    arrayId >= attentionClusterConfig_.qkArrays
+                ? attentionWorker_->clusterPvOperandBank
+                : attentionWorker_->activeOperandBank)
+            : 0;
         if (attentionGenericGemmEnable_) {
             return workerCommandProcessor->programGemmMatrixBankAsync(
                 arrayId, bank, matrix, elemBytes, tag, LastTickCycle,
@@ -1691,7 +2005,11 @@ public:
         uint32_t arrayId, const std::vector<double>& input, size_t elemBytes,
         uint64_t tag, Golem::ComputeArray::BufferCallback callback) {
         const uint32_t bank = attentionWorker_
-            ? attentionWorker_->activeOperandBank : 0;
+            ? (attentionClusterEnable_ &&
+                    arrayId >= attentionClusterConfig_.qkArrays
+                ? attentionWorker_->clusterPvOperandBank
+                : attentionWorker_->activeOperandBank)
+            : 0;
         if (attentionGenericGemmEnable_) {
             return workerCommandProcessor->programGemmInputBankAsync(
                 arrayId, bank, input, elemBytes, tag, LastTickCycle,
@@ -1706,7 +2024,11 @@ public:
         uint32_t activeColumns, size_t elemBytes, uint64_t tag,
         Golem::ComputeArray::BufferCallback callback) {
         const uint32_t bank = attentionWorker_
-            ? attentionWorker_->activeOperandBank : 0;
+            ? (attentionClusterEnable_ &&
+                    arrayId >= attentionClusterConfig_.qkArrays
+                ? attentionWorker_->clusterPvOperandBank
+                : attentionWorker_->activeOperandBank)
+            : 0;
         if (attentionGenericGemmEnable_) {
             return workerCommandProcessor->programGemmMatrixActiveBankAsync(
                 arrayId, bank, matrix, activeColumns, elemBytes, tag, LastTickCycle,
@@ -1772,11 +2094,138 @@ public:
             arrayId, elemBytes, tag, std::move(callback));
     }
 
+    bool programAttentionClusterKPanelAsync(
+        const std::vector<uint32_t>& arrayIds,
+        const std::vector<double>& matrix, uint64_t tag,
+        Golem::ComputeArray::BufferCallback callback) {
+        if (!attentionWorker_ || !workerCommandProcessor) return false;
+        return workerCommandProcessor->programGemmMatrixGroupClassBankAsync(
+            arrayIds, attentionWorker_->activeOperandBank, matrix,
+            sizeof(float), AttentionClusterTrafficClass::QkKMatrix, tag,
+            LastTickCycle, std::move(callback));
+    }
+
+    bool programAttentionClusterQPairAsync(
+        const std::vector<uint32_t>& arrayIds,
+        const std::vector<double>& input, uint64_t tag,
+        Golem::ComputeArray::BufferCallback callback) {
+        if (!attentionWorker_ || !workerCommandProcessor) return false;
+        return workerCommandProcessor->programGemmInputGroupBankAsync(
+            arrayIds, attentionWorker_->activeOperandBank, input,
+            sizeof(float), AttentionClusterTrafficClass::QkQPair, tag,
+            LastTickCycle, std::move(callback));
+    }
+
+    bool programAttentionClusterPRowAsync(
+        const std::vector<uint32_t>& arrayIds,
+        const std::vector<double>& input, uint64_t tag,
+        Golem::ComputeArray::BufferCallback callback) {
+        if (!attentionWorker_ || !workerCommandProcessor) return false;
+        return workerCommandProcessor->programGemmInputGroupBankAsync(
+            arrayIds, attentionWorker_->clusterPvOperandBank, input,
+            sizeof(float), AttentionClusterTrafficClass::PvPInput, tag,
+            LastTickCycle, std::move(callback));
+    }
+
+    bool readAttentionClusterScoreAsync(
+        uint32_t arrayId, uint64_t tag,
+        Golem::ComputeArray::BufferReadCallback callback) {
+        if (!workerCommandProcessor) return false;
+        return workerCommandProcessor->readGemmOutputClassAsync(
+            arrayId, sizeof(float), AttentionClusterTrafficClass::QkScoreOut,
+            tag, LastTickCycle, std::move(callback));
+    }
+
+    bool readAttentionClusterScorePairAsync(
+        const std::vector<uint32_t>& arrayIds, uint64_t tag,
+        Golem::ComputeArray::BufferReadCallback callback) {
+        return workerCommandProcessor &&
+            workerCommandProcessor->readGemmOutputGroupClassAsync(
+                arrayIds, sizeof(float),
+                AttentionClusterTrafficClass::QkScoreOut, tag,
+                LastTickCycle, std::move(callback));
+    }
+
+    bool readAttentionClusterPvGroupAsync(
+        const std::vector<uint32_t>& arrayIds, uint64_t tag,
+        Golem::ComputeArray::BufferReadCallback callback) {
+        return workerCommandProcessor &&
+            workerCommandProcessor->readGemmOutputGroupClassAsync(
+                arrayIds, sizeof(float),
+                AttentionClusterTrafficClass::PvOFinalDrain, tag,
+                LastTickCycle, std::move(callback));
+    }
+
+    void recordAttentionClusterQkTileStart(
+        uint64_t cycle, uint32_t keyTileOrdinal, uint32_t queryBlock) {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        statAttentionClusterQkTileStarts_->addData(1);
+        if (state.clusterQkTileStartValid) {
+            const uint64_t interval = cycle - state.clusterLastQkTileStartCycle;
+            const uint32_t group = queryBlock / attentionClusterConfig_.groupSize;
+            const bool samePhysicalTile =
+                state.clusterLastQkTileStartGroup == group &&
+                state.clusterLastQkTileStartKeyTile == keyTileOrdinal;
+            const uint32_t queryInGroup =
+                queryBlock % attentionClusterConfig_.groupSize;
+            if (samePhysicalTile && queryInGroup >= 2) {
+                statAttentionClusterQkTileIiCycles_->addData(interval);
+                if (interval > 625) {
+                    statAttentionClusterQkSteadyIiOverTarget_->addData(1);
+                }
+            } else if (!samePhysicalTile) {
+                statAttentionClusterQkBoundaryIiCycles_->addData(interval);
+            }
+        }
+        state.clusterLastQkTileStartCycle = cycle;
+        state.clusterLastQkTileStartGroup =
+            queryBlock / attentionClusterConfig_.groupSize;
+        state.clusterLastQkTileStartKeyTile = keyTileOrdinal;
+        state.clusterQkTileStartValid = true;
+    }
+
+    void recordAttentionClusterPipelineOverlap() {
+        if (!attentionWorker_ || !attentionClusterEnable_) return;
+        const AttentionWorkerState& state = *attentionWorker_;
+        const bool qkActive = attentionClusterQkArrayActivity_.active() != 0;
+        const bool pvActive = attentionClusterPvArrayActivity_.active() != 0;
+        bool sfuActive = state.phase == AttentionWorkerPhase::Softmax &&
+            !state.attentionSoftmaxComplete;
+        for (const auto& ahead : state.clusterAhead) {
+            sfuActive = sfuActive ||
+                ahead.phase == AttentionClusterAheadPhase::SoftmaxRunning;
+        }
+        if (qkActive && sfuActive) {
+            statAttentionClusterQkSfuOverlapCycles_->addData(1);
+        }
+        if (sfuActive && pvActive) {
+            statAttentionClusterSfuPvOverlapCycles_->addData(1);
+        }
+        if (qkActive && pvActive) {
+            statAttentionClusterQkPvOverlapCycles_->addData(1);
+        }
+        if (qkActive && sfuActive && pvActive) {
+            statAttentionClusterThreeStageOverlapCycles_->addData(1);
+        }
+    }
+
     bool launchAttentionGemmArray(
         uint32_t arrayId, uint64_t outputMode, bool qkOperation,
         uint32_t activeColumns = 0) {
         const uint32_t bank = attentionWorker_
-            ? attentionWorker_->activeOperandBank : 0;
+            ? (attentionClusterEnable_ && !qkOperation
+                ? attentionWorker_->clusterPvOperandBank
+                : attentionWorker_->activeOperandBank)
+            : 0;
+        if (attentionClusterEnable_ &&
+            (!attentionCluster_ ||
+             !attentionCluster_->owns(
+                 arrayId, qkOperation ? AttentionArrayOwner::Qk
+                                      : AttentionArrayOwner::Pv))) {
+            statAttentionClusterIllegalTransitions_->addData(1);
+            return false;
+        }
         if (!attentionGenericGemmEnable_) {
             array->configureOutputMode(arrayId, outputMode);
             if (activeColumns != 0) {
@@ -1790,7 +2239,21 @@ public:
             }
             return true;
         }
-        auto completion = [this](uint32_t completedArrayId, uint64_t) {
+        const uint64_t generation = attentionWorker_
+            ? attentionWorker_->generation : 0;
+        auto completion = [this, generation, qkOperation](
+                              uint32_t completedArrayId, uint64_t) {
+            if (!attentionCallbackGenerationMatches(generation)) {
+                if (attentionClusterEnable_) {
+                    BusyActivityTracker& activity = qkOperation
+                        ? attentionClusterQkArrayActivity_
+                        : attentionClusterPvArrayActivity_;
+                    if (!activity.leave(getCurrentSimCycle())) {
+                        statAttentionClusterIllegalTransitions_->addData(1);
+                    }
+                }
+                return;
+            }
             handleAttentionArrayDone(completedArrayId);
         };
         const bool accepted = activeColumns != 0 ?
@@ -1801,6 +2264,21 @@ public:
                 arrayId, bank, outputMode, LastTickCycle,
                 std::move(completion));
         if (accepted) {
+            if (attentionClusterEnable_ && qkOperation && arrayId == 0 &&
+                attentionWorker_ && attentionWorker_->clusterQkWave == 0) {
+                recordAttentionClusterQkTileStart(
+                    LastTickCycle, attentionWorker_->keyTileOrdinal,
+                    attentionWorker_->queryBlock);
+            }
+            if (attentionClusterEnable_) {
+                BusyActivityTracker& activity = qkOperation
+                    ? attentionClusterQkArrayActivity_
+                    : attentionClusterPvArrayActivity_;
+                if (!activity.enter(getCurrentSimCycle())) {
+                    statAttentionClusterIllegalTransitions_->addData(1);
+                    return false;
+                }
+            }
             if (qkOperation) statAttentionGenericGemmQkOps_->addData(1);
             else statAttentionGenericGemmPvOps_->addData(1);
             if (activeColumns != 0) {
@@ -2043,6 +2521,278 @@ public:
             ? attentionKvQueryGroupSize_ : 1u;
     }
 
+    AttentionClusterTag attentionClusterTag(
+        const AttentionWorkerState& state, uint32_t sequence = 0) const {
+        AttentionClusterTag tag;
+        tag.generation = state.generation;
+        tag.jobId = state.dispatch.jobId;
+        tag.group = state.queryBlock / attentionClusterConfig_.groupSize;
+        tag.queryContext = state.queryBlock % attentionClusterConfig_.groupSize;
+        tag.queryBlock = state.queryBlock;
+        tag.keyTile = state.keyTileOrdinal;
+        tag.sequence = sequence;
+        return tag;
+    }
+
+    bool attentionCallbackGenerationMatches(uint64_t generation) {
+        if (attentionWorker_ && attentionWorker_->generation == generation) {
+            return true;
+        }
+        if (attentionClusterEnable_) {
+            statAttentionClusterStaleCallbacks_->addData(1);
+        }
+        return false;
+    }
+
+    void recordAttentionClusterContextHighWater() {
+        if (!attentionCluster_) return;
+        statAttentionClusterContextHighWater_->addData(
+            attentionCluster_->liveContexts());
+        statAttentionClusterScoreSlotHighWater_->addData(
+            attentionCluster_->liveContexts(AttentionClusterContextKind::Score));
+    }
+
+    bool reserveAttentionClusterQkAndScore() {
+        if (!attentionWorker_ || !attentionCluster_) return false;
+        AttentionWorkerState& state = *attentionWorker_;
+        state.clusterTileTag = attentionClusterTag(state);
+        const int qk = attentionCluster_->reserve(
+            AttentionClusterContextKind::Qk, state.clusterTileTag,
+            state.activeOperandBank);
+        if (qk < 0) return false;
+        const int score = attentionCluster_->reserve(
+            AttentionClusterContextKind::Score, state.clusterTileTag,
+            state.activeOperandBank);
+        if (score < 0) {
+            attentionCluster_->release(
+                AttentionClusterContextKind::Qk, qk, state.clusterTileTag);
+            statAttentionClusterScoreSlotFullStalls_->addData(1);
+            return false;
+        }
+        if (sfu == nullptr || !sfu->reserveAttentionScoreSlot(
+                static_cast<uint32_t>(score), state.clusterTileTag,
+                static_cast<size_t>(attentionQueryRows(state)) *
+                    attentionKeyCols(state))) {
+            attentionCluster_->release(
+                AttentionClusterContextKind::Score, score, state.clusterTileTag);
+            attentionCluster_->release(
+                AttentionClusterContextKind::Qk, qk, state.clusterTileTag);
+            statAttentionClusterScoreSlotFullStalls_->addData(1);
+            return false;
+        }
+        uint32_t acquired = 0;
+        for (uint32_t arrayId = 0;
+             arrayId < attentionClusterConfig_.qkArrays; ++arrayId) {
+            if (!attentionCluster_->acquireBank(
+                    arrayId, state.activeOperandBank, AttentionArrayOwner::Qk,
+                    state.clusterTileTag)) {
+                for (uint32_t releaseId = 0; releaseId < acquired; ++releaseId) {
+                    attentionCluster_->releaseBank(
+                        releaseId, state.activeOperandBank, AttentionArrayOwner::Qk,
+                        state.clusterTileTag);
+                }
+                attentionCluster_->release(
+                    AttentionClusterContextKind::Score, score, state.clusterTileTag);
+                sfu->releaseAttentionScoreSlot(
+                    static_cast<uint32_t>(score), state.clusterTileTag);
+                attentionCluster_->release(
+                    AttentionClusterContextKind::Qk, qk, state.clusterTileTag);
+                return false;
+            }
+            ++acquired;
+        }
+        state.clusterQkContext = qk;
+        state.clusterScoreContext = score;
+        statAttentionClusterContextsIssued_->addData(2);
+        statAttentionClusterScoreSlotReservations_->addData(1);
+        recordAttentionClusterContextHighWater();
+        return true;
+    }
+
+    bool releaseAttentionClusterQk() {
+        if (!attentionWorker_ || !attentionCluster_ ||
+            attentionWorker_->clusterQkContext < 0) return false;
+        AttentionWorkerState& state = *attentionWorker_;
+        bool ok = true;
+        for (uint32_t arrayId = 0;
+             arrayId < attentionClusterConfig_.qkArrays; ++arrayId) {
+            ok = attentionCluster_->releaseBank(
+                arrayId, state.activeOperandBank, AttentionArrayOwner::Qk,
+                state.clusterTileTag) && ok;
+        }
+        ok = attentionCluster_->release(
+            AttentionClusterContextKind::Qk,
+            static_cast<uint32_t>(state.clusterQkContext),
+            state.clusterTileTag) && ok;
+        state.clusterQkContext = -1;
+        if (ok) statAttentionClusterContextsCompleted_->addData(1);
+        return ok;
+    }
+
+    bool releaseAttentionClusterScore() {
+        if (!attentionWorker_ || !attentionCluster_ ||
+            attentionWorker_->clusterScoreContext < 0) return false;
+        AttentionWorkerState& state = *attentionWorker_;
+        const bool fifoOk = sfu != nullptr && sfu->releaseAttentionScoreSlot(
+            static_cast<uint32_t>(state.clusterScoreContext),
+            state.clusterTileTag);
+        const bool ok = fifoOk && attentionCluster_->release(
+            AttentionClusterContextKind::Score,
+            static_cast<uint32_t>(state.clusterScoreContext),
+            state.clusterTileTag);
+        state.clusterScoreContext = -1;
+        if (ok) {
+            statAttentionClusterContextsCompleted_->addData(1);
+            statAttentionClusterScoreSlotReleases_->addData(1);
+        }
+        return ok;
+    }
+
+    bool releaseAttentionClusterP() {
+        if (!attentionWorker_ || sfu == nullptr ||
+            attentionWorker_->clusterPContext < 0) return false;
+        AttentionWorkerState& state = *attentionWorker_;
+        const bool ok = sfu->releaseAttentionPSlot(
+            static_cast<uint32_t>(state.clusterPContext),
+            state.clusterTileTag);
+        state.clusterPContext = -1;
+        return ok;
+    }
+
+    bool reserveAttentionClusterPv() {
+        if (!attentionWorker_ || !attentionCluster_) return false;
+        AttentionWorkerState& state = *attentionWorker_;
+        const int slot = attentionCluster_->reserve(
+            AttentionClusterContextKind::Pv, state.clusterTileTag,
+            state.clusterPvOperandBank);
+        if (slot < 0) return false;
+        AttentionClusterTag bankTag = state.clusterTileTag;
+        bankTag.queryContext = 0;
+        bankTag.queryBlock = attentionKvGroupOwnerQueryBlock(state);
+        if (state.clusterPvBankLeaseHeld) {
+            if (!(state.clusterPvBankLeaseTag == bankTag)) {
+                attentionCluster_->release(
+                    AttentionClusterContextKind::Pv, slot, state.clusterTileTag);
+                return false;
+            }
+        } else {
+            uint32_t acquired = 0;
+            for (uint32_t arrayId = attentionClusterConfig_.qkArrays;
+                 arrayId < attentionClusterConfig_.arrays; ++arrayId) {
+                if (!attentionCluster_->acquireBank(
+                        arrayId, state.clusterPvOperandBank,
+                        AttentionArrayOwner::Pv, bankTag)) {
+                    for (uint32_t offset = 0; offset < acquired; ++offset) {
+                        attentionCluster_->releaseBank(
+                            attentionClusterConfig_.qkArrays + offset,
+                            state.clusterPvOperandBank,
+                            AttentionArrayOwner::Pv, bankTag);
+                    }
+                    attentionCluster_->release(
+                        AttentionClusterContextKind::Pv, slot,
+                        state.clusterTileTag);
+                    return false;
+                }
+                ++acquired;
+            }
+            state.clusterPvBankLeaseHeld = true;
+            state.clusterPvBankLeaseTag = bankTag;
+        }
+        state.clusterPvContext = slot;
+        statAttentionClusterContextsIssued_->addData(1);
+        recordAttentionClusterContextHighWater();
+        return true;
+    }
+
+    bool releaseAttentionClusterPv() {
+        if (!attentionWorker_ || !attentionCluster_ ||
+            attentionWorker_->clusterPvContext < 0) return false;
+        AttentionWorkerState& state = *attentionWorker_;
+        bool ok = true;
+        if (!attentionHasNextGroupedQuery(state)) {
+            if (!state.clusterPvBankLeaseHeld) return false;
+            for (uint32_t arrayId = attentionClusterConfig_.qkArrays;
+                 arrayId < attentionClusterConfig_.arrays; ++arrayId) {
+                ok = attentionCluster_->releaseBank(
+                    arrayId, state.clusterPvOperandBank, AttentionArrayOwner::Pv,
+                    state.clusterPvBankLeaseTag) && ok;
+            }
+            state.clusterPvBankLeaseHeld = false;
+            state.clusterPvBankLeaseTag = {};
+        }
+        ok = attentionCluster_->release(
+            AttentionClusterContextKind::Pv,
+            static_cast<uint32_t>(state.clusterPvContext),
+            state.clusterTileTag) && ok;
+        state.clusterPvContext = -1;
+        ok = releaseAttentionClusterP() && ok;
+        if (ok) statAttentionClusterContextsCompleted_->addData(1);
+        return ok;
+    }
+
+    bool ensureAttentionClusterOContext() {
+        if (!attentionWorker_ || !attentionCluster_) return false;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t queryContext =
+            state.queryBlock % attentionClusterConfig_.groupSize;
+        if (state.clusterOContextSlots[queryContext] >= 0) return true;
+        AttentionClusterTag tag = attentionClusterTag(state);
+        tag.keyTile = 0;
+        const int slot = attentionCluster_->reserve(
+            AttentionClusterContextKind::O, tag, state.activeOperandBank);
+        if (slot < 0) {
+            output->output(
+                "Attention O metadata reserve rejected core=%" PRIu64
+                " generation=%" PRIu64 " query=%u key_tiles=%u\n",
+                coreID, state.generation, state.queryBlock,
+                attentionKeyTilesForQueryBlock(state));
+            return false;
+        }
+        if (!attentionOAccumulator_.reserve(
+                static_cast<uint32_t>(slot), tag,
+                attentionKeyTilesForQueryBlock(state))) {
+            output->output(
+                "Attention O accumulator reserve rejected core=%" PRIu64
+                " slot=%d generation=%" PRIu64
+                " query=%u key_tiles=%u occupied=%u\n",
+                coreID, slot, state.generation, state.queryBlock,
+                attentionKeyTilesForQueryBlock(state),
+                attentionOAccumulator_.occupied());
+            attentionCluster_->release(
+                AttentionClusterContextKind::O,
+                static_cast<uint32_t>(slot), tag);
+            return false;
+        }
+        state.clusterOContextSlots[queryContext] = slot;
+        state.clusterOTags[queryContext] = tag;
+        statAttentionClusterContextsIssued_->addData(1);
+        statAttentionClusterOContextReservations_->addData(1);
+        statAttentionClusterOContextHighWater_->addData(
+            attentionOAccumulator_.occupied());
+        recordAttentionClusterContextHighWater();
+        return true;
+    }
+
+    bool releaseAttentionClusterOContext() {
+        if (!attentionWorker_ || !attentionCluster_) return false;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t queryContext =
+            state.queryBlock % attentionClusterConfig_.groupSize;
+        const int32_t slot = state.clusterOContextSlots[queryContext];
+        if (slot < 0) return false;
+        const bool accumulatorOk = attentionOAccumulator_.release(
+            static_cast<uint32_t>(slot), state.clusterOTags[queryContext]);
+        const bool ok = accumulatorOk && attentionCluster_->release(
+            AttentionClusterContextKind::O, static_cast<uint32_t>(slot),
+            state.clusterOTags[queryContext]);
+        state.clusterOContextSlots[queryContext] = -1;
+        if (ok) {
+            statAttentionClusterContextsCompleted_->addData(1);
+            statAttentionClusterOContextReleases_->addData(1);
+        }
+        return ok;
+    }
+
     uint32_t attentionKvGroupOwnerQueryBlock(
         const AttentionWorkerState& state) const {
         const uint32_t groupSize = attentionKvQueryGroupSize(state);
@@ -2151,8 +2901,7 @@ public:
                 [this, generation, queryBlock, keyTileOrdinal, keyTile, bank,
                  tag, offset, chunk](bool ok, uint64_t callbackTag,
                                     const std::vector<uint8_t>& bytes) {
-                    if (!attentionWorker_ ||
-                        attentionWorker_->generation != generation) return;
+                    if (!attentionCallbackGenerationMatches(generation)) return;
                     AttentionAheadOperandContext& callbackAhead =
                         attentionWorker_->aheadOperands;
                     if (!ok || callbackTag != tag || bytes.size() != chunk ||
@@ -2192,8 +2941,7 @@ public:
                 arrayIds, bank, matrix, sizeof(float), tag, LastTickCycle,
                 [this, generation, queryBlock, keyTileOrdinal, keyTile, bank, tag]
                 (bool ok, uint64_t callbackTag) {
-                    if (!attentionWorker_ ||
-                        attentionWorker_->generation != generation) return;
+                    if (!attentionCallbackGenerationMatches(generation)) return;
                     AttentionAheadOperandContext& callbackAhead =
                         attentionWorker_->aheadOperands;
                     if (!ok || callbackTag != tag ||
@@ -2235,8 +2983,7 @@ public:
                 [this, generation, queryBlock, keyTileOrdinal, keyTile, bank,
                  arrayId, tag, bytesExpected]
                 (bool ok, uint64_t callbackTag, const std::vector<uint8_t>& bytes) {
-                    if (!attentionWorker_ ||
-                        attentionWorker_->generation != generation) return;
+                    if (!attentionCallbackGenerationMatches(generation)) return;
                     AttentionAheadOperandContext& callbackAhead =
                         attentionWorker_->aheadOperands;
                     if (!ok || callbackTag != tag || bytes.size() != bytesExpected ||
@@ -2270,8 +3017,7 @@ public:
                 arrayId, bank, input, sizeof(float), tag, LastTickCycle,
                 [this, generation, queryBlock, keyTileOrdinal, keyTile, bank,
                  arrayId, tag](bool ok, uint64_t callbackTag) {
-                    if (!attentionWorker_ ||
-                        attentionWorker_->generation != generation) return;
+                    if (!attentionCallbackGenerationMatches(generation)) return;
                     AttentionAheadOperandContext& callbackAhead =
                         attentionWorker_->aheadOperands;
                     if (!ok || callbackTag != tag ||
@@ -2332,14 +3078,674 @@ public:
         pumpAttentionAheadOperands();
     }
 
+    AttentionClusterAheadContext* attentionClusterAhead(
+        uint32_t queryBlock, uint32_t keyTileOrdinal) {
+        if (!attentionWorker_) return nullptr;
+        AttentionClusterAheadContext& ahead =
+            attentionWorker_->clusterAhead[
+                queryBlock % attentionClusterConfig_.groupSize];
+        return ahead.phase != AttentionClusterAheadPhase::Idle &&
+            ahead.generation == attentionWorker_->generation &&
+            ahead.queryBlock == queryBlock &&
+            ahead.keyTileOrdinal == keyTileOrdinal ? &ahead : nullptr;
+    }
+
+    bool reserveAttentionClusterAheadQk(AttentionClusterAheadContext& ahead) {
+        if (!attentionWorker_ || !attentionCluster_ || sfu == nullptr) return false;
+        const int qk = attentionCluster_->reserve(
+            AttentionClusterContextKind::Qk, ahead.tag, ahead.operandBank);
+        if (qk < 0) return false;
+        const int score = attentionCluster_->reserve(
+            AttentionClusterContextKind::Score, ahead.tag, ahead.operandBank);
+        if (score < 0 || !sfu->reserveAttentionScoreSlot(
+                static_cast<uint32_t>(score), ahead.tag,
+                static_cast<size_t>(attentionQueryRows(*attentionWorker_)) *
+                    attentionKeyCols(*attentionWorker_))) {
+            if (score >= 0) attentionCluster_->release(
+                AttentionClusterContextKind::Score,
+                static_cast<uint32_t>(score), ahead.tag);
+            attentionCluster_->release(
+                AttentionClusterContextKind::Qk,
+                static_cast<uint32_t>(qk), ahead.tag);
+            statAttentionClusterScoreSlotFullStalls_->addData(1);
+            return false;
+        }
+        uint32_t acquired = 0;
+        for (uint32_t arrayId = 0;
+             arrayId < attentionClusterConfig_.qkArrays; ++arrayId) {
+            if (!attentionCluster_->acquireBank(
+                    arrayId, ahead.operandBank, AttentionArrayOwner::Qk,
+                    ahead.tag)) {
+                for (uint32_t releaseId = 0; releaseId < acquired; ++releaseId) {
+                    attentionCluster_->releaseBank(
+                        releaseId, ahead.operandBank, AttentionArrayOwner::Qk,
+                        ahead.tag);
+                }
+                sfu->releaseAttentionScoreSlot(
+                    static_cast<uint32_t>(score), ahead.tag);
+                attentionCluster_->release(
+                    AttentionClusterContextKind::Score,
+                    static_cast<uint32_t>(score), ahead.tag);
+                attentionCluster_->release(
+                    AttentionClusterContextKind::Qk,
+                    static_cast<uint32_t>(qk), ahead.tag);
+                return false;
+            }
+            ++acquired;
+        }
+        ahead.qkContext = qk;
+        ahead.scoreContext = score;
+        statAttentionClusterContextsIssued_->addData(2);
+        statAttentionClusterScoreSlotReservations_->addData(1);
+        recordAttentionClusterContextHighWater();
+        return true;
+    }
+
+    bool releaseAttentionClusterAheadQk(AttentionClusterAheadContext& ahead) {
+        if (!attentionCluster_ || ahead.qkContext < 0) return false;
+        bool ok = true;
+        for (uint32_t arrayId = 0;
+             arrayId < attentionClusterConfig_.qkArrays; ++arrayId) {
+            ok = attentionCluster_->releaseBank(
+                arrayId, ahead.operandBank, AttentionArrayOwner::Qk,
+                ahead.tag) && ok;
+        }
+        ok = attentionCluster_->release(
+            AttentionClusterContextKind::Qk,
+            static_cast<uint32_t>(ahead.qkContext), ahead.tag) && ok;
+        ahead.qkContext = -1;
+        if (ok) statAttentionClusterContextsCompleted_->addData(1);
+        return ok;
+    }
+
+    bool releaseAttentionClusterAheadScore(AttentionClusterAheadContext& ahead) {
+        if (!attentionCluster_ || sfu == nullptr || ahead.scoreContext < 0)
+            return false;
+        const bool fifoOk = sfu->releaseAttentionScoreSlot(
+            static_cast<uint32_t>(ahead.scoreContext), ahead.tag);
+        const bool ok = fifoOk && attentionCluster_->release(
+            AttentionClusterContextKind::Score,
+            static_cast<uint32_t>(ahead.scoreContext), ahead.tag);
+        ahead.scoreContext = -1;
+        if (ok) {
+            statAttentionClusterContextsCompleted_->addData(1);
+            statAttentionClusterScoreSlotReleases_->addData(1);
+        }
+        return ok;
+    }
+
+    bool startAttentionClusterAheadContext(uint32_t queryBlock) {
+        if (!attentionWorker_ || !attentionClusterEnable_) return false;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t slot = queryBlock % attentionClusterConfig_.groupSize;
+        AttentionClusterAheadContext& ahead = state.clusterAhead[slot];
+        if (ahead.phase != AttentionClusterAheadPhase::Idle) return false;
+        ahead.generation = state.generation;
+        ahead.queryBlock = queryBlock;
+        ahead.keyTileOrdinal = state.keyTileOrdinal;
+        ahead.keyTile = state.keyTile;
+        ahead.operandBank = state.activeOperandBank;
+        ahead.qLocal = state.qLocalBuffers[slot];
+        ahead.tag.generation = state.generation;
+        ahead.tag.jobId = state.dispatch.jobId;
+        ahead.tag.group = queryBlock / attentionClusterConfig_.groupSize;
+        ahead.tag.queryContext = slot;
+        ahead.tag.queryBlock = queryBlock;
+        ahead.tag.keyTile = state.keyTileOrdinal;
+        ahead.queryBytes.resize(
+            static_cast<size_t>(attentionQueryRows(state)) *
+            state.dispatch.headDim * sizeof(float));
+        if (!reserveAttentionClusterAheadQk(ahead)) {
+            ahead = {};
+            return false;
+        }
+        statAttentionClusterAheadContextsLaunched_->addData(1);
+        ahead.phase = state.clusterQueryLoaded[slot]
+            ? AttentionClusterAheadPhase::QueryRead
+            : AttentionClusterAheadPhase::QueryDma;
+        return true;
+    }
+
+    bool attentionClusterHasQkProducer() const {
+        if (!attentionWorker_) return false;
+        for (const auto& ahead : attentionWorker_->clusterAhead) {
+            if (ahead.phase >= AttentionClusterAheadPhase::QueryDma &&
+                ahead.phase <= AttentionClusterAheadPhase::ScoreWrite) return true;
+        }
+        return false;
+    }
+
+    void scheduleAttentionClusterOwnerRetry(std::function<void()> retry) {
+        if (!attentionWorker_ || !retry) return;
+        auto& state = *attentionWorker_;
+        constexpr size_t kRetryQueueLimit = 16;
+        statAttentionClusterInitialEnqueueRetries_->addData(1);
+        if (state.clusterOwnerRetry || state.clusterOwnerRetryQueue.size() >= kRetryQueueLimit) {
+            if (state.clusterOwnerRetryQueue.size() >= kRetryQueueLimit) {
+                statAttentionClusterIllegalTransitions_->addData(1);
+                finishAttentionWorker(false);
+            } else {
+                state.clusterOwnerRetryQueue.push_back(std::move(retry));
+            }
+            return;
+        }
+        state.clusterOwnerRetry = std::move(retry);
+    }
+
+    void maybeStartAttentionClusterAhead() {
+        if (!attentionWorker_ || !attentionClusterEnable_ ||
+            !attentionWorker_->clusterAheadEnabledForTile ||
+            attentionClusterHasQkProducer()) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t end = attentionKvGroupEndQueryBlock(state);
+        for (uint32_t query = state.queryBlock + 1; query < end; ++query) {
+            if (attentionClusterAhead(query, state.keyTileOrdinal)) continue;
+            if (startAttentionClusterAheadContext(query)) break;
+            return;
+        }
+    }
+
+    void pumpAttentionClusterAhead() {
+        if (!attentionWorker_ || !attentionClusterEnable_) return;
+        maybeStartAttentionClusterAhead();
+        AttentionWorkerState& state = *attentionWorker_;
+        AttentionClusterAheadContext* selected = nullptr;
+        for (auto& candidate : state.clusterAhead) {
+            if (candidate.phase >= AttentionClusterAheadPhase::QueryDma &&
+                candidate.phase <= AttentionClusterAheadPhase::SoftmaxIssue) {
+                selected = &candidate;
+                break;
+            }
+        }
+        if (selected == nullptr) return;
+        AttentionClusterAheadContext& ahead = *selected;
+        const uint64_t generation = ahead.generation;
+        const uint32_t queryBlock = ahead.queryBlock;
+        const uint32_t keyTileOrdinal = ahead.keyTileOrdinal;
+        const uint32_t slot = queryBlock % attentionClusterConfig_.groupSize;
+
+        if (ahead.phase == AttentionClusterAheadPhase::QueryDma) {
+            if (ahead.requestInFlight) return;
+            ahead.requestInFlight = true;
+            globalMem->dma_read_from_host_to_globalmem(
+                state.dispatch.qAddr + static_cast<uint64_t>(queryBlock) *
+                    state.dispatch.queryBlockRows * state.dispatch.headDim *
+                    sizeof(float),
+                ahead.queryBytes.size(), ahead.qLocal,
+                [this, generation, queryBlock, keyTileOrdinal, slot](bool ok) {
+                    AttentionClusterAheadContext* callbackAhead =
+                        attentionClusterAhead(queryBlock, keyTileOrdinal);
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok || callbackAhead == nullptr ||
+                        callbackAhead->phase !=
+                            AttentionClusterAheadPhase::QueryDma ||
+                        !callbackAhead->requestInFlight) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    callbackAhead->requestInFlight = false;
+                    callbackAhead->phase = AttentionClusterAheadPhase::QueryRead;
+                    attentionWorker_->clusterQueryLoaded[slot] = true;
+                    pumpAttentionClusterAhead();
+                }, DmaRequestKind::AttentionQuery);
+            return;
+        }
+        if (ahead.phase == AttentionClusterAheadPhase::QueryRead) {
+            if (ahead.requestInFlight) return;
+            if (ahead.queryOffset == ahead.queryBytes.size()) {
+                ahead.qPayload = attentionBytesToDoubles(ahead.queryBytes);
+                ahead.queryBytes.clear();
+                ahead.phase = AttentionClusterAheadPhase::InputProgram;
+                pumpAttentionClusterAhead();
+                return;
+            }
+            const size_t chunk = std::min(
+                ahead.queryBytes.size() - ahead.queryOffset,
+                globalMem->localMaxRequestBytes());
+            const size_t offset = ahead.queryOffset;
+            const uint64_t tag = attentionTransferTag();
+            if (globalMem->localReadAsync(
+                    ahead.qLocal + offset, chunk, LocalMemoryClient::RoCC, tag,
+                    [this, generation, queryBlock, keyTileOrdinal, offset, chunk,
+                     tag](bool ok, uint64_t callbackTag,
+                          const std::vector<uint8_t>& bytes) {
+                        AttentionClusterAheadContext* callbackAhead =
+                            attentionClusterAhead(queryBlock, keyTileOrdinal);
+                        if (!attentionCallbackGenerationMatches(generation)) return;
+                        if (!ok || callbackTag != tag || callbackAhead == nullptr ||
+                            callbackAhead->phase !=
+                                AttentionClusterAheadPhase::QueryRead ||
+                            callbackAhead->queryOffset != offset ||
+                            bytes.size() != chunk) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        callbackAhead->requestInFlight = false;
+                        std::copy(bytes.begin(), bytes.end(),
+                            callbackAhead->queryBytes.begin() + offset);
+                        callbackAhead->queryOffset += chunk;
+                        pumpAttentionClusterAhead();
+                    })) {
+                ahead.requestInFlight = true;
+            } else {
+                statAttentionClusterInitialEnqueueRetries_->addData(1);
+            }
+            return;
+        }
+        if (ahead.phase == AttentionClusterAheadPhase::InputProgram) {
+            if (ahead.requestInFlight) return;
+            const uint32_t halves = attentionClusterHeadHalves(state);
+            const uint32_t lanes = attentionClusterQkLanes(state);
+            const uint32_t activeArrays = attentionClusterWaveRows(
+                state, ahead.wave, lanes) * halves;
+            if (ahead.pair == activeArrays) {
+                ahead.launchIndex = 0;
+                ahead.arraysPending = 0;
+                ahead.phase = AttentionClusterAheadPhase::Launch;
+                pumpAttentionClusterAhead();
+                return;
+            }
+            const uint32_t physical = ahead.pair;
+            const uint32_t wave = ahead.wave;
+            const uint32_t query = attentionClusterWaveRowBegin(
+                ahead.wave, lanes) + physical / halves;
+            const uint32_t half = physical % halves;
+            if (query >= attentionQueryRowsForBlock(state, queryBlock)) {
+                finishAttentionWorker(false);
+                return;
+            }
+            std::vector<double> input(
+                ahead.qPayload.begin() +
+                    static_cast<size_t>(query) * state.dispatch.headDim +
+                        half * arrayInputSize,
+                ahead.qPayload.begin() +
+                    static_cast<size_t>(query) * state.dispatch.headDim +
+                        (half + 1) * arrayInputSize);
+            std::vector<uint32_t> arrays = {
+                attentionClusterQkArray(query, half)};
+            const uint64_t tag = attentionTransferTag();
+            if (workerCommandProcessor->programGemmInputGroupBankAsync(
+                    arrays, ahead.operandBank, input, sizeof(float),
+                    AttentionClusterTrafficClass::QkQPair, tag, LastTickCycle,
+                    [this, generation, queryBlock, keyTileOrdinal, physical, wave,
+                     tag, bytes = input.size() * sizeof(float)](
+                        bool ok, uint64_t callbackTag) {
+                        AttentionClusterAheadContext* callbackAhead =
+                            attentionClusterAhead(queryBlock, keyTileOrdinal);
+                        if (!attentionCallbackGenerationMatches(generation)) return;
+                        if (!ok || callbackTag != tag || callbackAhead == nullptr ||
+                            callbackAhead->phase !=
+                                AttentionClusterAheadPhase::InputProgram ||
+                            callbackAhead->wave != wave ||
+                            callbackAhead->pair != physical) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        callbackAhead->requestInFlight = false;
+                        statAttentionClusterQPairMulticasts_->addData(1);
+                        statAttentionClusterQPairBytes_->addData(bytes);
+                        ++callbackAhead->pair;
+                        pumpAttentionClusterAhead();
+                    })) {
+                ahead.requestInFlight = true;
+            } else {
+                statAttentionClusterInitialEnqueueRetries_->addData(1);
+            }
+            return;
+        }
+        if (ahead.phase == AttentionClusterAheadPhase::Launch) {
+            if (ahead.requestInFlight || ahead.launchIndex != 0) return;
+            const uint32_t activeArrays = attentionClusterWaveRows(
+                state, ahead.wave, attentionClusterQkLanes(state)) *
+                attentionClusterHeadHalves(state);
+            std::vector<uint32_t> arrayIds(activeArrays);
+            std::iota(arrayIds.begin(), arrayIds.end(), 0);
+            const uint64_t acceptedCycle = LastTickCycle;
+            const bool accepted = workerCommandProcessor->launchGemmArrayGroupActiveBank(
+                arrayIds, ahead.operandBank, 0, 0, LastTickCycle,
+                [this, generation, queryBlock, keyTileOrdinal, activeArrays](
+                    uint32_t completedArrayId, uint64_t) {
+                    AttentionClusterAheadContext* callbackAhead =
+                        attentionClusterAhead(queryBlock, keyTileOrdinal);
+                    if (!attentionCallbackGenerationMatches(generation)) {
+                        if (!attentionClusterQkArrayActivity_.leave(
+                                getCurrentSimCycle())) {
+                            statAttentionClusterIllegalTransitions_->addData(1);
+                        }
+                        return;
+                    }
+                    if (callbackAhead == nullptr ||
+                        callbackAhead->phase !=
+                            AttentionClusterAheadPhase::Compute ||
+                        callbackAhead->arraysPending == 0) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    arrayStates[completedArrayId] = 0;
+                    if (!attentionClusterQkArrayActivity_.leave(
+                            getCurrentSimCycle())) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    --callbackAhead->arraysPending;
+                    if (callbackAhead->arraysPending == 0 &&
+                        callbackAhead->launchIndex == activeArrays) {
+                        callbackAhead->qkEndCycle = LastTickCycle;
+                        callbackAhead->outputIndex = attentionClusterWaveRowBegin(
+                            callbackAhead->wave,
+                            attentionClusterQkLanes(*attentionWorker_));
+                        callbackAhead->phase =
+                            AttentionClusterAheadPhase::OutputRead;
+                        pumpAttentionClusterAhead();
+                    }
+                });
+            if (!accepted) {
+                statAttentionClusterInitialEnqueueRetries_->addData(1);
+                return;
+            }
+            ahead.qkStartCycle = acceptedCycle;
+            if (ahead.wave == 0) {
+                recordAttentionClusterQkTileStart(
+                    acceptedCycle, ahead.keyTileOrdinal, ahead.queryBlock);
+            }
+            for (uint32_t arrayId : arrayIds) {
+                arrayStates[arrayId] = 1;
+                if (!attentionClusterQkArrayActivity_.enter(getCurrentSimCycle())) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                statAttentionQkArrayOps_->addData(1);
+                statAttentionGenericGemmQkOps_->addData(1);
+            }
+            ahead.launchIndex = activeArrays;
+            ahead.arraysPending = activeArrays;
+            ahead.phase = AttentionClusterAheadPhase::Compute;
+            return;
+        }
+        if (ahead.phase == AttentionClusterAheadPhase::OutputRead) {
+            if (ahead.requestInFlight) return;
+            const uint32_t lanes = attentionClusterQkLanes(state);
+            const uint32_t waveEnd = attentionClusterWaveRowBegin(
+                ahead.wave, lanes) + attentionClusterWaveRows(
+                    state, ahead.wave, lanes);
+            if (ahead.outputIndex == waveEnd) {
+                ++ahead.wave;
+                if (ahead.wave < attentionClusterQkWaves(state)) {
+                    ahead.pair = 0;
+                    ahead.phase = AttentionClusterAheadPhase::InputProgram;
+                    pumpAttentionClusterAhead();
+                    return;
+                }
+                statAttentionWorkerQkTileCompleteTick_->addData(
+                    getCurrentSimCycle());
+                if (attentionTileTrace_) {
+                    traceAttentionMilestone(
+                        "worker", "qk_tile_complete", "done",
+                        state.dispatch.jobId, state.dispatch.tag,
+                        queryBlock, keyTileOrdinal);
+                }
+                if (queryBlock + 1 == attentionQueryBlocks(state) &&
+                    keyTileOrdinal + 1 ==
+                        attentionKeyTilesForQueryBlock(state)) {
+                    traceAttentionMilestone(
+                        "worker", "final_qk_tile_complete", "done",
+                        state.dispatch.jobId, state.dispatch.tag,
+                        queryBlock, keyTileOrdinal);
+                }
+                if (!releaseAttentionClusterAheadQk(ahead)) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                ahead.phase = AttentionClusterAheadPhase::SoftmaxIssue;
+                pumpAttentionClusterAhead();
+                return;
+            }
+            const uint32_t logicalQuery = ahead.outputIndex;
+            const uint32_t wave = ahead.wave;
+            const uint32_t halves = attentionClusterHeadHalves(state);
+            std::vector<uint32_t> arrays(halves);
+            for (uint32_t half = 0; half < halves; ++half)
+                arrays[half] = attentionClusterQkArray(logicalQuery, half);
+            const uint64_t tag = attentionTransferTag();
+            if (workerCommandProcessor->readGemmOutputGroupClassAsync(
+                    arrays, sizeof(float),
+                    AttentionClusterTrafficClass::QkScoreOut, tag,
+                    LastTickCycle,
+                    [this, generation, queryBlock, keyTileOrdinal,
+                     logicalQuery, halves, tag](
+                        bool ok, uint64_t callbackTag,
+                        const std::vector<double>& values) {
+                        AttentionClusterAheadContext* callbackAhead =
+                            attentionClusterAhead(queryBlock, keyTileOrdinal);
+                        if (!attentionCallbackGenerationMatches(generation)) return;
+                        if (!ok || callbackTag != tag || callbackAhead == nullptr ||
+                            callbackAhead->phase !=
+                                AttentionClusterAheadPhase::OutputRead ||
+                            callbackAhead->outputIndex != logicalQuery ||
+                            values.size() != static_cast<size_t>(halves) *
+                                attentionClusterConfig_.arrayOutputs) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        callbackAhead->requestInFlight = false;
+                        const uint32_t keyCols =
+                            attentionKeyCols(*attentionWorker_);
+                        callbackAhead->pendingScoreBeat.assign(keyCols, 0.0f);
+                        for (uint32_t key = 0; key < keyCols; ++key) {
+                            double sum = 0.0;
+                            for (uint32_t half = 0; half < halves; ++half) {
+                                sum += values[static_cast<size_t>(half) *
+                                    attentionClusterConfig_.arrayOutputs + key];
+                            }
+                            callbackAhead->pendingScoreBeat[key] =
+                                static_cast<float>(sum);
+                        }
+                        callbackAhead->transferTag =
+                            static_cast<uint64_t>(logicalQuery) *
+                                attentionKeyCols(*attentionWorker_);
+                        callbackAhead->phase =
+                            AttentionClusterAheadPhase::ScoreWrite;
+                        pumpAttentionClusterAhead();
+                    })) {
+                ahead.requestInFlight = true;
+            } else {
+                statAttentionClusterInitialEnqueueRetries_->addData(1);
+            }
+            return;
+        }
+        if (ahead.phase == AttentionClusterAheadPhase::ScoreWrite) {
+            if (ahead.requestInFlight) return;
+            const uint64_t tag = attentionTransferTag();
+            const size_t offset = static_cast<size_t>(ahead.transferTag);
+            const size_t bytes = ahead.pendingScoreBeat.size() * sizeof(float);
+            if (sfu->writeAttentionScoreBeatAsync(
+                    static_cast<uint32_t>(ahead.scoreContext), ahead.tag,
+                    offset, ahead.pendingScoreBeat, tag,
+                    [this, generation, queryBlock, keyTileOrdinal, tag, bytes](
+                        bool ok, uint64_t callbackTag) {
+                        AttentionClusterAheadContext* callbackAhead =
+                            attentionClusterAhead(queryBlock, keyTileOrdinal);
+                        if (!attentionCallbackGenerationMatches(generation)) return;
+                        if (!ok || callbackTag != tag || callbackAhead == nullptr ||
+                            callbackAhead->phase !=
+                                AttentionClusterAheadPhase::ScoreWrite) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        callbackAhead->requestInFlight = false;
+                        statAttentionClusterScoreBeats_->addData(1);
+                        statAttentionClusterScoreBytes_->addData(bytes);
+                        callbackAhead->pendingScoreBeat.clear();
+                        ++callbackAhead->outputIndex;
+                        callbackAhead->phase =
+                            AttentionClusterAheadPhase::OutputRead;
+                        pumpAttentionClusterAhead();
+                    })) {
+                ahead.requestInFlight = true;
+            } else {
+                statAttentionClusterInitialEnqueueRetries_->addData(1);
+            }
+            return;
+        }
+        if (ahead.phase == AttentionClusterAheadPhase::SoftmaxIssue) {
+            if (ahead.pContext < 0) {
+                const size_t pElements =
+                    static_cast<size_t>(attentionQueryRows(state)) *
+                    attentionKeyCols(state);
+                const AttentionClusterAdmission admission =
+                    sfu->attentionPSlotAdmission(
+                        static_cast<uint32_t>(ahead.scoreContext), ahead.tag,
+                        pElements);
+                if (admission == AttentionClusterAdmission::Invalid) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                if (admission == AttentionClusterAdmission::Retry) return;
+                if (!sfu->reserveAttentionPSlot(
+                        static_cast<uint32_t>(ahead.scoreContext), ahead.tag,
+                        pElements)) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                ahead.pContext = ahead.scoreContext;
+            }
+            AttentionTileRequest request;
+            request.tag = state.dispatch.tag +
+                queryBlock * ((state.dispatch.expectedCols +
+                    state.dispatch.keyBlockRows - 1) /
+                    state.dispatch.keyBlockRows) + keyTileOrdinal + 1;
+            request.jobId = state.dispatch.jobId;
+            request.globalRowBegin = state.dispatch.row +
+                queryBlock * state.dispatch.queryBlockRows;
+            request.keyBegin = ahead.keyTile * state.dispatch.keyBlockRows;
+            request.rows = attentionQueryRows(state);
+            request.cols = attentionKeyCols(state);
+            request.headDim = state.dispatch.headDim;
+            request.keyTile = keyTileOrdinal;
+            request.keyTiles = attentionKeyTilesForQueryBlock(state);
+            request.causal = false;
+            request.firstTileForJob = false;
+            request.directScoreMode = true;
+            request.generation = generation;
+            request.scoreSlot = static_cast<uint32_t>(ahead.scoreContext);
+            request.scoreTag = ahead.tag;
+            request.directPMode = true;
+            request.pSlot = static_cast<uint32_t>(ahead.pContext);
+            request.pTag = ahead.tag;
+            const AttentionClusterAdmission admission =
+                sfu->attentionTileAdmission(request);
+            if (admission == AttentionClusterAdmission::Invalid) {
+                finishAttentionWorker(false);
+                return;
+            }
+            if (admission == AttentionClusterAdmission::Retry) {
+                statAttentionClusterInitialEnqueueRetries_->addData(1);
+                return;
+            }
+            if (!sfu->issueAttentionTile(
+                    request,
+                    [this, generation, queryBlock, keyTileOrdinal](
+                        bool ok, const AttentionTileResult& result) {
+                        AttentionClusterAheadContext* callbackAhead =
+                            attentionClusterAhead(queryBlock, keyTileOrdinal);
+                        if (!attentionCallbackGenerationMatches(generation)) return;
+                        if (!ok || callbackAhead == nullptr ||
+                            callbackAhead->phase !=
+                                AttentionClusterAheadPhase::SoftmaxRunning ||
+                            !releaseAttentionClusterAheadScore(*callbackAhead)) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        callbackAhead->outputScales.assign(
+                            result.oldOutputScale.begin(),
+                            result.oldOutputScale.begin() + result.rows);
+                        callbackAhead->sfuEndCycle = LastTickCycle;
+                        statAttentionWorkerSoftmaxTileCompleteTick_->addData(
+                            getCurrentSimCycle());
+                        if (attentionTileTrace_) {
+                            traceAttentionMilestone(
+                                "worker", "softmax_tile_complete", "done",
+                                attentionWorker_->dispatch.jobId,
+                                attentionWorker_->dispatch.tag,
+                                queryBlock, keyTileOrdinal);
+                        }
+                        if (queryBlock + 1 ==
+                                attentionQueryBlocks(*attentionWorker_) &&
+                            keyTileOrdinal + 1 ==
+                                attentionKeyTilesForQueryBlock(
+                                    *attentionWorker_)) {
+                            traceAttentionMilestone(
+                                "worker", "final_softmax_tile_complete", "done",
+                                attentionWorker_->dispatch.jobId,
+                                attentionWorker_->dispatch.tag,
+                                queryBlock, keyTileOrdinal);
+                        }
+                        callbackAhead->phase =
+                            AttentionClusterAheadPhase::Ready;
+                        statAttentionClusterAheadContextsCompleted_->addData(1);
+                        if (attentionWorker_->clusterAheadPromotionWaiting &&
+                            attentionWorker_->queryBlock == queryBlock) {
+                            attentionWorker_->clusterAheadPromotionWaiting = false;
+                            promoteAttentionClusterAhead();
+                            return;
+                        }
+                        pumpAttentionClusterAhead();
+                    })) {
+                finishAttentionWorker(false);
+                return;
+            }
+            ahead.sfuStartCycle = LastTickCycle;
+            ahead.phase = AttentionClusterAheadPhase::SoftmaxRunning;
+            maybeStartAttentionClusterAhead();
+            pumpAttentionClusterAhead();
+        }
+    }
+
+    bool promoteAttentionClusterAhead() {
+        if (!attentionWorker_ || !attentionClusterEnable_) return false;
+        AttentionWorkerState& state = *attentionWorker_;
+        AttentionClusterAheadContext* ahead =
+            attentionClusterAhead(state.queryBlock, state.keyTileOrdinal);
+        if (ahead == nullptr || ahead->phase != AttentionClusterAheadPhase::Ready)
+            return false;
+        state.activeOperandBank = ahead->operandBank;
+        state.clusterTileTag = ahead->tag;
+        state.clusterQkContext = -1;
+        state.clusterScoreContext = -1;
+        state.clusterPContext = ahead->pContext;
+        state.outputScales = std::move(ahead->outputScales);
+        ahead->pContext = -1;
+        *ahead = {};
+        statAttentionClusterAheadContextsPromoted_->addData(1);
+        state.panel = 0;
+        state.clusterPvWave = 0;
+        state.attentionSoftmaxComplete = true;
+        beginAttentionTilePipeline();
+        const DmaConsumerMetadata consumerProgress = attentionDmaConsumerMetadata(
+            state, state.queryBlock, state.keyTileOrdinal, DmaOperand::Unknown);
+        globalMem->dma_update_consumer_progress(
+            attentionKvHostAddr(state, state.dispatch.kAddr),
+            attentionKvHostAddr(state, state.dispatch.vAddr), consumerProgress);
+        if (!ensureAttentionClusterOContext() || !reserveAttentionClusterPv()) {
+            finishAttentionWorker(false);
+            return true;
+        }
+        transitionAttentionTilePipeline(
+            AttentionTilePipelinePhase::PvMatrixProgram);
+        beginAttentionPvPanel();
+        pumpAttentionClusterAhead();
+        return true;
+    }
+
     bool selectAttentionQueryStorage(AttentionWorkerState& state) {
         const uint32_t slot = state.queryBlock % attentionKvQueryGroupSize(state);
         if (slot >= state.qLocalBuffers.size() ||
-            slot >= state.oLocalBuffers.size()) {
+            state.oLocalBuffers.empty()) {
             return false;
         }
         state.qLocal = state.qLocalBuffers[slot];
-        state.oLocal = state.oLocalBuffers[slot];
+        state.oLocal = state.oLocalBuffers[
+            attentionClusterEnable_ ? 0 : slot];
         return true;
     }
 
@@ -2347,8 +3753,62 @@ public:
         return (attentionKeyCols(state) + 15) / 16;
     }
 
+    uint32_t attentionClusterQkLanes(const AttentionWorkerState& state) const {
+        const uint32_t halves = attentionClusterHeadHalves(state);
+        return halves == 0 ? 0 : std::min(
+            attentionQueryRows(state), attentionClusterConfig_.qkArrays / halves);
+    }
+
+    uint32_t attentionClusterQkWaves(const AttentionWorkerState& state) const {
+        const uint32_t lanes = attentionClusterQkLanes(state);
+        return lanes == 0 ? 0 :
+            (attentionQueryRows(state) + lanes - 1) / lanes;
+    }
+
+    uint32_t attentionClusterPvLanes(const AttentionWorkerState& state) const {
+        const uint32_t halves = attentionClusterHeadHalves(state);
+        return halves == 0 ? 0 : std::min(
+            attentionQueryRows(state), attentionClusterConfig_.pvArrays / halves);
+    }
+
+    uint32_t attentionClusterWaveRowBegin(
+            uint32_t wave, uint32_t lanes) const {
+        return wave * lanes;
+    }
+
+    uint32_t attentionClusterWaveRows(
+            const AttentionWorkerState& state, uint32_t wave,
+            uint32_t lanes) const {
+        const uint32_t begin = attentionClusterWaveRowBegin(wave, lanes);
+        return begin >= attentionQueryRows(state) ? 0 :
+            std::min(lanes, attentionQueryRows(state) - begin);
+    }
+
+    uint32_t attentionClusterPvWaves(const AttentionWorkerState& state) const {
+        const uint32_t lanes = attentionClusterPvLanes(state);
+        return lanes == 0 ? 0 :
+            (attentionQueryRows(state) + lanes - 1) / lanes;
+    }
+
     uint32_t attentionDimensionPanels(const AttentionWorkerState& state) const {
         return (state.dispatch.headDim + 15) / 16;
+    }
+
+    uint32_t attentionClusterHeadHalves(
+            const AttentionWorkerState& state) const {
+        return (state.dispatch.headDim + attentionClusterConfig_.arrayInputs - 1) /
+            attentionClusterConfig_.arrayInputs;
+    }
+
+    uint32_t attentionClusterQkArray(uint32_t row, uint32_t half) const {
+        const uint32_t lanes = attentionClusterQkLanes(*attentionWorker_);
+        return (row % lanes) * attentionClusterHeadHalves(*attentionWorker_) + half;
+    }
+
+    uint32_t attentionClusterPvArray(uint32_t row, uint32_t half) const {
+        const uint32_t lanes = attentionClusterPvLanes(*attentionWorker_);
+        return attentionClusterConfig_.qkArrays +
+            (row % lanes) * attentionClusterHeadHalves(*attentionWorker_) + half;
     }
 
     uint32_t attentionOAccumulatorRow(
@@ -2447,6 +3907,55 @@ public:
         return attentionKvHostAddrForTile(state, tensorBase, state.keyTile);
     }
 
+    void dmaAttentionKvTileToLocal(
+            const AttentionWorkerState& state, uint64_t tensorBase,
+            uint32_t keyTile, uint64_t localBase, DmaRequestKind kind,
+            const DmaConsumerMetadata& consumer,
+            std::function<void(bool)> callback) {
+        const uint32_t tileRows = attentionKeyColsForTile(state, keyTile);
+        const uint32_t firstRow = keyTile * state.dispatch.keyBlockRows;
+        if (!attentionStreamKv(state) || tileRows <= state.dispatch.rowsPerBand -
+                firstRow % state.dispatch.rowsPerBand) {
+            globalMem->dma_read_from_host_to_globalmem(
+                attentionKvHostAddrForTile(state, tensorBase, keyTile),
+                static_cast<uint64_t>(tileRows) * state.dispatch.headDim *
+                    sizeof(float),
+                localBase, std::move(callback), kind, consumer);
+            return;
+        }
+
+        const uint32_t segmentCount =
+            (firstRow % state.dispatch.rowsPerBand + tileRows +
+             state.dispatch.rowsPerBand - 1) / state.dispatch.rowsPerBand;
+        auto pending = std::make_shared<uint32_t>(segmentCount);
+        auto allOk = std::make_shared<bool>(true);
+        uint32_t rowsIssued = 0;
+        while (rowsIssued < tileRows) {
+            const uint32_t globalRow = firstRow + rowsIssued;
+            const uint32_t nodeBand = globalRow / state.dispatch.rowsPerBand;
+            const uint32_t rowInBand = globalRow % state.dispatch.rowsPerBand;
+            const uint32_t rows = std::min(
+                tileRows - rowsIssued,
+                state.dispatch.rowsPerBand - rowInBand);
+            const uint64_t src = tensorBase +
+                static_cast<uint64_t>(nodeBand) * state.dispatch.nodeStrideBytes +
+                static_cast<uint64_t>(rowInBand) * state.dispatch.headDim *
+                    sizeof(float);
+            const uint64_t dst = localBase +
+                static_cast<uint64_t>(rowsIssued) * state.dispatch.headDim *
+                    sizeof(float);
+            const uint64_t bytes = static_cast<uint64_t>(rows) *
+                state.dispatch.headDim * sizeof(float);
+            globalMem->dma_read_from_host_to_globalmem(
+                src, bytes, dst,
+                [pending, allOk, callback](bool ok) {
+                    *allOk = *allOk && ok;
+                    if (--*pending == 0) callback(*allOk);
+                }, kind, consumer);
+            rowsIssued += rows;
+        }
+    }
+
     DmaConsumerMetadata attentionDmaConsumerMetadata(
             const AttentionWorkerState& state, uint32_t targetQueryBlock,
             uint32_t targetTile, DmaOperand operand) const {
@@ -2505,6 +4014,7 @@ public:
 
     void finishAttentionWorker(bool ok) {
         if (!attentionWorker_) return;
+        const uint64_t generation = attentionWorker_->generation;
         if ((attentionWorker_->qkRowBurstStorageActive ||
              attentionWorker_->attentionOAccumulatorStorageActive) &&
             workerCommandProcessor != nullptr &&
@@ -2514,6 +4024,46 @@ public:
                 "Attention QK tile storage failed to drain on worker failure "
                 "core=%" PRIu64 " generation=%" PRIu64 "\n",
                 coreID, attentionWorker_->generation);
+        }
+        if (attentionClusterEnable_ && attentionCluster_) {
+            if (ok && (!attentionCluster_->drained() ||
+                       !attentionOAccumulator_.drained() ||
+                       !globalMem->attentionGenerationDrained(generation))) {
+                statAttentionClusterIllegalTransitions_->addData(1);
+                ok = false;
+            }
+            if (ok && !globalMem->retireAttentionGeneration(generation)) {
+                statAttentionClusterIllegalTransitions_->addData(1);
+                ok = false;
+            }
+            if (!ok) {
+                if (sfu != nullptr) {
+                    sfu->cancelAttentionClusterGeneration(generation);
+                }
+                const uint32_t cancelledO =
+                    attentionOAccumulator_.cancelGeneration(generation);
+                if (cancelledO != 0) {
+                    statAttentionClusterOContextCancelled_->addData(cancelledO);
+                }
+                const uint32_t cancelledMemory =
+                    globalMem->cancelAttentionGeneration(generation);
+                if (cancelledMemory != 0) {
+                    statAttentionClusterMemoryRequestsCancelled_->addData(
+                        cancelledMemory);
+                }
+            }
+            const uint32_t cancelledBankRefs = attentionCluster_->liveBankRefs();
+            const uint32_t cancelled = attentionCluster_->cancel();
+            if (cancelled != 0) {
+                statAttentionClusterContextsCancelled_->addData(cancelled);
+            }
+            if (cancelledBankRefs != 0) {
+                statAttentionClusterBankRefsCancelled_->addData(cancelledBankRefs);
+            }
+            if (!attentionCluster_->drained()) {
+                statAttentionClusterIllegalTransitions_->addData(1);
+                ok = false;
+            }
         }
         const int64_t completedQueryBlock = ok && attentionWorker_->queryBlock > 0 ?
             static_cast<int64_t>(attentionWorker_->queryBlock - 1) :
@@ -2564,8 +4114,7 @@ public:
                 state.localAddr + state.localOffset, chunk, LocalMemoryClient::RoCC, tag,
                 [this, tag, chunk, generation](bool ok, uint64_t callbackTag,
                                    const std::vector<uint8_t>& bytes) {
-                    if (!attentionWorker_ ||
-                        attentionWorker_->generation != generation) return;
+                    if (!attentionCallbackGenerationMatches(generation)) return;
                     AttentionWorkerState& callbackState = *attentionWorker_;
                     callbackState.localInflight = false;
                     if (!ok || callbackTag != tag || bytes.size() != chunk) {
@@ -2585,8 +4134,7 @@ public:
             accepted = globalMem->localWriteAsync(
                 state.localAddr + state.localOffset, bytes, LocalMemoryClient::RoCC, tag,
                 [this, tag, chunk, generation](bool ok, uint64_t callbackTag) {
-                    if (!attentionWorker_ ||
-                        attentionWorker_->generation != generation) return;
+                    if (!attentionCallbackGenerationMatches(generation)) return;
                     AttentionWorkerState& callbackState = *attentionWorker_;
                     callbackState.localInflight = false;
                     if (!ok || callbackTag != tag) {
@@ -2648,9 +4196,26 @@ public:
         return bytes;
     }
 
+    std::vector<uint8_t> attentionFloatsToBytes(
+        const std::vector<float>& values) const {
+        std::vector<uint8_t> bytes(values.size() * sizeof(float));
+        if (!bytes.empty()) {
+            std::memcpy(bytes.data(), values.data(), bytes.size());
+        }
+        return bytes;
+    }
+
     void beginAttentionQueryBlock() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
+        if (attentionClusterEnable_) {
+            state.clusterAheadEnabledForTile = false;
+            state.clusterAheadPromotionWaiting = false;
+        }
+        if (attentionClusterEnable_ &&
+            state.queryBlock % attentionClusterConfig_.groupSize == 0) {
+            state.clusterQueryLoaded.fill(false);
+        }
         if (!selectAttentionQueryStorage(state)) {
             finishAttentionWorker(false);
             return;
@@ -2692,15 +4257,22 @@ public:
         }
         state.attentionWaitingKvBuffer = UINT32_MAX;
         state.attentionWaitingForPrefetch = false;
+        const uint64_t generation = state.generation;
         globalMem->dma_read_from_host_to_globalmem(
             state.dispatch.qAddr + static_cast<uint64_t>(state.queryBlock) *
                 state.dispatch.queryBlockRows * state.dispatch.headDim * sizeof(float),
             static_cast<uint64_t>(attentionQueryRows(state)) *
                 state.dispatch.headDim * sizeof(float),
-            state.qLocal, [this](bool ok) {
-                if (!attentionWorker_ || !ok) {
+            state.qLocal, [this, generation](bool ok) {
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok) {
                     finishAttentionWorker(false);
                     return;
+                }
+                if (attentionClusterEnable_) {
+                    attentionWorker_->clusterQueryLoaded[
+                        attentionWorker_->queryBlock %
+                            attentionClusterConfig_.groupSize] = true;
                 }
                 recordAttentionInterTilePhase(AttentionInterTilePhase::QueryLoad);
                 loadAttentionKeyTile();
@@ -2709,6 +4281,11 @@ public:
 
     void beginAttentionKeyTile() {
         if (!attentionWorker_) return;
+        if (attentionClusterEnable_) {
+            attentionWorker_->clusterAheadEnabledForTile = false;
+            attentionWorker_->clusterPvOperandBank =
+                attentionWorker_->keyTileOrdinal % attentionOperandContextBanks_;
+        }
         invalidateAttentionPvInputResidency();
         if (!attentionPvVTileGroupRetention_ ||
             !attentionVTileMatchesCurrentGroup(*attentionWorker_)) {
@@ -2722,11 +4299,33 @@ public:
             static_cast<uint64_t>(attentionQueryRows(*attentionWorker_)) *
                 attentionWorker_->dispatch.headDim * sizeof(float),
             [this](bool readOk, const std::vector<uint8_t>& bytes) {
-                if (!attentionWorker_ || !readOk) { finishAttentionWorker(false); return; }
+                if (!attentionWorker_ || !readOk) {
+                    finishAttentionWorker(false);
+                    return;
+                }
                 recordAttentionInterTilePhase(AttentionInterTilePhase::QLocalRead);
                 transitionAttentionTilePipeline(
                     AttentionTilePipelinePhase::QkMatrixProgram);
                 const std::vector<double> q = attentionBytesToDoubles(bytes);
+                if (attentionClusterEnable_) {
+                    AttentionWorkerState& state = *attentionWorker_;
+                    state.qPayload = q;
+                    state.clusterQkMatrixPanel = 0;
+                    state.clusterQkWave = 0;
+                    state.clusterQkPair = 0;
+                    if (!reserveAttentionClusterQkAndScore()) {
+                        state.index = 101;
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    if (!ensureAttentionClusterOContext()) {
+                        state.index = 102;
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    beginAttentionClusterKPanel();
+                    return;
+                }
                 if (attentionQkDataflowTranspose_) {
                     attentionWorker_->qPayload = q;
                     attentionWorker_->panel = 0;
@@ -2743,9 +4342,333 @@ public:
             });
     }
 
+    bool attentionClusterCallbackMatches(
+        AttentionClusterContextKind kind, int32_t slot,
+        const AttentionClusterTag& tag) {
+        if (!attentionCluster_ || slot < 0 ||
+            !attentionCluster_->callbackMatches(
+                kind, static_cast<uint32_t>(slot), tag)) {
+            statAttentionClusterStaleCallbacks_->addData(1);
+            return false;
+        }
+        return true;
+    }
+
+    void beginAttentionClusterKPanel() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        state.phase = AttentionWorkerPhase::QkProgramMatrix;
+        const uint32_t halves = attentionClusterHeadHalves(state);
+        if (state.clusterQkMatrixPanel == halves) {
+            recordAttentionInterTilePhase(
+                AttentionInterTilePhase::QkMatrixProgram);
+            transitionAttentionTilePipeline(
+                AttentionTilePipelinePhase::QkInputProgram);
+            state.phase = AttentionWorkerPhase::QkProgramInputs;
+            state.clusterQkWave = 0;
+            state.clusterQkPair = 0;
+            programAttentionClusterQPair();
+            return;
+        }
+        if (state.clusterQkMatrixPanel != 0 || !state.arrayPayload.empty()) {
+            programAttentionClusterKHalf();
+            return;
+        }
+        const uint64_t generation = state.generation;
+        const AttentionClusterTag clusterTag = state.clusterTileTag;
+        const int32_t contextSlot = state.clusterQkContext;
+        attentionLocalRead(
+            state.kLocal + static_cast<uint64_t>(attentionKvLocalKey(state, 0)) *
+                state.dispatch.headDim * sizeof(float),
+            static_cast<uint64_t>(attentionKeyCols(state)) *
+                state.dispatch.headDim * sizeof(float),
+            [this, generation, clusterTag, contextSlot](
+                bool ok, const std::vector<uint8_t>& bytes) {
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok || attentionWorker_->clusterQkMatrixPanel != 0 ||
+                    !attentionClusterCallbackMatches(
+                        AttentionClusterContextKind::Qk, contextSlot,
+                        clusterTag)) {
+                    if (attentionWorker_) finishAttentionWorker(false);
+                    return;
+                }
+                attentionWorker_->arrayPayload = attentionBytesToDoubles(bytes);
+                programAttentionClusterKHalf();
+            });
+    }
+
+    void programAttentionClusterKHalf() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t half = state.clusterQkMatrixPanel;
+        const uint32_t halves = attentionClusterHeadHalves(state);
+        if (half >= halves) {
+            beginAttentionClusterKPanel();
+            return;
+        }
+        const uint32_t keyCols = attentionKeyCols(state);
+        std::vector<double> matrix(
+            static_cast<size_t>(arrayOutputSize) * arrayInputSize, 0.0);
+        for (uint32_t key = 0; key < keyCols; ++key) {
+            for (uint32_t dim = 0; dim < static_cast<uint32_t>(arrayInputSize);
+                 ++dim) {
+                matrix[static_cast<size_t>(key) * arrayInputSize + dim] =
+                    state.arrayPayload[static_cast<size_t>(key) *
+                        state.dispatch.headDim + half * arrayInputSize + dim];
+            }
+        }
+        std::vector<uint32_t> arrayIds;
+        arrayIds.reserve(attentionClusterQkLanes(state));
+        for (uint32_t row = 0; row < attentionClusterQkLanes(state); ++row)
+            arrayIds.push_back(attentionClusterQkArray(row, half));
+        const uint64_t generation = state.generation;
+        const AttentionClusterTag clusterTag = state.clusterTileTag;
+        const int32_t contextSlot = state.clusterQkContext;
+        const uint64_t transferTag = attentionTransferTag();
+        if (!programAttentionClusterKPanelAsync(
+                arrayIds, matrix, transferTag,
+                [this, generation, clusterTag, contextSlot, half, transferTag,
+                 bytesCount = matrix.size() * sizeof(float)](
+                    bool ok, uint64_t callbackTag) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok || callbackTag != transferTag ||
+                        !attentionWorker_ ||
+                        attentionWorker_->clusterQkMatrixPanel != half ||
+                        !attentionClusterCallbackMatches(
+                            AttentionClusterContextKind::Qk, contextSlot,
+                            clusterTag)) {
+                        if (attentionWorker_) finishAttentionWorker(false);
+                        return;
+                    }
+                    statAttentionClusterKPanelBroadcasts_->addData(1);
+                    statAttentionClusterKPanelBytes_->addData(bytesCount);
+                    statAttentionQkMatrixBroadcasts_->addData(1);
+                    ++attentionWorker_->clusterQkMatrixPanel;
+                    if (attentionWorker_->clusterQkMatrixPanel ==
+                            attentionClusterHeadHalves(*attentionWorker_)) {
+                        attentionWorker_->arrayPayload.clear();
+                        recordAttentionKvOperandRelease(true);
+                    }
+                    beginAttentionClusterKPanel();
+                })) {
+            scheduleAttentionClusterOwnerRetry(
+                [this, generation, clusterTag, contextSlot, half]() {
+                    if (!attentionCallbackGenerationMatches(generation) ||
+                        !attentionWorker_ ||
+                        attentionWorker_->clusterQkMatrixPanel != half ||
+                        !attentionClusterCallbackMatches(
+                            AttentionClusterContextKind::Qk, contextSlot,
+                            clusterTag)) return;
+                    programAttentionClusterKHalf();
+                });
+        }
+    }
+
+    void programAttentionClusterQPair() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t halves = attentionClusterHeadHalves(state);
+        const uint32_t lanes = attentionClusterQkLanes(state);
+        const uint32_t rows = attentionClusterWaveRows(
+            state, state.clusterQkWave, lanes);
+        const uint32_t physicalInputs = rows * halves;
+        if (state.clusterQkPair == physicalInputs) {
+            recordAttentionInterTilePhase(
+                AttentionInterTilePhase::QkInputProgram);
+            transitionAttentionTilePipeline(
+                AttentionTilePipelinePhase::QkComputeReadout);
+            state.attentionQkInputProgrammingComplete = true;
+            startAttentionQkCompute(physicalInputs);
+            return;
+        }
+        const uint32_t physical = state.clusterQkPair;
+        const uint32_t query = attentionClusterWaveRowBegin(
+            state.clusterQkWave, lanes) + physical / halves;
+        const uint32_t half = physical % halves;
+        // Admission requires full Br=16 blocks; fail closed if a future
+        // dispatch path reaches this slicer with a partial block.
+        if (query >= attentionQueryRowsForBlock(state, state.queryBlock)) {
+            finishAttentionWorker(false);
+            return;
+        }
+        const uint32_t wave = state.clusterQkWave;
+        const uint64_t generation = state.generation;
+        const AttentionClusterTag clusterTag = state.clusterTileTag;
+        const int32_t contextSlot = state.clusterQkContext;
+        std::vector<double> input(
+            state.qPayload.begin() +
+                static_cast<size_t>(query) * state.dispatch.headDim +
+                    half * arrayInputSize,
+            state.qPayload.begin() +
+                static_cast<size_t>(query) * state.dispatch.headDim +
+                    (half + 1) * arrayInputSize);
+        std::vector<uint32_t> arrayIds = {
+            attentionClusterQkArray(query, half)};
+        const uint64_t transferTag = attentionTransferTag();
+        if (!programAttentionClusterQPairAsync(
+                arrayIds, input, transferTag,
+                [this, generation, clusterTag, contextSlot, physical, wave,
+                 transferTag, bytes = input.size() * sizeof(float)](
+                    bool ok, uint64_t callbackTag) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok ||
+                        callbackTag != transferTag ||
+                        attentionWorker_->clusterQkWave != wave ||
+                        attentionWorker_->clusterQkPair != physical ||
+                        !attentionClusterCallbackMatches(
+                            AttentionClusterContextKind::Qk, contextSlot,
+                            clusterTag)) {
+                        if (attentionWorker_) finishAttentionWorker(false);
+                        return;
+                    }
+                    statAttentionClusterQPairMulticasts_->addData(1);
+                    statAttentionClusterQPairBytes_->addData(bytes);
+                    attentionWorker_->clusterQkPair += 1;
+                    programAttentionClusterQPair();
+                })) {
+            scheduleAttentionClusterOwnerRetry(
+                [this, generation, clusterTag, contextSlot, physical, wave]() {
+                    if (!attentionCallbackGenerationMatches(generation) ||
+                        !attentionWorker_ ||
+                        attentionWorker_->clusterQkWave != wave ||
+                        attentionWorker_->clusterQkPair != physical ||
+                        !attentionClusterCallbackMatches(
+                            AttentionClusterContextKind::Qk,
+                            contextSlot, clusterTag)) return;
+                    programAttentionClusterQPair();
+                });
+        }
+    }
+
+    void readAttentionClusterQkOutput() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t lanes = attentionClusterQkLanes(state);
+        const uint32_t waveEnd = attentionClusterWaveRowBegin(
+            state.clusterQkWave, lanes) + attentionClusterWaveRows(
+                state, state.clusterQkWave, lanes);
+        if (state.index == waveEnd) {
+            state.clusterQkWave += 1;
+            if (state.clusterQkWave < attentionClusterQkWaves(state)) {
+                state.clusterQkPair = 0;
+                state.phase = AttentionWorkerPhase::QkProgramInputs;
+                transitionAttentionTilePipeline(
+                    AttentionTilePipelinePhase::QkInputProgram);
+                programAttentionClusterQPair();
+                return;
+            }
+            if (!releaseAttentionClusterQk()) {
+                statAttentionClusterIllegalTransitions_->addData(1);
+                finishAttentionWorker(false);
+                return;
+            }
+            state.clusterAheadEnabledForTile = true;
+            recordAttentionInterTilePhase(
+                AttentionInterTilePhase::QkComputeReadout);
+            transitionAttentionTilePipeline(
+                AttentionTilePipelinePhase::Softmax);
+            statAttentionWorkerQkTileCompleteTick_->addData(getCurrentSimCycle());
+            traceAttentionTileCompletion(
+                "qk_tile_complete", "final_qk_tile_complete", state);
+            finishAttentionInterTile();
+            beginAttentionSoftmax();
+            return;
+        }
+        const uint32_t query = state.index;
+        const uint32_t wave = state.clusterQkWave;
+        const uint32_t halves = attentionClusterHeadHalves(state);
+        std::vector<uint32_t> arrays(halves);
+        for (uint32_t half = 0; half < halves; ++half)
+            arrays[half] = attentionClusterQkArray(query, half);
+        const uint64_t generation = state.generation;
+        const AttentionClusterTag clusterTag = state.clusterTileTag;
+        const int32_t scoreSlot = state.clusterScoreContext;
+        const uint64_t transferTag = attentionTransferTag();
+        if (!readAttentionClusterScorePairAsync(
+                arrays, transferTag,
+                [this, generation, clusterTag, scoreSlot, query, wave,
+                 halves, transferTag](
+                    bool ok, uint64_t callbackTag,
+                    const std::vector<double>& values) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok ||
+                        callbackTag != transferTag ||
+                        values.size() != static_cast<size_t>(halves) *
+                            attentionClusterConfig_.arrayOutputs ||
+                        attentionWorker_->clusterQkWave != wave ||
+                        attentionWorker_->index != query ||
+                        !attentionClusterCallbackMatches(
+                            AttentionClusterContextKind::Score, scoreSlot,
+                            clusterTag)) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    const uint32_t keyCols =
+                        attentionKeyCols(*attentionWorker_);
+                    const size_t base = static_cast<size_t>(query) * keyCols;
+                    std::vector<float> beat(keyCols, 0.0f);
+                    for (uint32_t key = 0; key < keyCols; ++key) {
+                        double sum = 0.0;
+                        for (uint32_t half = 0; half < halves; ++half) {
+                            sum += values[static_cast<size_t>(half) *
+                                attentionClusterConfig_.arrayOutputs + key];
+                        }
+                        beat[key] = static_cast<float>(sum);
+                    }
+                    if (!sfu->writeAttentionScoreBeatAsync(
+                            static_cast<uint32_t>(scoreSlot), clusterTag, base,
+                            beat, transferTag,
+                            [this, generation, clusterTag, scoreSlot, query,
+                             wave, transferTag, bytes = beat.size() * sizeof(float)](
+                                bool writeOk, uint64_t callbackWriteTag) {
+                                if (!attentionCallbackGenerationMatches(generation)) return;
+                                if (!writeOk || callbackWriteTag != transferTag ||
+                                    attentionWorker_->clusterQkWave != wave ||
+                                    attentionWorker_->index != query ||
+                                    !attentionClusterCallbackMatches(
+                                        AttentionClusterContextKind::Score,
+                                        scoreSlot, clusterTag)) {
+                                    finishAttentionWorker(false);
+                                    return;
+                                }
+                                statAttentionClusterScoreBeats_->addData(1);
+                                statAttentionClusterScoreBytes_->addData(bytes);
+                                ++attentionWorker_->index;
+                                readAttentionClusterQkOutput();
+                            })) {
+                        scheduleAttentionClusterOwnerRetry(
+                            [this, generation, clusterTag, scoreSlot, query, wave]() {
+                                if (!attentionCallbackGenerationMatches(generation) ||
+                                    !attentionWorker_ ||
+                                    attentionWorker_->clusterQkWave != wave ||
+                                    attentionWorker_->index != query ||
+                                    !attentionClusterCallbackMatches(
+                                        AttentionClusterContextKind::Score,
+                                        scoreSlot, clusterTag)) return;
+                                readAttentionClusterQkOutput();
+                            });
+                    }
+                })) {
+            scheduleAttentionClusterOwnerRetry(
+                [this, generation, clusterTag, scoreSlot, query, wave]() {
+                    if (!attentionCallbackGenerationMatches(generation) ||
+                        !attentionWorker_ ||
+                        attentionWorker_->clusterQkWave != wave ||
+                        attentionWorker_->index != query ||
+                        !attentionClusterCallbackMatches(
+                            AttentionClusterContextKind::Score,
+                            scoreSlot, clusterTag)) return;
+                    readAttentionClusterQkOutput();
+                });
+        }
+    }
+
     void loadAttentionKeyTile() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
+        if (attentionClusterEnable_) {
+            state.clusterAheadEnabledForTile = false;
+        }
         beginAttentionTilePipeline();
         const DmaConsumerMetadata consumerProgress = attentionDmaConsumerMetadata(
             state, state.queryBlock, state.keyTileOrdinal, DmaOperand::Unknown);
@@ -2791,24 +4714,31 @@ public:
             finishAttentionWorker(false);
             return;
         }
-        const uint64_t tileBytes = static_cast<uint64_t>(attentionKeyCols(state)) *
-            state.dispatch.headDim * sizeof(float);
         state.attentionKvLoadsPending = 2;
-        globalMem->dma_read_from_host_to_globalmem(
-            attentionKvHostAddr(state, state.dispatch.kAddr), tileBytes, state.kLocal,
-            [this](bool ok) { completeAttentionKvLoad(ok); }, DmaRequestKind::AttentionKv,
+        dmaAttentionKvTileToLocal(
+            state, state.dispatch.kAddr, state.keyTile, state.kLocal,
+            DmaRequestKind::AttentionKv,
             attentionDmaConsumerMetadata(
-                state, state.queryBlock, state.keyTileOrdinal, DmaOperand::AttentionK));
-        globalMem->dma_read_from_host_to_globalmem(
-            attentionKvHostAddr(state, state.dispatch.vAddr), tileBytes, state.vLocal,
-            [this](bool ok) { completeAttentionKvLoad(ok); }, DmaRequestKind::AttentionKv,
+                state, state.queryBlock, state.keyTileOrdinal,
+                DmaOperand::AttentionK),
+            [this, generation = state.generation](bool ok) {
+                completeAttentionKvLoad(generation, ok);
+            });
+        dmaAttentionKvTileToLocal(
+            state, state.dispatch.vAddr, state.keyTile, state.vLocal,
+            DmaRequestKind::AttentionKv,
             attentionDmaConsumerMetadata(
-                state, state.queryBlock, state.keyTileOrdinal, DmaOperand::AttentionV));
+                state, state.queryBlock, state.keyTileOrdinal,
+                DmaOperand::AttentionV),
+            [this, generation = state.generation](bool ok) {
+                completeAttentionKvLoad(generation, ok);
+            });
     }
 
-    void completeAttentionKvLoad(bool ok) {
-        if (!attentionWorker_ || !ok) {
-            if (attentionWorker_) finishAttentionWorker(false);
+    void completeAttentionKvLoad(uint64_t generation, bool ok) {
+        if (!attentionCallbackGenerationMatches(generation)) return;
+        if (!ok) {
+            finishAttentionWorker(false);
             return;
         }
         if (attentionWorker_->attentionKvLoadsPending == 0) {
@@ -2859,9 +4789,6 @@ public:
         descriptor.ready = false;
         descriptor.crossQuery =
             targetQueryBlock != attentionKvGroupOwnerQueryBlock(state);
-        const uint64_t tileBytes = static_cast<uint64_t>(
-            attentionKeyColsForTile(state, descriptor.keyTile)) *
-            state.dispatch.headDim * sizeof(float);
         statAttentionKvPrefetchTiles_->addData(1);
         if (secondLookahead) {
             statAttentionKvSecondLookaheadPrefetches_->addData(1);
@@ -2869,27 +4796,29 @@ public:
         if (descriptor.crossQuery) {
             statAttentionKvCrossQueryPrefetches_->addData(1);
         }
-        globalMem->dma_read_from_host_to_globalmem(
-            attentionKvHostAddrForTile(
-                state, state.dispatch.kAddr, descriptor.keyTile),
-            tileBytes, state.kLocalBuffers[buffer],
-            [this, buffer](bool ok) { completeAttentionKvPrefetch(buffer, ok); },
-            DmaRequestKind::AttentionKvPrefetch,
+        dmaAttentionKvTileToLocal(
+            state, state.dispatch.kAddr, descriptor.keyTile,
+            state.kLocalBuffers[buffer], DmaRequestKind::AttentionKvPrefetch,
             attentionDmaConsumerMetadata(
-                state, targetQueryBlock, ordinal, DmaOperand::AttentionK));
-        globalMem->dma_read_from_host_to_globalmem(
-            attentionKvHostAddrForTile(
-                state, state.dispatch.vAddr, descriptor.keyTile),
-            tileBytes, state.vLocalBuffers[buffer],
-            [this, buffer](bool ok) { completeAttentionKvPrefetch(buffer, ok); },
-            DmaRequestKind::AttentionKvPrefetch,
+                state, targetQueryBlock, ordinal, DmaOperand::AttentionK),
+            [this, generation = state.generation, buffer](bool ok) {
+                completeAttentionKvPrefetch(generation, buffer, ok);
+            });
+        dmaAttentionKvTileToLocal(
+            state, state.dispatch.vAddr, descriptor.keyTile,
+            state.vLocalBuffers[buffer], DmaRequestKind::AttentionKvPrefetch,
             attentionDmaConsumerMetadata(
-                state, targetQueryBlock, ordinal, DmaOperand::AttentionV));
+                state, targetQueryBlock, ordinal, DmaOperand::AttentionV),
+            [this, generation = state.generation, buffer](bool ok) {
+                completeAttentionKvPrefetch(generation, buffer, ok);
+            });
     }
 
-    void completeAttentionKvPrefetch(uint32_t buffer, bool ok) {
-        if (!attentionWorker_ || !ok) {
-            if (attentionWorker_) finishAttentionWorker(false);
+    void completeAttentionKvPrefetch(
+            uint64_t generation, uint32_t buffer, bool ok) {
+        if (!attentionCallbackGenerationMatches(generation)) return;
+        if (!ok) {
+            finishAttentionWorker(false);
             return;
         }
         AttentionWorkerState& state = *attentionWorker_;
@@ -3121,17 +5050,100 @@ public:
         }
         AttentionWorkerState& state = *attentionWorker_;
         state.phase = AttentionWorkerPhase::QkCompute;
-        state.arraysPending = activeArrays;
-        if (attentionArrayPending_.size() < 16) attentionArrayPending_.resize(16, 0);
-        for (uint32_t arrayId = 0; arrayId < activeArrays; ++arrayId) {
+        if (!attentionClusterEnable_) {
+            state.arraysPending = activeArrays;
+            if (attentionArrayPending_.size() < static_cast<size_t>(numArrays)) {
+                attentionArrayPending_.resize(numArrays, 0);
+            }
+            for (uint32_t arrayId = 0; arrayId < activeArrays; ++arrayId) {
+                attentionArrayPending_[arrayId] = 1;
+                arrayStates[arrayId] = 1;
+                if (!launchAttentionGemmArray(arrayId, 0, true)) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                statAttentionQkArrayOps_->addData(1);
+            }
+            return;
+        }
+        state.arraysPending = 0;
+        state.clusterOwnerLaunchNext = 0;
+        state.clusterOwnerLaunchEnd = activeArrays;
+        state.clusterOwnerLaunchQk = true;
+        if (attentionArrayPending_.size() < static_cast<size_t>(numArrays))
+            attentionArrayPending_.resize(numArrays, 0);
+        pumpAttentionClusterOwnerLaunch();
+    }
+
+    void pumpAttentionClusterOwnerLaunch() {
+        if (!attentionWorker_ ||
+            attentionWorker_->clusterOwnerLaunchNext >=
+                attentionWorker_->clusterOwnerLaunchEnd) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        std::vector<uint32_t> arrayIds;
+        for (uint32_t logical = state.clusterOwnerLaunchNext;
+             logical < state.clusterOwnerLaunchEnd; ++logical) {
+            arrayIds.push_back(state.clusterOwnerLaunchQk
+                ? logical
+                : attentionClusterConfig_.qkArrays + logical);
+        }
+        for (uint32_t arrayId : arrayIds) {
             attentionArrayPending_[arrayId] = 1;
             arrayStates[arrayId] = 1;
-            if (!launchAttentionGemmArray(arrayId, 0, true)) {
+        }
+        const uint64_t generation = state.generation;
+        const bool qkOperation = state.clusterOwnerLaunchQk;
+        const uint32_t bank = qkOperation
+            ? state.activeOperandBank : state.clusterPvOperandBank;
+        const uint32_t activeColumns = qkOperation
+            ? 0 : attentionPvActiveColumns(state);
+        const bool accepted = workerCommandProcessor &&
+            workerCommandProcessor->launchGemmArrayGroupActiveBank(
+                arrayIds, bank, 0, activeColumns, LastTickCycle,
+                [this, generation, qkOperation](uint32_t arrayId, uint64_t) {
+                    if (!attentionCallbackGenerationMatches(generation)) {
+                        BusyActivityTracker& activity = qkOperation
+                            ? attentionClusterQkArrayActivity_
+                            : attentionClusterPvArrayActivity_;
+                        if (!activity.leave(getCurrentSimCycle()))
+                            statAttentionClusterIllegalTransitions_->addData(1);
+                        return;
+                    }
+                    handleAttentionArrayDone(arrayId);
+                });
+        if (!accepted) {
+            for (uint32_t arrayId : arrayIds) {
+                attentionArrayPending_[arrayId] = 0;
+                arrayStates[arrayId] = 0;
+            }
+            statAttentionClusterInitialEnqueueRetries_->addData(1);
+            return;
+        }
+        if (qkOperation && state.clusterQkWave == 0) {
+            recordAttentionClusterQkTileStart(
+                LastTickCycle, state.keyTileOrdinal, state.queryBlock);
+        }
+        BusyActivityTracker& activity = qkOperation
+            ? attentionClusterQkArrayActivity_
+            : attentionClusterPvArrayActivity_;
+        for (size_t index = 0; index < arrayIds.size(); ++index) {
+            if (!activity.enter(getCurrentSimCycle())) {
+                statAttentionClusterIllegalTransitions_->addData(1);
                 finishAttentionWorker(false);
                 return;
             }
-            statAttentionQkArrayOps_->addData(1);
+            (qkOperation ? statAttentionQkArrayOps_ : statAttentionPvArrayOps_)
+                ->addData(1);
+            (qkOperation ? statAttentionGenericGemmQkOps_
+                         : statAttentionGenericGemmPvOps_)->addData(1);
+            if (activeColumns != 0) {
+                statAttentionPvActiveKLaunches_->addData(1);
+                statAttentionPvActiveKColumns_->addData(activeColumns);
+            }
         }
+        state.arraysPending += arrayIds.size();
+        state.clusterOwnerLaunchNext = 0;
+        state.clusterOwnerLaunchEnd = 0;
     }
 
     bool startAttentionQkArrayComputation(uint32_t arrayId) {
@@ -3295,8 +5307,7 @@ public:
                         arrayId, input, sizeof(float), tag,
                         [this, slotIndex, arrayId, generation, tag](
                             bool ok, uint64_t callbackTag) {
-                            if (!attentionWorker_ ||
-                                attentionWorker_->generation != generation) return;
+                            if (!attentionCallbackGenerationMatches(generation)) return;
                             AttentionWorkerState& callbackState = *attentionWorker_;
                             AttentionQkInputSlot& callbackSlot =
                                 callbackState.qkInputSlots[slotIndex];
@@ -3368,8 +5379,7 @@ public:
                 [this, slotIndex, arrayId, generation, tag](
                     bool ok, uint64_t callbackTag,
                     const std::vector<uint8_t>& bytes) {
-                    if (!attentionWorker_ ||
-                        attentionWorker_->generation != generation) return;
+                    if (!attentionCallbackGenerationMatches(generation)) return;
                     AttentionWorkerState& callbackState = *attentionWorker_;
                     AttentionQkInputSlot& callbackSlot =
                         callbackState.qkInputSlots[slotIndex];
@@ -3419,8 +5429,7 @@ public:
                 [this, query, panel, panelKeys, generation, tag](
                     bool ok, uint64_t callbackTag,
                     const std::vector<uint8_t>& bytes) {
-                    if (!attentionWorker_ ||
-                        attentionWorker_->generation != generation) return;
+                    if (!attentionCallbackGenerationMatches(generation)) return;
                     if (!ok || callbackTag != tag ||
                         attentionWorker_->panel != panel ||
                         bytes.size() != static_cast<size_t>(panelKeys) * sizeof(float)) {
@@ -3432,8 +5441,7 @@ public:
                              attentionKeyCols(*attentionWorker_) +
                          static_cast<uint64_t>(panel) * 16) * sizeof(float);
                     attentionLocalWrite(addr, bytes, [this, generation](bool writeOk) {
-                        if (!attentionWorker_ ||
-                            attentionWorker_->generation != generation) return;
+                        if (!attentionCallbackGenerationMatches(generation)) return;
                         if (!writeOk) {
                             finishAttentionWorker(false);
                             return;
@@ -3459,7 +5467,8 @@ public:
             }
             state.qkRowBurstPanel = state.panel;
             state.qkRowBurstStorageActive = true;
-            state.index = 0;
+            state.index = attentionClusterWaveRowBegin(
+                state.clusterPvWave, attentionClusterPvLanes(state));
             state.lane = 0;
         }
         if (state.index == panelKeys) {
@@ -3475,8 +5484,7 @@ public:
                 [this, arrayId, panel, generation, readTag](
                     bool ok, uint64_t callbackTag,
                     const std::vector<double>& values) {
-                    if (!attentionWorker_ ||
-                        attentionWorker_->generation != generation) return;
+                    if (!attentionCallbackGenerationMatches(generation)) return;
                     if (!ok || callbackTag != readTag ||
                         attentionWorker_->panel != panel ||
                         values.size() != attentionQueryRows(*attentionWorker_)) {
@@ -3490,8 +5498,7 @@ public:
                             arrayId, bytes, generation, writeTag, LastTickCycle,
                             [this, arrayId, panel, generation, writeTag](
                                 bool writeOk, uint64_t callbackWriteTag) {
-                                if (!attentionWorker_ ||
-                                    attentionWorker_->generation != generation) return;
+                                if (!attentionCallbackGenerationMatches(generation)) return;
                                 if (!writeOk || callbackWriteTag != writeTag ||
                                     attentionWorker_->panel != panel ||
                                     attentionWorker_->index != arrayId) {
@@ -3510,6 +5517,10 @@ public:
 
     void readAttentionQkOutput() {
         if (!attentionWorker_) return;
+        if (attentionClusterEnable_) {
+            readAttentionClusterQkOutput();
+            return;
+        }
         if (attentionQkDataflowTranspose_) {
             readAttentionQkTransposedOutput();
             return;
@@ -3640,8 +5651,7 @@ public:
             (static_cast<uint64_t>(query) * attentionKeyCols(state) + key) * sizeof(float);
         const uint64_t generation = state.generation;
         attentionLocalWrite(addr, scalar, [this, generation](bool writeOk) {
-            if (!attentionWorker_ ||
-                attentionWorker_->generation != generation) return;
+            if (!attentionCallbackGenerationMatches(generation)) return;
             if (!writeOk) {
                 finishAttentionWorker(false);
                 return;
@@ -3689,8 +5699,7 @@ public:
                     [this, tag, arrayId, panel, generation](
                         bool ok, uint64_t callbackTag,
                         const std::vector<double>& values) {
-                        if (!attentionWorker_ ||
-                            attentionWorker_->generation != generation) {
+                        if (!attentionCallbackGenerationMatches(generation)) {
                             return;
                         }
                         if (!ok || callbackTag != tag ||
@@ -3803,38 +5812,134 @@ public:
         request.keyTiles = attentionKeyTilesForQueryBlock(state);
         request.causal = attentionCausal(state);
         request.firstTileForJob = state.queryBlock == 0 && state.keyTileOrdinal == 0;
-        if (!sfu->issueAttentionTile(request, [this](
+        if (attentionClusterEnable_) {
+            if (state.clusterScoreContext < 0) {
+                finishAttentionWorker(false);
+                return;
+            }
+            if (state.clusterPContext < 0) {
+                const size_t pElements =
+                    static_cast<size_t>(request.rows) * request.cols;
+                const AttentionClusterAdmission admission =
+                    sfu->attentionPSlotAdmission(
+                        static_cast<uint32_t>(state.clusterScoreContext),
+                        state.clusterTileTag, pElements);
+                if (admission == AttentionClusterAdmission::Invalid) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                if (admission == AttentionClusterAdmission::Retry) {
+                    const uint64_t retryGeneration = state.generation;
+                    const AttentionClusterTag retryTag = state.clusterTileTag;
+                    scheduleAttentionClusterOwnerRetry(
+                        [this, retryGeneration, retryTag]() {
+                            if (!attentionCallbackGenerationMatches(retryGeneration) ||
+                                !attentionWorker_ ||
+                                !(attentionWorker_->clusterTileTag == retryTag)) return;
+                            beginAttentionSoftmax();
+                        });
+                    return;
+                }
+                if (!sfu->reserveAttentionPSlot(
+                        static_cast<uint32_t>(state.clusterScoreContext),
+                        state.clusterTileTag, pElements)) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                state.clusterPContext = state.clusterScoreContext;
+            } else if (state.clusterPContext != state.clusterScoreContext) {
+                finishAttentionWorker(false);
+                return;
+            }
+            request.directScoreMode = true;
+            request.generation = state.generation;
+            request.scoreSlot = static_cast<uint32_t>(state.clusterScoreContext);
+            request.scoreTag = state.clusterTileTag;
+            request.directPMode = true;
+            request.pSlot = static_cast<uint32_t>(state.clusterPContext);
+            request.pTag = state.clusterTileTag;
+        }
+        const uint64_t generation = state.generation;
+        if (attentionClusterEnable_) {
+            const AttentionClusterAdmission admission =
+                sfu->attentionTileAdmission(request);
+            if (admission == AttentionClusterAdmission::Invalid) {
+                finishAttentionWorker(false);
+                return;
+            }
+            if (admission == AttentionClusterAdmission::Retry) {
+                const uint64_t retryGeneration = state.generation;
+                const AttentionClusterTag retryTag = state.clusterTileTag;
+                scheduleAttentionClusterOwnerRetry(
+                    [this, retryGeneration, retryTag]() {
+                        if (!attentionCallbackGenerationMatches(retryGeneration) ||
+                            !attentionWorker_ ||
+                            !(attentionWorker_->clusterTileTag == retryTag)) return;
+                        beginAttentionSoftmax();
+                    });
+                return;
+            }
+        }
+        if (!sfu->issueAttentionTile(request, [this, generation](
                 bool ok, const AttentionTileResult& result) {
-                if (!attentionWorker_ || !ok) { finishAttentionWorker(false); return; }
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok) { finishAttentionWorker(false); return; }
                 statAttentionWorkerSoftmaxTileCompleteTick_->addData(getCurrentSimCycle());
                 traceAttentionTileCompletion(
                     "softmax_tile_complete", "final_softmax_tile_complete",
                     *attentionWorker_);
-                attentionWorker_->outputScales.assign(
-                    result.oldOutputScale.begin(),
-                    result.oldOutputScale.begin() + result.rows);
-                attentionWorker_->panel = 0;
-                attentionWorker_->attentionSoftmaxComplete = true;
-                if (attentionPvMatrixSoftmaxOverlap_) {
-                    continueAttentionAfterSoftmaxAndPvMatrix();
+                const auto continueToPv = [this, result]() {
+                    if (!attentionWorker_) return;
+                    attentionWorker_->outputScales.assign(
+                        result.oldOutputScale.begin(),
+                        result.oldOutputScale.begin() + result.rows);
+                    attentionWorker_->panel = 0;
+                    attentionWorker_->clusterPvWave = 0;
+                    attentionWorker_->attentionSoftmaxComplete = true;
+                    if (attentionClusterEnable_ &&
+                        !reserveAttentionClusterPv()) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    if (attentionPvMatrixSoftmaxOverlap_) {
+                        continueAttentionAfterSoftmaxAndPvMatrix();
+                        return;
+                    }
+                    transitionAttentionTilePipeline(
+                        AttentionTilePipelinePhase::PvMatrixProgram);
+                    beginAttentionPvPanel();
+                };
+                if (attentionClusterEnable_) {
+                    if (!releaseAttentionClusterScore()) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    continueToPv();
                     return;
                 }
-                transitionAttentionTilePipeline(
-                    AttentionTilePipelinePhase::PvMatrixProgram);
-                beginAttentionPvPanel();
+                continueToPv();
             })) {
-            finishAttentionWorker(false);
+            if (attentionClusterEnable_) {
+                finishAttentionWorker(false);
+            } else {
+                finishAttentionWorker(false);
+            }
             return;
         }
-        if (attentionPvMatrixSoftmaxOverlap_) {
+        if (attentionPvMatrixSoftmaxOverlap_ && !attentionClusterEnable_) {
             statAttentionPvMatrixOverlapTiles_->addData(1);
             state.panel = 0;
             beginAttentionPvPanel();
         }
+        if (attentionClusterEnable_) pumpAttentionClusterAhead();
     }
 
     void beginAttentionPvPanel() {
         if (!attentionWorker_) return;
+        if (attentionClusterEnable_) {
+            beginAttentionClusterPvPanel();
+            return;
+        }
         AttentionWorkerState& state = *attentionWorker_;
         state.attentionPvMatrixComplete = false;
         if (!attentionPvMatrixSoftmaxOverlap_ || state.panel != 0 ||
@@ -4019,6 +6124,446 @@ public:
                 }
                 programMatrix(attentionWorker_->vPayload);
             });
+    }
+
+    bool attentionClusterPvMatrixMatches(
+            const AttentionWorkerState& state) const {
+        return state.clusterPvMatrixResident &&
+            state.clusterPvMatrixKeyTile == state.keyTileOrdinal &&
+            state.clusterPvMatrixGroupOwner ==
+                attentionKvGroupOwnerQueryBlock(state);
+    }
+
+    void programAttentionClusterPvMatrices() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t halves = attentionClusterHeadHalves(state);
+        if (state.panel == halves) {
+            state.clusterPvMatrixResident = true;
+            state.clusterPvMatrixKeyTile = state.keyTileOrdinal;
+            state.clusterPvMatrixGroupOwner =
+                attentionKvGroupOwnerQueryBlock(state);
+            state.panel = 0;
+            state.index = 0;
+            beginAttentionClusterPvInputProgram();
+            return;
+        }
+        const uint32_t half = state.panel;
+        const uint32_t keyCols = attentionKeyCols(state);
+        const uint32_t activeColumns = attentionPvActiveColumns(state);
+        const uint32_t matrixColumns = activeColumns != 0
+            ? activeColumns : arrayInputSize;
+        if (state.vPayload.size() !=
+                static_cast<size_t>(keyCols) * state.dispatch.headDim) {
+            finishAttentionWorker(false);
+            return;
+        }
+        std::vector<double> matrix(
+            static_cast<size_t>(arrayOutputSize) * matrixColumns, 0.0);
+        for (uint32_t dim = 0; dim < static_cast<uint32_t>(arrayOutputSize);
+             ++dim) {
+            for (uint32_t key = 0; key < keyCols; ++key) {
+                matrix[dim * matrixColumns + key] =
+                    state.vPayload[key * state.dispatch.headDim +
+                                   half * arrayOutputSize + dim];
+            }
+        }
+        std::vector<uint32_t> arrayIds;
+        arrayIds.reserve(attentionClusterPvLanes(state));
+        for (uint32_t row = 0; row < attentionClusterPvLanes(state); ++row)
+            arrayIds.push_back(attentionClusterPvArray(row, half));
+        const uint64_t generation = state.generation;
+        const AttentionClusterTag clusterTag = state.clusterTileTag;
+        const int32_t contextSlot = state.clusterPvContext;
+        const uint64_t transferTag = attentionTransferTag();
+        const bool accepted = activeColumns != 0
+            ? workerCommandProcessor->programGemmMatrixGroupActiveBankAsync(
+                arrayIds, state.clusterPvOperandBank, matrix, activeColumns,
+                sizeof(float), transferTag, LastTickCycle,
+                [this, generation, half, transferTag](
+                    bool ok, uint64_t callbackTag) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok || callbackTag != transferTag ||
+                        attentionWorker_->panel != half) {
+                        if (attentionWorker_) finishAttentionWorker(false);
+                        return;
+                    }
+                    ++attentionWorker_->panel;
+                    programAttentionClusterPvMatrices();
+                })
+            : workerCommandProcessor->programGemmMatrixGroupBankAsync(
+                arrayIds, state.clusterPvOperandBank, matrix, sizeof(float),
+                transferTag, LastTickCycle,
+                [this, generation, half, transferTag](
+                    bool ok, uint64_t callbackTag) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok || callbackTag != transferTag ||
+                        attentionWorker_->panel != half) {
+                        if (attentionWorker_) finishAttentionWorker(false);
+                        return;
+                    }
+                    ++attentionWorker_->panel;
+                    programAttentionClusterPvMatrices();
+                });
+        if (!accepted) {
+            scheduleAttentionClusterOwnerRetry(
+                [this, generation, half, clusterTag, contextSlot]() {
+                    if (!attentionCallbackGenerationMatches(generation) ||
+                        !attentionWorker_ || attentionWorker_->panel != half ||
+                        !attentionClusterCallbackMatches(
+                            AttentionClusterContextKind::Pv,
+                            contextSlot, clusterTag)) return;
+                    programAttentionClusterPvMatrices();
+                });
+        } else if (activeColumns != 0) {
+            statAttentionPvActiveKMatrixElements_->addData(matrix.size());
+        }
+    }
+
+    void beginAttentionClusterPvPanel() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        state.phase = AttentionWorkerPhase::PvProgramMatrix;
+        const uint32_t keyCols = attentionKeyCols(state);
+        const uint64_t generation = state.generation;
+        const AttentionClusterTag clusterTag = state.clusterTileTag;
+        const int32_t contextSlot = state.clusterPvContext;
+        const uint64_t tileBytes = static_cast<uint64_t>(keyCols) *
+            state.dispatch.headDim * sizeof(float);
+        if (attentionClusterPvMatrixMatches(state)) {
+            recordAttentionKvOperandRelease(false);
+            state.panel = 0;
+            state.index = attentionClusterWaveRowBegin(
+                state.clusterPvWave, attentionClusterPvLanes(state));
+            beginAttentionClusterPvInputProgram();
+            return;
+        }
+        if (attentionPvVTileReuse_) {
+            statAttentionPvVTileBufferMisses_->addData(1);
+            if (tileBytes > attentionPvVTileBufferBytes_) {
+                statAttentionPvVTileBufferCapacityRejections_->addData(1);
+            }
+        }
+        attentionLocalRead(
+            state.vLocal + (attentionStreamKv(state) ? 0 :
+                static_cast<uint64_t>(state.keyTile) *
+                    state.dispatch.keyBlockRows * state.dispatch.headDim *
+                    sizeof(float)),
+            tileBytes,
+            [this, generation, clusterTag, contextSlot](
+                bool ok, const std::vector<uint8_t>& bytes) {
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok ||
+                    !attentionClusterCallbackMatches(
+                        AttentionClusterContextKind::Pv, contextSlot,
+                        clusterTag)) {
+                    if (attentionWorker_) finishAttentionWorker(false);
+                    return;
+                }
+                const std::vector<double> v = attentionBytesToDoubles(bytes);
+                if (attentionPvVTileReuse_ && bytes.size() <= attentionPvVTileBufferBytes_) {
+                    statAttentionPvVTileBufferBytesRead_->addData(bytes.size());
+                    attentionWorker_->vPayload = v;
+                    attentionWorker_->vTileValid = true;
+                    attentionWorker_->vTileTag = attentionWorker_->keyTileOrdinal;
+                    attentionWorker_->vTileGeneration = attentionWorker_->generation;
+                    attentionWorker_->vTileGroupOwner =
+                        attentionKvGroupOwnerQueryBlock(*attentionWorker_);
+                    recordAttentionKvOperandRelease(false);
+                    attentionWorker_->panel = 0;
+                    programAttentionClusterPvMatrices();
+                    return;
+                }
+                attentionWorker_->vPayload = v;
+                recordAttentionKvOperandRelease(false);
+                attentionWorker_->panel = 0;
+                programAttentionClusterPvMatrices();
+            });
+    }
+
+    void beginAttentionClusterPvInputProgram() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        transitionAttentionTilePipeline(
+            AttentionTilePipelinePhase::PvInputProgram);
+        state.phase = AttentionWorkerPhase::PvProgramInputs;
+        programAttentionClusterPvInput();
+    }
+
+    void prefetchAttentionClusterPvInput(uint32_t logicalRow) {
+        if (!attentionWorker_ || logicalRow >= attentionQueryRows(*attentionWorker_) ||
+            attentionWorker_->clusterPvNextInputReady ||
+            attentionWorker_->clusterPvNextInputInFlight ||
+            attentionWorker_->clusterPContext < 0 || sfu == nullptr) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint64_t generation = state.generation;
+        const AttentionClusterTag clusterTag = state.clusterTileTag;
+        const int32_t contextSlot = state.clusterPContext;
+        const uint32_t keyCols = attentionKeyCols(state);
+        const uint64_t transferTag = attentionTransferTag();
+        state.clusterPvNextInputRow = logicalRow;
+        state.clusterPvNextInputInFlight = true;
+        if (!sfu->readAttentionPRowAsync(
+                static_cast<uint32_t>(state.clusterPContext), state.clusterTileTag,
+                static_cast<size_t>(logicalRow) * keyCols, keyCols, transferTag,
+                [this, generation, logicalRow, transferTag, clusterTag, contextSlot](
+                    bool ok, uint64_t callbackTag, const std::vector<float>& values) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!attentionWorker_ || !ok || callbackTag != transferTag ||
+                        attentionWorker_->clusterPvNextInputInFlight == false ||
+                        attentionWorker_->clusterPContext != contextSlot ||
+                        !(attentionWorker_->clusterTileTag == clusterTag)) {
+                        if (attentionWorker_) finishAttentionWorker(false);
+                        return;
+                    }
+                    AttentionWorkerState& callbackState = *attentionWorker_;
+                    callbackState.clusterPvNextInput.assign(values.begin(), values.end());
+                    callbackState.clusterPvNextInputRow = logicalRow;
+                    callbackState.clusterPvNextInputReady = true;
+                    callbackState.clusterPvNextInputInFlight = false;
+                    if (callbackState.phase == AttentionWorkerPhase::PvProgramInputs &&
+                        callbackState.index == logicalRow) {
+                        programAttentionClusterPvInput();
+                    }
+                })) {
+            state.clusterPvNextInputInFlight = false;
+            scheduleAttentionClusterOwnerRetry(
+                [this, generation, logicalRow, clusterTag, contextSlot]() {
+                    if (!attentionCallbackGenerationMatches(generation) ||
+                        !attentionWorker_ ||
+                        attentionWorker_->clusterPContext != contextSlot ||
+                        !(attentionWorker_->clusterTileTag == clusterTag) ||
+                        logicalRow != attentionWorker_->index + 1 ||
+                        (attentionWorker_->phase != AttentionWorkerPhase::PvCompute &&
+                         attentionWorker_->phase !=
+                            AttentionWorkerPhase::PvReadOutputs)) return;
+                    prefetchAttentionClusterPvInput(logicalRow);
+                });
+        }
+    }
+
+    void programAttentionClusterPvInputPayload(
+            uint32_t logicalRow, const std::vector<double>& input) {
+        if (!attentionWorker_ ||
+            attentionWorker_->phase != AttentionWorkerPhase::PvProgramInputs ||
+            attentionWorker_->index != logicalRow) return;
+        const uint64_t generation = attentionWorker_->generation;
+        const uint64_t tag = attentionTransferTag();
+        const uint32_t halves =
+            attentionClusterHeadHalves(*attentionWorker_);
+        std::vector<uint32_t> arrays(halves);
+        for (uint32_t half = 0; half < halves; ++half)
+            arrays[half] = attentionClusterPvArray(logicalRow, half);
+        if (!programAttentionClusterPRowAsync(
+                arrays, input, tag,
+                [this, generation, logicalRow, tag](
+                    bool programOk, uint64_t callbackTag) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!programOk || callbackTag != tag ||
+                        attentionWorker_->index != logicalRow) {
+                        if (attentionWorker_) finishAttentionWorker(false);
+                        return;
+                    }
+                    ++attentionWorker_->index;
+                    programAttentionClusterPvInput();
+                })) {
+            scheduleAttentionClusterOwnerRetry(
+                [this, logicalRow, input]() {
+                    programAttentionClusterPvInputPayload(logicalRow, input);
+                });
+        }
+    }
+
+    void programAttentionClusterPvInput() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t lanes = attentionClusterPvLanes(state);
+        const uint32_t waveEnd = attentionClusterWaveRowBegin(
+            state.clusterPvWave, lanes) + attentionClusterWaveRows(
+                state, state.clusterPvWave, lanes);
+        if (state.index == waveEnd) {
+            startAttentionClusterPvComputation();
+            return;
+        }
+        const uint32_t logicalRow = state.index;
+        if (state.clusterPvNextInputReady &&
+            state.clusterPvNextInputRow == logicalRow) {
+            std::vector<double> input = std::move(state.clusterPvNextInput);
+            state.clusterPvNextInput.clear();
+            state.clusterPvNextInputReady = false;
+            state.clusterPvNextInputRow = UINT32_MAX;
+            programAttentionClusterPvInputPayload(logicalRow, input);
+            return;
+        }
+        if (state.clusterPvNextInputInFlight &&
+            state.clusterPvNextInputRow == logicalRow) return;
+        const uint32_t keyCols = attentionKeyCols(state);
+        const uint64_t generation = state.generation;
+        const AttentionClusterTag clusterTag = state.clusterTileTag;
+        const int32_t contextSlot = state.clusterPContext;
+        const uint64_t transferTag = attentionTransferTag();
+        if (state.clusterPContext < 0 || sfu == nullptr ||
+            !sfu->readAttentionPRowAsync(
+                static_cast<uint32_t>(state.clusterPContext),
+                state.clusterTileTag,
+                static_cast<size_t>(logicalRow) * keyCols,
+                keyCols, transferTag,
+            [this, generation, logicalRow, transferTag, clusterTag, contextSlot](
+                bool ok, uint64_t callbackTag, const std::vector<float>& values) {
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok || callbackTag != transferTag ||
+                    attentionWorker_->index != logicalRow ||
+                    attentionWorker_->clusterPContext != contextSlot ||
+                    !(attentionWorker_->clusterTileTag == clusterTag)) {
+                    if (attentionWorker_) finishAttentionWorker(false);
+                    return;
+                }
+                const std::vector<double> input(values.begin(), values.end());
+                programAttentionClusterPvInputPayload(logicalRow, input);
+            })) {
+            scheduleAttentionClusterOwnerRetry(
+                [this, generation, logicalRow]() {
+                    if (!attentionCallbackGenerationMatches(generation) ||
+                        !attentionWorker_ ||
+                        attentionWorker_->phase !=
+                            AttentionWorkerPhase::PvProgramInputs ||
+                        attentionWorker_->index != logicalRow) return;
+                    programAttentionClusterPvInput();
+                });
+        }
+    }
+
+    void prepareAttentionClusterPvOutput() {
+        if (!attentionWorker_) return;
+        startAttentionClusterPvComputation();
+    }
+
+    void startAttentionClusterPvComputation() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        transitionAttentionTilePipeline(AttentionTilePipelinePhase::PvCompute);
+        state.phase = AttentionWorkerPhase::PvCompute;
+        state.index = attentionClusterWaveRowBegin(
+            state.clusterPvWave, attentionClusterPvLanes(state));
+        state.arraysPending = 0;
+        state.clusterOwnerLaunchNext = 0;
+        state.clusterOwnerLaunchEnd = attentionClusterWaveRows(
+            state, state.clusterPvWave, attentionClusterPvLanes(state)) *
+            attentionClusterHeadHalves(state);
+        state.clusterOwnerLaunchQk = false;
+        state.clusterPvOutputIssued = 0;
+        state.clusterPvOutputCompleted = 0;
+        state.clusterPvOutputInFlight = 0;
+        pumpAttentionClusterOwnerLaunch();
+    }
+
+    void readAttentionClusterPvOutput() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        if (state.phase != AttentionWorkerPhase::PvReadOutputs) return;
+        const uint32_t panels = attentionDimensionPanels(state);
+        if (state.clusterPvOutputCompleted == panels &&
+            state.clusterPvOutputInFlight == 0) {
+            if (state.index + 1 == attentionQueryRows(state) &&
+                state.attentionClusterOCommitsPending != 0) return;
+            state.panel = 0;
+            ++state.index;
+            const uint32_t lanes = attentionClusterPvLanes(state);
+            const uint32_t waveEnd = attentionClusterWaveRowBegin(
+                state.clusterPvWave, lanes) + attentionClusterWaveRows(
+                    state, state.clusterPvWave, lanes);
+            if (state.index == waveEnd &&
+                state.clusterPvWave + 1 < attentionClusterPvWaves(state)) {
+                ++state.clusterPvWave;
+                state.index = attentionClusterWaveRowBegin(
+                    state.clusterPvWave, lanes);
+                state.clusterPvOutputIssued = 0;
+                state.clusterPvOutputCompleted = 0;
+                beginAttentionClusterPvInputProgram();
+                return;
+            }
+            if (state.index == attentionQueryRows(state)) {
+                completeAttentionPvOutputPanel();
+                return;
+            }
+            state.clusterPvOutputIssued = 0;
+            state.clusterPvOutputCompleted = 0;
+            readAttentionClusterPvOutput();
+            return;
+        }
+        if (state.clusterPvOutputIssued != 0 ||
+            state.clusterPvOutputInFlight != 0) return;
+        const uint32_t logicalRow = state.index;
+        const uint64_t tag = attentionTransferTag();
+        const uint64_t generation = state.generation;
+        const uint32_t halves = attentionClusterHeadHalves(state);
+        std::vector<uint32_t> arrays(halves);
+        for (uint32_t half = 0; half < halves; ++half)
+            arrays[half] = attentionClusterPvArray(logicalRow, half);
+        state.clusterPvOutputIssued = halves;
+        state.clusterPvOutputInFlight = 1;
+        if (!readAttentionClusterPvGroupAsync(
+                arrays, tag,
+                [this, generation, logicalRow, panels, tag](
+                    bool ok, uint64_t callbackTag,
+                    const std::vector<double>& values) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok || callbackTag != tag || !attentionWorker_ ||
+                        attentionWorker_->index != logicalRow ||
+                        values.size() != static_cast<size_t>(panels) * 16) {
+                        if (attentionWorker_) finishAttentionWorker(false);
+                        return;
+                    }
+                    AttentionWorkerState& callbackState = *attentionWorker_;
+                    const uint32_t queryContext = callbackState.queryBlock %
+                        attentionClusterConfig_.groupSize;
+                    const int32_t oSlot =
+                        callbackState.clusterOContextSlots[queryContext];
+                    if (oSlot < 0 ||
+                        callbackState.outputScales.size() <= logicalRow ||
+                        callbackState.clusterPvOutputInFlight != 1) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    for (uint32_t panel = 0; panel < panels; ++panel) {
+                        std::vector<float> segment(16);
+                        std::transform(
+                            values.begin() + static_cast<size_t>(panel) * 16,
+                            values.begin() + static_cast<size_t>(panel + 1) * 16,
+                            segment.begin(),
+                            [](double value) { return static_cast<float>(value); });
+                        uint64_t operation = 0;
+                        uint64_t readyCycle = 0;
+                        if (!attentionOAccumulator_.submitSegment(
+                                static_cast<uint32_t>(oSlot),
+                                callbackState.clusterOTags[queryContext],
+                                callbackState.keyTileOrdinal, logicalRow, panel,
+                                callbackState.outputScales[logicalRow], segment,
+                                LastTickCycle, &operation, &readyCycle)) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        ++callbackState.attentionClusterOCommitsPending;
+                        statAttentionClusterOAccumulateSegments_->addData(1);
+                        if (callbackState.keyTileOrdinal != 0)
+                            statAttentionClusterOScaleSegments_->addData(1);
+                    }
+                    callbackState.clusterPvOutputInFlight = 0;
+                    callbackState.clusterPvOutputCompleted = panels;
+                    readAttentionClusterPvOutput();
+                })) {
+            state.clusterPvOutputIssued = 0;
+            state.clusterPvOutputInFlight = 0;
+            scheduleAttentionClusterOwnerRetry(
+                [this, generation, logicalRow]() {
+                    if (!attentionCallbackGenerationMatches(generation) ||
+                        !attentionWorker_ ||
+                        attentionWorker_->phase !=
+                            AttentionWorkerPhase::PvReadOutputs ||
+                        attentionWorker_->index != logicalRow) return;
+                    readAttentionClusterPvOutput();
+                });
+        }
     }
 
     void continueAttentionAfterSoftmaxAndPvMatrix() {
@@ -4417,6 +6962,13 @@ public:
         statAttentionKvPairReuseBytes_->addData(
             static_cast<uint64_t>(2) * attentionKeyCols(state) *
                 state.dispatch.headDim * sizeof(float));
+        if (attentionClusterEnable_) {
+            if (promoteAttentionClusterAhead()) return;
+            state.clusterAheadPromotionWaiting = true;
+            statAttentionClusterPromotionWaits_->addData(1);
+            pumpAttentionClusterAhead();
+            return;
+        }
         if (state.keyTileOrdinal != 0 && hasAheadOperands) {
             AttentionAheadOperandContext& ahead = state.aheadOperands;
             if (ahead.generation != state.generation ||
@@ -4442,13 +6994,15 @@ public:
             return;
         }
         state.phase = AttentionWorkerPhase::LoadingQ;
+        const uint64_t generation = state.generation;
         globalMem->dma_read_from_host_to_globalmem(
             state.dispatch.qAddr + static_cast<uint64_t>(state.queryBlock) *
                 state.dispatch.queryBlockRows * state.dispatch.headDim * sizeof(float),
             static_cast<uint64_t>(attentionQueryRows(state)) *
                 state.dispatch.headDim * sizeof(float),
-            state.qLocal, [this](bool ok) {
-                if (!attentionWorker_ || !ok) {
+            state.qLocal, [this, generation](bool ok) {
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok) {
                     finishAttentionWorker(false);
                     return;
                 }
@@ -4461,14 +7015,48 @@ public:
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         state.phase = AttentionWorkerPhase::OutputDma;
+        if (!attentionClusterEnable_) {
+            dmaAttentionQueryBlockOutput();
+            return;
+        }
+        const uint32_t queryContext =
+            state.queryBlock % attentionClusterConfig_.groupSize;
+        const int32_t slot = state.clusterOContextSlots[queryContext];
+        uint64_t drainId = 0;
+        uint64_t readyCycle = 0;
+        if (slot < 0 || state.attentionClusterODrainPending ||
+            !attentionOAccumulator_.requestDrain(
+                static_cast<uint32_t>(slot), state.clusterOTags[queryContext],
+                LastTickCycle, &drainId, &readyCycle)) {
+            finishAttentionWorker(false);
+            return;
+        }
+        (void)readyCycle;
+        state.attentionClusterODrainPending = true;
+        state.attentionClusterODrainId = drainId;
+        statAttentionClusterODrainRequests_->addData(1);
+    }
+
+    void dmaAttentionQueryBlockOutput() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        state.phase = AttentionWorkerPhase::OutputDma;
         const uint64_t blockBytes = static_cast<uint64_t>(attentionQueryRows(state)) *
             state.dispatch.headDim * sizeof(float);
+        const uint64_t generation = state.generation;
         globalMem->dma_write_from_globalmem_to_host(
             state.oLocal, state.dispatch.oAddr +
                 static_cast<uint64_t>(state.queryBlock) *
                     state.dispatch.queryBlockRows * state.dispatch.headDim * sizeof(float),
-            blockBytes, [this](bool ok) {
-                if (!attentionWorker_ || !ok) {
+            blockBytes, [this, generation](bool ok) {
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                if (attentionClusterEnable_ &&
+                    !releaseAttentionClusterOContext()) {
+                    statAttentionClusterIllegalTransitions_->addData(1);
                     finishAttentionWorker(false);
                     return;
                 }
@@ -4504,11 +7092,22 @@ public:
     void completeAttentionPvOutputPanel() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        if (++state.panel < attentionDimensionPanels(state)) {
+        if (attentionClusterEnable_) {
+            state.clusterPvWave = 0;
+            state.panel = attentionDimensionPanels(state);
+        } else {
+            ++state.panel;
+        }
+        if (state.panel < attentionDimensionPanels(state)) {
                 transitionAttentionTilePipeline(
                     AttentionTilePipelinePhase::PvMatrixProgram);
                 beginAttentionPvPanel();
         } else {
+                if (attentionClusterEnable_ && !releaseAttentionClusterPv()) {
+                    statAttentionClusterIllegalTransitions_->addData(1);
+                    finishAttentionWorker(false);
+                    return;
+                }
                 finishAttentionTilePipeline();
                 statAttentionWorkerPvTileCompleteTick_->addData(getCurrentSimCycle());
                 traceAttentionTileCompletion(
@@ -4628,6 +7227,10 @@ public:
 
     void readAttentionPvOutput() {
         if (!attentionWorker_) return;
+        if (attentionClusterEnable_) {
+            readAttentionClusterPvOutput();
+            return;
+        }
         AttentionWorkerState& state = *attentionWorker_;
         if (state.index == attentionQueryRows(state)) {
             if (attentionPvOutputPipeline_ &&
@@ -4707,8 +7310,23 @@ public:
         attentionArrayPending_[arrayId] = 0;
         arrayStates[arrayId] = 0;
         AttentionWorkerState& state = *attentionWorker_;
+        if (attentionClusterEnable_) {
+            BusyActivityTracker& activity =
+                arrayId < attentionClusterConfig_.qkArrays
+                ? attentionClusterQkArrayActivity_
+                : attentionClusterPvArrayActivity_;
+            if (!activity.leave(getCurrentSimCycle())) {
+                statAttentionClusterIllegalTransitions_->addData(1);
+                finishAttentionWorker(false);
+                return true;
+            }
+        }
         if (state.arraysPending == 0) { finishAttentionWorker(false); return true; }
         state.arraysPending -= 1;
+        if (attentionClusterEnable_ && state.arraysPending == 0 &&
+            state.clusterOwnerLaunchNext < state.clusterOwnerLaunchEnd) {
+            return true;
+        }
         if (attentionPvEarlyCompute_ &&
             (state.phase == AttentionWorkerPhase::PvProgramInputs ||
              state.phase == AttentionWorkerPhase::PvRestoreOutput ||
@@ -4731,13 +7349,19 @@ public:
             if (state.phase == AttentionWorkerPhase::QkCompute &&
                 (!attentionQkEarlyCompute_ ||
                  state.attentionQkInputProgrammingComplete)) {
-                state.index = 0;
+                state.index = attentionClusterEnable_
+                    ? attentionClusterWaveRowBegin(
+                        state.clusterQkWave, attentionClusterQkLanes(state))
+                    : 0;
                 state.phase = AttentionWorkerPhase::QkReadOutputs;
                 readAttentionQkOutput();
             } else if (state.phase == AttentionWorkerPhase::PvCompute) {
                 transitionAttentionTilePipeline(
                     AttentionTilePipelinePhase::PvOutputReadwrite);
                 state.phase = AttentionWorkerPhase::PvReadOutputs;
+                if (attentionClusterEnable_) {
+                    state.panel = 0;
+                }
                 state.attentionPvOutputWritesPending = 0;
                 state.attentionPvOutputWriteRetry = false;
                 state.attentionPvOutputWriteBytes.clear();
@@ -4769,10 +7393,11 @@ public:
         const uint64_t scoreBytes = static_cast<uint64_t>(queryBlockRows) *
             keyBlockRows * sizeof(float);
         const uint32_t kvBuffers = attentionKvDoubleBuffer_
-            ? 2u : 1u;
+            ? attentionKvBufferCount_ : 1u;
         const uint32_t queryGroupSize = attentionKvPairReuse_
             ? attentionKvQueryGroupSize_ : 1u;
-        const uint32_t queryStorageCopies = 2u * queryGroupSize;
+        const uint32_t queryStorageCopies = attentionClusterEnable_
+            ? queryGroupSize + 1u : 2u * queryGroupSize;
         return sizeof(GolemAttentionDescV1) + queryStorageCopies * qTileBytes + scoreBytes +
             2 * kvBuffers * kvTileBytes;
     }
@@ -4789,24 +7414,41 @@ public:
              (d1Shape ? ATTENTION_D1_WINDOW_BYTES :
               ATTENTION_C1_WINDOW_BYTES));
         const uint64_t requiredWindowWithVTileBuffer = requiredWindow +
-            (attentionPvVTileReuse_ && attentionPvVTileBufferOffset_ == 0 ?
+            (!attentionClusterEnable_ && attentionPvVTileReuse_ &&
+             attentionPvVTileBufferOffset_ == 0 ?
                 attentionPvVTileBufferBytes_ : 0);
         if (attentionWorker_ || globalMem == nullptr || array == nullptr || sfu == nullptr ||
             (attentionGenericGemmEnable_ && workerCommandProcessor->isBusy()) ||
             message.workerCore != coreID ||
             (!c1Shape && !d1Shape && !d3Shape && !streamingShape) ||
             ((!streamingShape && message.headDim != 64)) ||
-            message.queryBlockRows != 16 || message.keyBlockRows != 32 ||
+            message.queryBlockRows != 16 ||
+            (attentionClusterEnable_ ?
+                message.keyBlockRows != attentionClusterConfig_.keyBlockRows :
+                (message.keyBlockRows != 32u && message.keyBlockRows != 64u)) ||
             (message.flags & ~GOLEM_ATTENTION_FLAG_CAUSAL) != 0 ||
             (attentionKvPairReuse_ &&
              ((message.flags & GOLEM_ATTENTION_FLAG_CAUSAL) != 0 ||
               !streamingShape || !attentionKvDoubleBuffer_ ||
-              attentionOAccumulatorCBuffer_ ||
+               attentionOAccumulatorCBuffer_ ||
               (attentionKvQueryGroupSize_ != 2 &&
                attentionKvQueryGroupSize_ != 4))) ||
-            numArrays < 16 || arrayInputSize != static_cast<int>(message.headDim) ||
-            arrayOutputSize != 16 || attentionWindowBytes_ < requiredWindowWithVTileBuffer ||
-            attentionWindowOffset_ + requiredWindowWithVTileBuffer > globalMem->getSize()) {
+            (attentionClusterEnable_ &&
+             (!streamingShape ||
+              (message.flags & GOLEM_ATTENTION_FLAG_CAUSAL) != 0 ||
+              message.headDim != 128 ||
+              message.expectedRows % 16 != 0 ||
+              message.expectedCols % 64 != 0)) ||
+            (attentionClusterEnable_
+                ? (numArrays < static_cast<int>(attentionClusterConfig_.arrays) ||
+                   arrayInputSize * 2 != static_cast<int>(message.headDim) ||
+                   arrayOutputSize !=
+                       static_cast<int>(attentionClusterConfig_.arrayOutputs))
+                : (numArrays < 16 ||
+                   arrayInputSize != static_cast<int>(message.headDim) ||
+                   arrayOutputSize != 16)) ||
+            attentionWindowBytes_ < requiredWindowWithVTileBuffer ||
+                attentionWindowOffset_ + requiredWindowWithVTileBuffer > globalMem->getSize()) {
             ReductionTransportMessage rejected = message;
             rejected.kind = ReductionTransportMessageKind::AttentionComplete;
             rejected.value = 0.0;
@@ -4820,6 +7462,16 @@ public:
         AttentionWorkerState& state = *attentionWorker_;
         state.generation = nextAttentionWorkerGeneration_++;
         state.dispatch = message;
+        if (attentionClusterEnable_) {
+            attentionCluster_ = std::make_unique<AttentionClusterState>();
+            if (!attentionCluster_->configure(
+                    state.generation, attentionClusterConfig_.qkArrays) ||
+                !globalMem->beginAttentionGeneration(state.generation)) {
+                finishAttentionWorker(false);
+                return;
+            }
+            statAttentionClusterWorkerJobs_->addData(1);
+        }
         statAttentionWorkerDispatchAcceptTick_->addData(getCurrentSimCycle());
         traceAttentionMilestone(
             "worker", "worker_dispatch_accept", "done", message.jobId,
@@ -4832,12 +7484,12 @@ public:
             static_cast<uint64_t>(message.keyBlockRows) * message.headDim * sizeof(float) :
             static_cast<uint64_t>(message.expectedCols) * message.headDim * sizeof(float);
         const uint32_t kvBufferCount = attentionKvDoubleBuffer_ && streamingShape
-            ? 2u : 1u;
+            ? attentionKvBufferCount_ : 1u;
         const uint32_t queryBufferCount = attentionKvPairReuse_
             ? attentionKvQueryGroupSize_ : 1u;
         state.qLocalBuffers.resize(queryBufferCount);
-        state.oLocalBuffers.resize(queryBufferCount);
-        for (uint32_t buffer = 0; buffer < queryBufferCount; ++buffer) {
+        state.oLocalBuffers.resize(attentionClusterEnable_ ? 1u : queryBufferCount);
+        for (uint32_t buffer = 0; buffer < state.qLocalBuffers.size(); ++buffer) {
             state.qLocalBuffers[buffer] = base +
                 static_cast<uint64_t>(buffer) * qTileBytes;
         }
@@ -4857,7 +7509,7 @@ public:
         const uint64_t outputBase = state.spLocal +
             static_cast<uint64_t>(message.queryBlockRows) *
                 message.keyBlockRows * sizeof(float);
-        for (uint32_t buffer = 0; buffer < queryBufferCount; ++buffer) {
+        for (uint32_t buffer = 0; buffer < state.oLocalBuffers.size(); ++buffer) {
             state.oLocalBuffers[buffer] = outputBase +
                 static_cast<uint64_t>(buffer) * qTileBytes;
         }
@@ -4881,24 +7533,104 @@ public:
             beginAttentionQueryBlock();
             return;
         }
+        const uint64_t generation = state.generation;
         globalMem->dma_read_from_host_to_globalmem(
             message.kAddr, kvBytes, state.kLocal,
-            [this](bool ok) {
-                if (!attentionWorker_ || !ok) { finishAttentionWorker(false); return; }
+            [this, generation](bool ok) {
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok) { finishAttentionWorker(false); return; }
                 globalMem->dma_read_from_host_to_globalmem(
                     attentionWorker_->dispatch.vAddr,
                     static_cast<uint64_t>(attentionWorker_->dispatch.expectedCols) *
                         attentionWorker_->dispatch.headDim * sizeof(float),
-                    attentionWorker_->vLocal, [this](bool vOk) {
-                        if (!attentionWorker_ || !vOk) { finishAttentionWorker(false); return; }
+                    attentionWorker_->vLocal, [this, generation](bool vOk) {
+                        if (!attentionCallbackGenerationMatches(generation)) return;
+                        if (!vOk) { finishAttentionWorker(false); return; }
                         beginAttentionQueryBlock();
                     }, DmaRequestKind::AttentionKv);
             }, DmaRequestKind::AttentionKv);
     }
 
     void progressAttentionWorker() {
+        recordAttentionClusterPipelineOverlap();
+        const auto oCompletions = attentionOAccumulator_.progress(LastTickCycle);
+        bool resumePvOutput = false;
+        for (const auto& completion : oCompletions) {
+            if (!attentionWorker_) break;
+            if (!attentionCallbackGenerationMatches(
+                    completion.tag.generation)) continue;
+            AttentionWorkerState& state = *attentionWorker_;
+            const uint32_t queryContext =
+                state.queryBlock % attentionClusterConfig_.groupSize;
+            const int32_t slot = state.clusterOContextSlots[queryContext];
+            if (!completion.ok || slot < 0 ||
+                static_cast<uint32_t>(slot) != completion.slot ||
+                !(state.clusterOTags[queryContext] == completion.tag)) {
+                finishAttentionWorker(false);
+                break;
+            }
+            if (completion.drain) {
+                if (!state.attentionClusterODrainPending ||
+                    state.attentionClusterODrainId != completion.id ||
+                    completion.values.size() !=
+                        AttentionOAccumulator::kValuesPerContext) {
+                    finishAttentionWorker(false);
+                    break;
+                }
+                state.attentionClusterODrainPending = false;
+                state.attentionClusterODrainId = 0;
+                const std::vector<uint8_t> bytes =
+                    attentionFloatsToBytes(completion.values);
+                statAttentionClusterODrainBytes_->addData(bytes.size());
+                const uint64_t generation = state.generation;
+                attentionLocalWrite(state.oLocal, bytes,
+                    [this, generation](bool ok) {
+                        if (!attentionCallbackGenerationMatches(generation)) return;
+                        if (!ok) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        dmaAttentionQueryBlockOutput();
+                    });
+                continue;
+            }
+            if (state.attentionClusterOCommitsPending == 0) {
+                finishAttentionWorker(false);
+                break;
+            }
+            --state.attentionClusterOCommitsPending;
+            resumePvOutput = true;
+        }
+        if (attentionWorker_ && resumePvOutput &&
+            attentionWorker_->phase == AttentionWorkerPhase::PvReadOutputs &&
+            attentionWorker_->attentionClusterOCommitsPending == 0 &&
+            attentionWorker_->clusterPvOutputCompleted ==
+                attentionDimensionPanels(*attentionWorker_) &&
+            attentionWorker_->clusterPvOutputInFlight == 0) {
+            readAttentionClusterPvOutput();
+        }
         if (attentionWorker_ && attentionCrossTileOperandPipeline_) {
             pumpAttentionAheadOperands();
+        }
+        if (attentionWorker_ && attentionClusterEnable_) {
+            pumpAttentionClusterAhead();
+        }
+        if (attentionWorker_ && attentionWorker_->clusterOwnerRetry) {
+            std::function<void()> retry =
+                std::move(attentionWorker_->clusterOwnerRetry);
+            attentionWorker_->clusterOwnerRetry = {};
+            retry();
+        }
+        if (attentionWorker_ && !attentionWorker_->clusterOwnerRetry &&
+            !attentionWorker_->clusterOwnerRetryQueue.empty()) {
+            attentionWorker_->clusterOwnerRetry =
+                std::move(attentionWorker_->clusterOwnerRetryQueue.front());
+            attentionWorker_->clusterOwnerRetryQueue.pop_front();
+        }
+        if (attentionWorker_ &&
+            attentionWorker_->clusterOwnerLaunchNext <
+                attentionWorker_->clusterOwnerLaunchEnd) {
+            pumpAttentionClusterOwnerLaunch();
         }
         if (attentionWorker_ && attentionWorker_->vTileBufferWaiting &&
             LastTickCycle >= attentionWorker_->vTileBufferWaitUntilTick) {
@@ -5033,7 +7765,10 @@ public:
             desc.size_bytes == sizeof(GolemAttentionDescV1) &&
             (c1Shape || d1Shape || d3Shape || streamingShape) &&
             ((!streamingShape && desc.head_dim == 64) || streamingShape) &&
-            desc.query_block_rows == 16 && desc.key_block_rows == 32 &&
+            desc.query_block_rows == 16 &&
+            (attentionClusterEnable_ ?
+                desc.key_block_rows == attentionClusterConfig_.keyBlockRows :
+                (desc.key_block_rows == 32u || desc.key_block_rows == 64u)) &&
             ((streamingShape && desc.worker_count == 4) ||
              (!streamingShape && desc.worker_count == 1)) &&
             (desc.flags & ~GOLEM_ATTENTION_FLAG_CAUSAL) == 0 &&
@@ -6835,6 +9570,7 @@ private:
     uint32_t attentionOperandContextBanks_;
     bool attentionKvTileRotation_;
     bool attentionKvDoubleBuffer_;
+    uint32_t attentionKvBufferCount_;
     bool attentionKvSecondLookahead_;
     bool attentionKvCrossQueryPrefetch_;
     bool attentionKvPairReuse_;
@@ -6857,6 +9593,11 @@ private:
     bool attentionGenericGemmEnable_;
     bool attentionMilestoneTrace_;
     bool attentionTileTrace_;
+    bool attentionClusterEnable_ = false;
+    AttentionClusterConfig attentionClusterConfig_ = {};
+    std::unique_ptr<AttentionClusterState> attentionCluster_;
+    BusyActivityTracker attentionClusterQkArrayActivity_;
+    BusyActivityTracker attentionClusterPvArrayActivity_;
 
   
     // Tile Parameters
@@ -7048,6 +9789,74 @@ private:
     Statistics::Statistic<uint64_t>* statAttentionOAccumulatorRestores_;
     Statistics::Statistic<uint64_t>* statAttentionOAccumulatorBytes_;
     Statistics::Statistic<uint64_t>* statAttentionSpHbmBytes_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterConfigFingerprint_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterWorkerJobs_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterContextsIssued_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterContextsCompleted_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterContextsCancelled_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterBankRefsCancelled_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterMemoryRequestsCancelled_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterContextHighWater_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterStaleCallbacks_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterIllegalTransitions_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterScoreSlotReservations_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterScoreSlotReleases_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterScoreSlotFullStalls_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterScoreSlotHighWater_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOContextReservations_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOContextReleases_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOContextCancelled_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOContextHighWater_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOScaleSegments_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOAccumulateSegments_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterODrainRequests_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterODrainBytes_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOReadWaitCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOWriteWaitCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOAluWaitCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOBankConflictCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterODrainWaitCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOReadBusyUnionCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOReadBusySpanCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOReadIdleGapCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOReadMaxConcurrency_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOWriteBusyUnionCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOWriteBusySpanCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOWriteIdleGapCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOWriteMaxConcurrency_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOAluBusyUnionCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOAluBusySpanCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOAluIdleGapCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterOAluMaxConcurrency_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQkArrayBusyUnionTicks_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQkArrayBusySpanTicks_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQkArrayIdleGapTicks_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQkArrayMaxConcurrency_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterPvArrayBusyUnionTicks_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterPvArrayBusySpanTicks_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterPvArrayIdleGapTicks_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterPvArrayMaxConcurrency_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterKPanelBroadcasts_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterKPanelBytes_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQPairMulticasts_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQPairBytes_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterScoreBeats_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterScoreBytes_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterAheadContextsLaunched_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterAheadContextsCompleted_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterAheadContextsPromoted_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterPromotionWaits_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterInitialEnqueueRetries_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQkTileStarts_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQkTileIiCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQkBoundaryIiCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQkSteadyIiOverTarget_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQkSfuOverlapCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterSfuPvOverlapCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterQkPvOverlapCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterThreeStageOverlapCycles_;
+
+    AttentionOAccumulator attentionOAccumulator_;
 
     uint64_t StartTickCycle;
     uint64_t LastTickCycle;

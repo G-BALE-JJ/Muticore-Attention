@@ -49,27 +49,131 @@ PROFILES = {
 }
 
 
-def make_attention_activity(queries, keys, head_dim):
+def make_attention_activity(queries, keys, head_dim, key_block_rows=32):
     if queries <= 0 or queries % 256 != 0:
         raise ValueError("queries must be a positive multiple of 256")
-    if keys <= 0 or keys % 32 != 0:
-        raise ValueError("keys must be a positive multiple of 32")
+    if key_block_rows <= 0 or key_block_rows % 16 != 0:
+        raise ValueError("key_block_rows must be a positive multiple of 16")
+    if keys <= 0 or keys % key_block_rows != 0:
+        raise ValueError("keys must be divisible by key_block_rows")
     if head_dim <= 0 or head_dim % 16 != 0:
         raise ValueError("head_dim must be a positive multiple of 16")
     query_blocks_per_worker = queries // 256
-    key_tiles = keys // 32
+    key_tiles = keys // key_block_rows
     jobs = query_blocks_per_worker * key_tiles
     rows = jobs * 16
     return {
-        "qk": jobs * 32,
+        "qk": jobs * key_block_rows,
         "pv": jobs * head_dim,
         "jobs": jobs,
         "qblocks": query_blocks_per_worker,
         "rows": rows,
-        "scaled": rows * 32,
+        "scaled": rows * key_block_rows,
         "dimension_panels": head_dim // 16,
-        "v_tile_bytes": 32 * head_dim * 4,
+        "v_tile_bytes": key_block_rows * head_dim * 4,
+        "key_block_rows": key_block_rows,
     }
+
+
+def attention_cluster_ii_sample_counts(qblocks, key_tiles, group_size):
+    if qblocks <= 0 or key_tiles <= 0 or group_size <= 0:
+        raise ValueError("qblocks, key_tiles, and group_size must be positive")
+    full_groups, tail = divmod(qblocks, group_size)
+    steady_per_key = full_groups * max(group_size - 2, 0)
+    if tail:
+        steady_per_key += max(tail - 2, 0)
+    physical_tiles = (full_groups + (1 if tail else 0)) * key_tiles
+    return {
+        "steady": steady_per_key * key_tiles,
+        "boundary": max(physical_tiles - 1, 0),
+    }
+
+
+def summarize_attention_cluster_resource_profile(
+        observed, maxima, critical_worker_core, accelerator_clock_hz,
+        timebase_ticks_per_second):
+    """Separate per-worker interval unions from cross-worker accumulated work."""
+    resources = {
+        "qk_array_active": ("rocc", "attention_cluster_qk_array", "ticks"),
+        "pv_array_active": ("rocc", "attention_cluster_pv_array", "ticks"),
+        "array_buffer_ports": (
+            "rocc:array", "attention_cluster_buffer", "ticks"
+        ),
+        "local_gm_read_ports": (
+            "rocc:global_memory", "attention_cluster_local_read", "ticks"
+        ),
+        "local_gm_write_ports": (
+            "rocc:global_memory", "attention_cluster_local_write", "ticks"
+        ),
+        "sfu": ("rocc:sfu", "attention_cluster_sfu", "ticks"),
+        "o_read_port": ("rocc", "attention_cluster_o_read", "cycles"),
+        "o_write_port": ("rocc", "attention_cluster_o_write", "cycles"),
+        "o_alu": ("rocc", "attention_cluster_o_alu", "cycles"),
+    }
+    result = {
+        "critical_worker_core": critical_worker_core,
+        "interval_semantics": (
+            "Each worker entry is a union of real [start,end) service intervals. "
+            "worker_totals are sums across workers and are not end-to-end latency."
+        ),
+        "resources": {},
+    }
+    for name, (suffix, prefix, unit) in resources.items():
+        workers = []
+        for core in range(4, 20):
+            component = f"core{core}:{suffix}"
+            busy = observed.get((component, f"{prefix}_busy_union_{unit}"), 0)
+            span = observed.get((component, f"{prefix}_busy_span_{unit}"), 0)
+            idle = observed.get((component, f"{prefix}_idle_gap_{unit}"), 0)
+            if unit == "ticks":
+                busy_ticks, span_ticks, idle_ticks = busy, span, idle
+                busy_cycles = ticks_to_cycles(
+                    busy, accelerator_clock_hz, timebase_ticks_per_second
+                )
+                span_cycles = ticks_to_cycles(
+                    span, accelerator_clock_hz, timebase_ticks_per_second
+                )
+                idle_cycles = ticks_to_cycles(
+                    idle, accelerator_clock_hz, timebase_ticks_per_second
+                )
+            else:
+                busy_cycles, span_cycles, idle_cycles = busy, span, idle
+                busy_ticks = busy * timebase_ticks_per_second // accelerator_clock_hz
+                span_ticks = span * timebase_ticks_per_second // accelerator_clock_hz
+                idle_ticks = idle * timebase_ticks_per_second // accelerator_clock_hz
+            worker = {
+                "core": core,
+                "busy_ticks": busy_ticks,
+                "busy_cycles": busy_cycles,
+                "span_ticks": span_ticks,
+                "span_cycles": span_cycles,
+                "idle_ticks": idle_ticks,
+                "idle_cycles": idle_cycles,
+                "busy_fraction_of_span": (
+                    busy / span if span else 0.0
+                ),
+                "max_concurrency": maxima.get(
+                    (component, f"{prefix}_max_concurrency"), 0
+                ),
+                "source_unit": unit,
+            }
+            workers.append(worker)
+        critical = next(
+            worker for worker in workers if worker["core"] == critical_worker_core
+        )
+        result["resources"][name] = {
+            "critical_worker": critical,
+            "worker_totals": {
+                key: sum(worker[key] for worker in workers)
+                for key in ("busy_ticks", "busy_cycles", "span_ticks",
+                            "span_cycles", "idle_ticks", "idle_cycles")
+            },
+            "max_worker_concurrency": max(
+                worker["max_concurrency"] for worker in workers
+            ),
+            "workers": workers,
+        }
+    return result
 
 
 def ceil_log2(value):
@@ -134,6 +238,81 @@ def expected_matrix_broadcast_activity(
         "pv_cycles_per_request": pv_transfer_cycles,
         "tree_stages": ceil_log2(fanout),
         "fanout_sum": requests * fanout,
+        "min_fanout": fanout,
+        "max_observed_fanout_expected": fanout,
+    }
+
+
+def expected_attention_cluster_broadcast_activity(
+        activity, bytes_per_cycle, base_latency_cycles,
+        stage_latency_cycles, physical_kv_jobs=None, qk_arrays=16):
+    def transfer_cycles(payload_bytes, fanout):
+        return (
+            base_latency_cycles
+            + (payload_bytes + bytes_per_cycle - 1) // bytes_per_cycle
+            + ceil_log2(fanout) * stage_latency_cycles
+        )
+
+    if physical_kv_jobs is None:
+        physical_kv_jobs = activity["jobs"]
+    qk_fanout = min(qk_arrays // 2, 16)
+    pv_fanout = min((64 - qk_arrays) // 2, 16)
+    key_block_rows = activity.get("key_block_rows", 32)
+    k_payload_bytes = 64 * 64 * 4
+    q_payload_bytes = 64 * 4
+    pv_payload_bytes = key_block_rows * 4
+    v_payload_bytes = 64 * key_block_rows * 4
+    k_requests = physical_kv_jobs * 2
+    v_requests = physical_kv_jobs * 2
+    q_requests = activity["jobs"] * 32
+    pv_requests = activity["jobs"] * 16
+    k_cycles = transfer_cycles(k_payload_bytes, qk_fanout)
+    v_cycles = transfer_cycles(v_payload_bytes, pv_fanout)
+    q_cycles = transfer_cycles(q_payload_bytes, 1)
+    pv_cycles = transfer_cycles(pv_payload_bytes, 2)
+    max_fanout = max(qk_fanout, pv_fanout, 2)
+    return {
+        "enabled": True,
+        "fanout": max_fanout,
+        "min_fanout": 1,
+        "max_observed_fanout_expected": max_fanout,
+        "max_fanout": max_fanout,
+        "payload_bytes": None,
+        "qk_payload_bytes": k_payload_bytes,
+        "q_pair_payload_bytes": q_payload_bytes,
+        "pv_payload_bytes": pv_payload_bytes,
+        "pv_requests": pv_requests,
+        "qk_requests": k_requests,
+        "q_pair_requests": q_requests,
+        "requests": k_requests + v_requests + q_requests + pv_requests,
+        "rejected": 0,
+        "ingress_bytes": (
+            k_requests * k_payload_bytes
+            + v_requests * v_payload_bytes
+            + q_requests * q_payload_bytes
+            + pv_requests * pv_payload_bytes
+        ),
+        "sink_bytes": (
+            k_requests * k_payload_bytes * qk_fanout
+            + v_requests * v_payload_bytes * pv_fanout
+            + q_requests * q_payload_bytes
+            + pv_requests * pv_payload_bytes * 2
+        ),
+        "transfer_cycles": (
+            k_requests * k_cycles
+            + v_requests * v_cycles
+            + q_requests * q_cycles
+            + pv_requests * pv_cycles
+        ),
+        "cycles_per_request": None,
+        "qk_cycles_per_request": k_cycles,
+        "q_pair_cycles_per_request": q_cycles,
+        "pv_cycles_per_request": pv_cycles,
+        "tree_stages": ceil_log2(max_fanout),
+        "fanout_sum": (
+            k_requests * qk_fanout + v_requests * pv_fanout +
+            q_requests + pv_requests * 2
+        ),
     }
 
 INTER_TILE_PHASE_STATS = (
@@ -738,7 +917,10 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
            attention_tile_storage_bank_bytes_per_cycle=64,
            runtime_log=None,
            dma_credit_cap=None, dma_data_nodes=4,
-           cross_tile_operand_pipeline=False):
+           cross_tile_operand_pipeline=False, attention_cluster=False,
+           attention_cluster_qk_arrays=16,
+           near_array_output_bytes_per_cycle=512,
+           array_buffer_base_latency_cycles=1):
     if activity is None:
         activity = PROFILES[profile]
     observed = {}
@@ -754,7 +936,7 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             maxima[key] = int(row["Max.u64"])
     expected = {}
     expected_counts = {}
-    active_columns = 32
+    active_columns = activity.get("key_block_rows", 32)
     key_tiles = activity["jobs"] // activity["qblocks"]
     effective_kv_query_group_size = (
         kv_query_group_size if kv_pair_reuse else 1
@@ -769,15 +951,29 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
     )
     pair_reuse_tiles = reused_queries * key_tiles
     physical_kv_jobs = kv_query_groups * key_tiles
-    full_columns = activity["v_tile_bytes"] // (active_columns * 4)
+    cluster_ii_counts = attention_cluster_ii_sample_counts(
+        activity["qblocks"], key_tiles, effective_kv_query_group_size
+    )
+    full_columns = 64 if attention_cluster else (
+        activity["v_tile_bytes"] // (active_columns * 4)
+    )
     effective_pv_active_k = pv_active_k and active_columns < full_columns
-    broadcast = expected_matrix_broadcast_activity(
-        activity, pv_matrix_broadcast, qk_matrix_broadcast,
-        qk_dataflow_transpose, matrix_broadcast_max_fanout,
-        matrix_broadcast_bytes_per_cycle,
-        matrix_broadcast_base_latency_cycles,
-        matrix_broadcast_stage_latency_cycles,
-        effective_pv_active_k,
+    broadcast = (
+        expected_attention_cluster_broadcast_activity(
+            activity, matrix_broadcast_bytes_per_cycle,
+            matrix_broadcast_base_latency_cycles,
+            matrix_broadcast_stage_latency_cycles,
+            physical_kv_jobs,
+            attention_cluster_qk_arrays,
+        )
+        if attention_cluster else expected_matrix_broadcast_activity(
+            activity, pv_matrix_broadcast, qk_matrix_broadcast,
+            qk_dataflow_transpose, matrix_broadcast_max_fanout,
+            matrix_broadcast_bytes_per_cycle,
+            matrix_broadcast_base_latency_cycles,
+            matrix_broadcast_stage_latency_cycles,
+            effective_pv_active_k,
+        )
     )
     for core in range(4):
         component = f"core{core}:rocc"
@@ -806,29 +1002,46 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
         )
     for core in range(4, 20):
         component = f"core{core}:rocc"
-        v_tile = expected_v_tile_buffer_activity(
-            activity, pv_v_tile_reuse, pv_v_tile_buffer_bytes,
-            pv_v_tile_buffer_hit_ticks, pv_v_tile_buffer_bytes_per_cycle,
-            pv_v_tile_group_retention, physical_kv_jobs,
-        )
+        if attention_cluster and pv_v_tile_reuse:
+            v_tile = {
+                "hits": 0,
+                "misses": physical_kv_jobs,
+                "bytes_read": physical_kv_jobs * activity["v_tile_bytes"],
+                "bytes_reused": 0,
+                "wait_ticks": 0,
+                "capacity_rejections": 0,
+                "group_hits": 0,
+            }
+        else:
+            v_tile = expected_v_tile_buffer_activity(
+                activity, pv_v_tile_reuse, pv_v_tile_buffer_bytes,
+                pv_v_tile_buffer_hit_ticks, pv_v_tile_buffer_bytes_per_cycle,
+                pv_v_tile_group_retention, physical_kv_jobs,
+            )
         for suffix, value in v_tile.items():
             expected[(component, f"attention_pv_v_tile_buffer_{suffix}")] = value
-        expected[(component, "attention_qk_array_ops")] = activity["qk"]
-        expected[(component, "attention_pv_array_ops")] = activity["pv"]
+        qk_array_ops = activity["jobs"] * 32 if attention_cluster else activity["qk"]
+        pv_array_ops = activity["jobs"] * 32 if attention_cluster else activity["pv"]
+        expected[(component, "attention_qk_array_ops")] = qk_array_ops
+        expected[(component, "attention_pv_array_ops")] = pv_array_ops
         expected[(component, "attention_generic_gemm_qk_ops")] = (
-            activity["qk"] if generic_gemm else 0
+            qk_array_ops if generic_gemm else 0
         )
         expected[(component, "attention_generic_gemm_pv_ops")] = (
-            activity["pv"] if generic_gemm else 0
+            pv_array_ops if generic_gemm else 0
         )
         expected[(component, "attention_pv_active_k_launches")] = (
-            activity["pv"] if effective_pv_active_k else 0
+            pv_array_ops if effective_pv_active_k else 0
         )
         expected[(component, "attention_pv_active_k_columns")] = (
-            activity["pv"] * active_columns if effective_pv_active_k else 0
+            pv_array_ops * active_columns if effective_pv_active_k else 0
         )
         expected[(component, "attention_pv_active_k_matrix_elements")] = (
-            activity["pv"] * 16 * active_columns if effective_pv_active_k else 0
+            (physical_kv_jobs * 2 * 64
+             * active_columns)
+            if attention_cluster and effective_pv_active_k else
+            (activity["pv"] * 16 * active_columns
+             if effective_pv_active_k else 0)
         )
         resident_panels = activity["jobs"] * (
             activity["dimension_panels"] - 1
@@ -867,31 +1080,39 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             full_columns / array_mac_per_cu_per_cycle
         ) + array_pipeline_depth
         expected[(array_component, "active_k_launches")] = (
-            activity["pv"] if effective_pv_active_k else 0
+            pv_array_ops if effective_pv_active_k else 0
         )
         expected[(array_component, "active_k_columns")] = (
-            activity["pv"] * active_columns if effective_pv_active_k else 0
+            pv_array_ops * active_columns if effective_pv_active_k else 0
         )
         expected[(array_component, "active_k_compute_cycles")] = (
-            activity["pv"] * active_cycles if effective_pv_active_k else 0
+            pv_array_ops * active_cycles if effective_pv_active_k else 0
         )
         expected[(array_component, "active_k_full_width_cycles_avoided")] = (
-            activity["pv"] * max(full_cycles - active_cycles, 0)
+            pv_array_ops * max(full_cycles - active_cycles, 0)
             if effective_pv_active_k else 0
         )
         if generic_gemm:
             wcp_component = f"{component}:worker_command_processor"
-            gemm_launches = activity["qk"] + activity["pv"]
+            gemm_completions = qk_array_ops + pv_array_ops
+            if attention_cluster:
+                qk_lanes = attention_cluster_qk_arrays // 2
+                pv_lanes = (64 - attention_cluster_qk_arrays) // 2
+                qk_waves = (16 + qk_lanes - 1) // qk_lanes
+                pv_waves = (16 + pv_lanes - 1) // pv_lanes
+                gemm_launches = activity["jobs"] * (qk_waves + pv_waves)
+            else:
+                gemm_launches = gemm_completions
             expected[(wcp_component, "gemm_proxy_launch_commands")] = gemm_launches
-            expected[(wcp_component, "gemm_proxy_completion_callbacks")] = gemm_launches
+            expected[(wcp_component, "gemm_proxy_completion_callbacks")] = gemm_completions
             expected[(wcp_component, "gemm_proxy_completion_delay_cycles")] = (
-                gemm_launches * wcp_gemm_proxy_completion_latency_cycles
+                gemm_completions * wcp_gemm_proxy_completion_latency_cycles
             )
             expected[(wcp_component, "gemm_proxy_queue_full_stalls")] = 0
             expected_counts[(wcp_component, "gemm_proxy_launch_commands")] = gemm_launches
-            expected_counts[(wcp_component, "gemm_proxy_completion_callbacks")] = gemm_launches
+            expected_counts[(wcp_component, "gemm_proxy_completion_callbacks")] = gemm_completions
             expected_counts[(wcp_component, "gemm_proxy_completion_delay_cycles")] = (
-                gemm_launches
+                gemm_completions
                 if wcp_gemm_proxy_completion_latency_cycles > 0 else 0
             )
             qk_panels = activity["qk"] // 16 if qk_panel_row_burst else 0
@@ -932,6 +1153,7 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             expected_counts[(wcp_component, "attention_accumulator_read_wait_cycles")] = accumulator_ops
         expected[(component, "attention_sp_hbm_bytes")] = 0
         expected[(component, "attention_qk_early_compute_arrays")] = (
+            0 if attention_cluster else
             (activity["rows"] if qk_dataflow_transpose else
              activity["qk"] - ahead_operand_tiles * 16)
             if qk_early_compute else 0
@@ -979,7 +1201,8 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             expected_prefetches if kv_double_buffer else 0
         )
         expected_counts[(component, "attention_kv_k_release_ticks")] = (
-            activity["jobs"] if kv_double_buffer else 0
+            (physical_kv_jobs if attention_cluster else activity["jobs"])
+            if kv_double_buffer else 0
         )
         expected_counts[(component, "attention_kv_v_release_ticks")] = (
             activity["jobs"] if kv_double_buffer else 0
@@ -1006,13 +1229,100 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             activity["jobs"] if pv_matrix_softmax_overlap else 0
         )
         expected[(component, "attention_qk_matrix_broadcasts")] = (
+            physical_kv_jobs * 2 if attention_cluster else
             (activity["qk"] // 16 if qk_dataflow_transpose else
              activity["jobs"] - ahead_operand_tiles)
             if qk_matrix_broadcast else 0
         )
         expected[(component, "attention_pv_matrix_broadcasts")] = (
+            0 if attention_cluster else
             activity["pv"] // 16 if pv_matrix_broadcast else 0
         )
+        if attention_cluster:
+            cluster_contexts = activity["jobs"] * 3 + activity["qblocks"]
+            cluster_stats = {
+                "attention_cluster_worker_jobs": 1,
+                "attention_cluster_contexts_issued": cluster_contexts,
+                "attention_cluster_contexts_completed": cluster_contexts,
+                "attention_cluster_contexts_cancelled": 0,
+                "attention_cluster_bank_refs_cancelled": 0,
+                "attention_cluster_memory_requests_cancelled": 0,
+                "attention_cluster_stale_callbacks": 0,
+                "attention_cluster_illegal_transitions": 0,
+                "attention_cluster_score_slot_reservations": activity["jobs"],
+                "attention_cluster_score_slot_releases": activity["jobs"],
+                "attention_cluster_score_slot_full_stalls": 0,
+                "attention_cluster_qk_k_panel_broadcasts": (
+                    physical_kv_jobs * 2
+                ),
+                "attention_cluster_qk_k_panel_bytes": (
+                    physical_kv_jobs * 2 * 64 * 64 * 4
+                ),
+                "attention_cluster_qk_q_pair_multicasts": activity["jobs"] * 32,
+                "attention_cluster_qk_q_pair_bytes": (
+                    activity["jobs"] * 32 * 64 * 4
+                ),
+                "attention_cluster_qk_score_beats": activity["jobs"] * 16,
+                "attention_cluster_qk_score_bytes": activity["qk"] * 64,
+                "attention_cluster_ahead_contexts_launched": (
+                    activity["jobs"] - physical_kv_jobs
+                ),
+                "attention_cluster_ahead_contexts_completed": (
+                    activity["jobs"] - physical_kv_jobs
+                ),
+                "attention_cluster_ahead_contexts_promoted": (
+                    activity["jobs"] - physical_kv_jobs
+                ),
+                "attention_cluster_qk_tile_starts": activity["jobs"],
+                "attention_cluster_o_context_reservations": activity["qblocks"],
+                "attention_cluster_o_context_releases": activity["qblocks"],
+                "attention_cluster_o_context_cancelled": 0,
+                "attention_cluster_o_scale_segments": (
+                    (activity["jobs"] - activity["qblocks"])
+                    * 16 * activity["dimension_panels"]
+                ),
+                "attention_cluster_o_accumulate_segments": (
+                    activity["jobs"] * 16 * activity["dimension_panels"]
+                ),
+                "attention_cluster_o_drain_requests": activity["qblocks"],
+                "attention_cluster_o_drain_bytes": (
+                    activity["qblocks"] * 16 * activity["dimension_panels"] * 64
+                ),
+            }
+            for statistic, value in cluster_stats.items():
+                expected[(component, statistic)] = value
+            expected_counts[(component, "attention_cluster_config_fingerprint")] = 1
+            classified_array_stats = {
+                "attention_cluster_qk_k_matrix_requests": (
+                    physical_kv_jobs * 2
+                ),
+                "attention_cluster_qk_k_matrix_bytes": (
+                    physical_kv_jobs * 2 * 64 * 64 * 4
+                ),
+                "attention_cluster_qk_q_pair_requests": activity["jobs"] * 32,
+                "attention_cluster_qk_q_pair_bytes": (
+                    activity["jobs"] * 32 * 64 * 4
+                ),
+                "attention_cluster_qk_score_out_requests": activity["jobs"] * 16,
+                "attention_cluster_qk_score_out_bytes": (
+                    activity["jobs"] * 16 * 2 * 64 * 4
+                ),
+                "attention_cluster_pv_group_drains": activity["jobs"] * 16,
+                "attention_cluster_pv_group_drain_bytes": (
+                    activity["jobs"] * 16 * activity["dimension_panels"] * 64
+                ),
+                "attention_cluster_pv_group_drain_cycles": (
+                    activity["jobs"] * 16 * (
+                        array_buffer_base_latency_cycles +
+                        (
+                            activity["dimension_panels"] * 64 +
+                            near_array_output_bytes_per_cycle - 1
+                        ) // near_array_output_bytes_per_cycle
+                    )
+                ),
+            }
+            for statistic, value in classified_array_stats.items():
+                expected[(array_component, statistic)] = value
         if broadcast["enabled"]:
             broadcast_stats = {
                 "matrix_broadcast_requests": broadcast["requests"],
@@ -1028,12 +1338,15 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                 broadcast["requests"]
             )
         expected_counts[(component, "attention_worker_dispatch_accept_tick")] = 1
-        for stat in (
-            "attention_worker_qk_tile_complete_tick",
-            "attention_worker_softmax_tile_complete_tick",
-            "attention_worker_pv_tile_complete_tick",
-        ):
-            expected_counts[(component, stat)] = activity["jobs"]
+        expected_counts[(component, "attention_worker_qk_tile_complete_tick")] = (
+            activity["jobs"]
+        )
+        expected_counts[(component, "attention_worker_softmax_tile_complete_tick")] = (
+            activity["jobs"]
+        )
+        expected_counts[(component, "attention_worker_pv_tile_complete_tick")] = (
+            activity["jobs"]
+        )
         expected_counts[(component, "attention_worker_output_dma_ack_tick")] = (
             activity["qblocks"]
         )
@@ -1041,7 +1354,10 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             "attention_worker_intertile_total_ticks",
             *(statistic for _, statistic in INTER_TILE_PHASE_STATS),
         ):
-            expected_counts[(component, stat)] = activity["jobs"] - 1
+            expected_counts[(component, stat)] = (
+                physical_kv_jobs - 1 if attention_cluster
+                else activity["jobs"] - 1
+            )
         for stat in (
             "attention_worker_tile_total_ticks",
             *(statistic for _, statistic in TILE_PIPELINE_PHASE_STATS),
@@ -1050,6 +1366,51 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
         expected[(f"core{core}:rocc:sfu", "sfu_attention_jobs")] = activity["jobs"]
         expected[(f"core{core}:rocc:sfu", "sfu_softmax_rows")] = activity["rows"]
         expected[(f"core{core}:rocc:sfu", "sfu_attention_scaled_elements")] = activity["scaled"]
+        if attention_cluster:
+            sfu_component = f"core{core}:rocc:sfu"
+            expected[(sfu_component, "attention_cluster_score_fifo_producer_writes")] = (
+                activity["jobs"] * 16
+            )
+            expected[(sfu_component, "attention_cluster_score_fifo_producer_bytes")] = (
+                activity["qk"] * 64
+            )
+            expected[(sfu_component, "attention_cluster_score_fifo_reads")] = (
+                activity["qk"] * 3
+            )
+            expected[(sfu_component, "attention_cluster_score_fifo_read_bytes")] = (
+                activity["qk"] * 3 * 64
+            )
+            expected[(sfu_component, "attention_cluster_score_fifo_internal_writes")] = (
+                activity["qk"] * 2
+            )
+            expected[(sfu_component, "attention_cluster_score_fifo_internal_write_bytes")] = (
+                activity["qk"] * 2 * 64
+            )
+            expected[(sfu_component, "attention_cluster_score_fifo_backpressure_stalls")] = 0
+            p_reads = activity["jobs"] * 16
+            p_stats = {
+                "attention_cluster_p_fifo_reservations": activity["jobs"],
+                "attention_cluster_p_fifo_releases": activity["jobs"],
+                "attention_cluster_p_fifo_cancelled": 0,
+                "attention_cluster_p_fifo_writes": (
+                    activity["jobs"] * 16 * active_columns // 16
+                ),
+                "attention_cluster_p_fifo_write_bytes": (
+                    activity["jobs"] * 16 * active_columns * 4
+                ),
+                "attention_cluster_p_fifo_reads": p_reads,
+                "attention_cluster_p_fifo_read_bytes": p_reads * active_columns * 4,
+                "attention_cluster_p_fifo_backpressure_stalls": 0,
+            }
+            for statistic, value in p_stats.items():
+                if statistic != "attention_cluster_p_fifo_backpressure_stalls":
+                    expected[(sfu_component, statistic)] = value
+            expected_counts[(component, "attention_cluster_qk_tile_ii_cycles")] = (
+                cluster_ii_counts["steady"]
+            )
+            expected_counts[(component, "attention_cluster_qk_boundary_ii_cycles")] = (
+                cluster_ii_counts["boundary"]
+            )
     mismatches = {
         f"{component}/{stat}": {"expected": value, "actual": observed.get((component, stat))}
         for (component, stat), value in expected.items()
@@ -1063,6 +1424,130 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
         for (component, stat), value in expected_counts.items()
         if counts.get((component, stat)) != value
     })
+    if not attention_cluster:
+        for (component, statistic), value in observed.items():
+            if "attention_cluster" in statistic and value != 0:
+                mismatches[f"{component}/{statistic}.disabled"] = {
+                    "expected": 0, "actual": value,
+                }
+    else:
+        def require_interval(component, prefix, suffix):
+            union = observed.get((component, f"{prefix}_busy_union_{suffix}"), 0)
+            span = observed.get((component, f"{prefix}_busy_span_{suffix}"), 0)
+            idle = observed.get((component, f"{prefix}_idle_gap_{suffix}"), 0)
+            concurrency = observed.get((component, f"{prefix}_max_concurrency"), 0)
+            if union <= 0 or span < union or idle != span - union or concurrency <= 0:
+                mismatches[f"{component}/{prefix}_interval"] = {
+                    "expected": "union>0, span>=union, idle=span-union, concurrency>0",
+                    "actual": {
+                        "union": union, "span": span, "idle": idle,
+                        "concurrency": concurrency,
+                    },
+                }
+
+        for core in range(4, 20):
+            component = f"core{core}:rocc"
+            fingerprint = observed.get(
+                (component, "attention_cluster_config_fingerprint"), 0
+            )
+            if fingerprint <= 0:
+                mismatches[f"{component}/attention_cluster_config_fingerprint"] = {
+                    "expected": ">0", "actual": fingerprint,
+                }
+            for statistic in (
+                "attention_cluster_context_high_water",
+                "attention_cluster_score_slot_high_water",
+            ):
+                maximum = maxima.get((component, statistic), 0)
+                # Context high-water includes the resident O context plus
+                # transient QK/score/PV contexts.  The cluster has four of
+                # each context kind, hence 16 total; score FIFO remains a
+                # separate four-slot contract checked by its own statistic.
+                upper_bound = 16 if statistic.endswith("context_high_water") else 4
+                if not 1 <= maximum <= upper_bound:
+                    mismatches[f"{component}/{statistic}.bound"] = {
+                        "expected": f"1..{upper_bound}", "actual": maximum,
+                    }
+            expected_concurrency = {
+                "attention_cluster_qk_array_max_concurrency": min(
+                    attention_cluster_qk_arrays, 32
+                ),
+                "attention_cluster_pv_array_max_concurrency": min(
+                    64 - attention_cluster_qk_arrays, 32
+                ),
+            }
+            for statistic, expected_max in expected_concurrency.items():
+                actual = observed.get((component, statistic), 0)
+                if actual != expected_max:
+                    mismatches[f"{component}/{statistic}"] = {
+                        "expected": expected_max, "actual": actual,
+                    }
+            o_high_water = maxima.get(
+                (component, "attention_cluster_o_context_high_water"), 0
+            )
+            expected_o_high_water = min(
+                activity["qblocks"], effective_kv_query_group_size, 4
+            )
+            if o_high_water != expected_o_high_water:
+                mismatches[
+                    f"{component}/attention_cluster_o_context_high_water"
+                ] = {"expected": expected_o_high_water, "actual": o_high_water}
+            require_interval(component, "attention_cluster_qk_array", "ticks")
+            require_interval(component, "attention_cluster_pv_array", "ticks")
+            array_component = f"{component}:array"
+            require_interval(
+                array_component, "attention_cluster_buffer", "ticks"
+            )
+            memory_component = f"{component}:global_memory"
+            require_interval(
+                memory_component, "attention_cluster_local_read", "ticks"
+            )
+            require_interval(
+                memory_component, "attention_cluster_local_write", "ticks"
+            )
+            require_interval(
+                f"{component}:sfu", "attention_cluster_sfu", "ticks"
+            )
+            require_interval(component, "attention_cluster_o_read", "cycles")
+            require_interval(component, "attention_cluster_o_write", "cycles")
+            require_interval(component, "attention_cluster_o_alu", "cycles")
+            ahead_contexts = activity["jobs"] - physical_kv_jobs
+            promotion_waits = observed.get(
+                (component, "attention_cluster_promotion_waits"), 0
+            )
+            if promotion_waits > ahead_contexts:
+                mismatches[f"{component}/attention_cluster_promotion_waits.bound"] = {
+                    "expected": f"0..{ahead_contexts}", "actual": promotion_waits,
+                }
+            pair_overlap_stats = (
+                "attention_cluster_sfu_pv_overlap_cycles",
+                "attention_cluster_qk_pv_overlap_cycles",
+            )
+            for statistic in pair_overlap_stats:
+                actual = observed.get((component, statistic), 0)
+                if ahead_contexts > 0 and actual <= 0:
+                    mismatches[f"{component}/{statistic}"] = {
+                        "expected": ">0", "actual": actual,
+                    }
+                elif ahead_contexts == 0 and actual != 0:
+                    mismatches[f"{component}/{statistic}"] = {
+                        "expected": 0, "actual": actual,
+                    }
+        three_stage_overlap = sum(
+            observed.get(
+                (f"core{core}:rocc",
+                 "attention_cluster_three_stage_overlap_cycles"), 0
+            )
+            for core in range(4, 20)
+        )
+        if activity["jobs"] == physical_kv_jobs:
+            if three_stage_overlap != 0:
+                mismatches["attention_cluster_three_stage_overlap_cycles.total"] = {
+                    "expected": 0, "actual": three_stage_overlap,
+                }
+        # With a 64-cycle QK wave, QK can complete between SFU sampling
+        # points.  Keep three-stage overlap as a reported efficiency metric;
+        # the required concurrency contracts are the two durable PV overlaps.
     for core in range(4, 20):
         component = f"core{core}:rocc"
         ready = observed.get(
@@ -1089,16 +1574,25 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             component = f"core{core}:rocc:array"
             key = (component, "matrix_broadcast_fanout")
             actual_range = [minima.get(key), maxima.get(key)]
-            if actual_range != [broadcast["fanout"], broadcast["fanout"]]:
+            expected_range = [
+                broadcast["min_fanout"],
+                broadcast["max_observed_fanout_expected"],
+            ]
+            if actual_range != expected_range:
                 mismatches[f"{component}/matrix_broadcast_fanout.range"] = {
-                    "expected": [broadcast["fanout"], broadcast["fanout"]],
+                    "expected": expected_range,
                     "actual": actual_range,
                 }
     if generic_gemm:
         for core in range(4, 20):
             component = f"core{core}:rocc:worker_command_processor"
             commands = observed.get((component, "gemm_proxy_commands_issued"))
-            launches = activity["qk"] + activity["pv"]
+            completions = activity["qk"] + activity["pv"]
+            launches = (
+                activity["jobs"] *
+                (activity["qk"] // activity["jobs"] // 8 + 16)
+                if attention_cluster else completions
+            )
             if commands is None or commands < launches:
                 mismatches[f"{component}/gemm_proxy_commands_issued"] = {
                     "expected": f">={launches}",
@@ -1562,7 +2056,7 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             "pv_enabled": pv_matrix_broadcast,
             "qk_enabled": qk_matrix_broadcast,
             "topology": "binary_tree",
-            "shares_array_buffer_ports": True,
+            "shares_array_buffer_ports": not attention_cluster,
             "max_fanout": matrix_broadcast_max_fanout,
             "bytes_per_cycle": matrix_broadcast_bytes_per_cycle,
             "base_latency_cycles": matrix_broadcast_base_latency_cycles,
@@ -1571,10 +2065,17 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             "fanout": broadcast["fanout"],
             "payload_bytes": broadcast["payload_bytes"],
             "qk_payload_bytes": broadcast["qk_payload_bytes"],
+            "q_pair_payload_bytes": broadcast.get("q_pair_payload_bytes"),
             "pv_payload_bytes": broadcast["pv_payload_bytes"],
             "cycles_per_request": broadcast["cycles_per_request"],
             "qk_cycles_per_request": broadcast["qk_cycles_per_request"],
+            "q_pair_cycles_per_request": broadcast.get(
+                "q_pair_cycles_per_request"
+            ),
             "pv_cycles_per_request": broadcast["pv_cycles_per_request"],
+            "qk_requests_per_worker": broadcast["qk_requests"],
+            "q_pair_requests_per_worker": broadcast.get("q_pair_requests", 0),
+            "pv_requests_per_worker": broadcast["pv_requests"],
             "max_observed_fanout": max(
                 maxima.get(
                     (f"core{core}:rocc:array", "matrix_broadcast_fanout"), 0
@@ -1591,6 +2092,190 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                 for statistic in broadcast_stats
             },
         }
+        lifecycle["attention_cluster"] = {
+            "enabled": attention_cluster,
+            "physical_array_contract": {
+                "arrays_per_worker": 64,
+                "input_rows_per_array": 64,
+                "output_cus_per_array": 64,
+                "operand_banks_per_array": 2,
+            },
+            "array_partition": {
+                "qk": [0, attention_cluster_qk_arrays - 1],
+                "pv": [attention_cluster_qk_arrays, 63],
+            },
+            "owned_arrays": {
+                "qk": attention_cluster_qk_arrays,
+                "pv": 64 - attention_cluster_qk_arrays,
+            },
+            "contexts_per_worker": activity["jobs"] * 3 + activity["qblocks"],
+            "q_physical_inputs_per_tile": 32,
+            "qk_pair_reductions_per_tile": 16,
+            "score_beats_per_tile": 16,
+            "direct_p": {
+                "slots": 4,
+                "bytes_per_slot": 16 * active_columns * 4,
+                "write_bytes_per_cycle": 64,
+                "read_bytes_per_cycle": 64,
+                "reservations_per_worker": activity["jobs"],
+                "writes_per_worker": activity["jobs"] * active_columns // 16,
+                "reads_per_worker": activity["jobs"] * 16,
+            },
+            "group_pipeline": {
+                "group_size": effective_kv_query_group_size,
+                "physical_tiles_per_worker": physical_kv_jobs,
+                "logical_tiles_per_worker": activity["jobs"],
+                "ahead_contexts_per_worker": (
+                    activity["jobs"] - physical_kv_jobs
+                ),
+                "tile_ii_target_cycles": 625,
+                "tile_ii_applicable": cluster_ii_counts["steady"] > 0,
+                "tile_ii_accepted": (
+                    all(
+                        observed.get(
+                            (f"core{core}:rocc",
+                             "attention_cluster_qk_steady_ii_over_target"), 0
+                        ) * 20 <= counts.get(
+                            (f"core{core}:rocc",
+                             "attention_cluster_qk_tile_ii_cycles"), 0
+                        )
+                        for core in range(4, 20)
+                    ) if cluster_ii_counts["steady"] > 0 else None
+                ),
+                "three_stage_overlap_cycles_total": sum(
+                    observed.get(
+                        (f"core{core}:rocc",
+                         "attention_cluster_three_stage_overlap_cycles"), 0
+                    )
+                    for core in range(4, 20)
+                ),
+                "workers": [
+                    {
+                        "core": core,
+                        "ahead_launched": observed.get(
+                            (f"core{core}:rocc",
+                             "attention_cluster_ahead_contexts_launched"), 0
+                        ),
+                        "ahead_completed": observed.get(
+                            (f"core{core}:rocc",
+                             "attention_cluster_ahead_contexts_completed"), 0
+                        ),
+                        "ahead_promoted": observed.get(
+                            (f"core{core}:rocc",
+                             "attention_cluster_ahead_contexts_promoted"), 0
+                        ),
+                        "promotion_waits": observed.get(
+                            (f"core{core}:rocc",
+                             "attention_cluster_promotion_waits"), 0
+                        ),
+                        "initial_enqueue_retries": observed.get(
+                            (f"core{core}:rocc",
+                             "attention_cluster_initial_enqueue_retries"), 0
+                        ),
+                        "tile_ii": {
+                            "count": counts.get(
+                                (f"core{core}:rocc",
+                                 "attention_cluster_qk_tile_ii_cycles"), 0
+                            ),
+                            "sum_cycles": observed.get(
+                                (f"core{core}:rocc",
+                                 "attention_cluster_qk_tile_ii_cycles"), 0
+                            ),
+                            "min_cycles": minima.get(
+                                (f"core{core}:rocc",
+                                 "attention_cluster_qk_tile_ii_cycles"), 0
+                            ),
+                            "max_cycles": maxima.get(
+                                (f"core{core}:rocc",
+                                 "attention_cluster_qk_tile_ii_cycles"), 0
+                            ),
+                            "over_target_count": observed.get(
+                                (f"core{core}:rocc",
+                                 "attention_cluster_qk_steady_ii_over_target"), 0
+                            ),
+                            "p95_relation": (
+                                "<=625" if observed.get(
+                                    (f"core{core}:rocc",
+                                     "attention_cluster_qk_steady_ii_over_target"), 0
+                                ) * 20 <= counts.get(
+                                    (f"core{core}:rocc",
+                                     "attention_cluster_qk_tile_ii_cycles"), 0
+                                ) else ">625"
+                            ),
+                        },
+                        "boundary_ii": {
+                            "count": counts.get(
+                                (f"core{core}:rocc",
+                                 "attention_cluster_qk_boundary_ii_cycles"), 0
+                            ),
+                            "sum_cycles": observed.get(
+                                (f"core{core}:rocc",
+                                 "attention_cluster_qk_boundary_ii_cycles"), 0
+                            ),
+                            "min_cycles": minima.get(
+                                (f"core{core}:rocc",
+                                 "attention_cluster_qk_boundary_ii_cycles"), 0
+                            ),
+                            "max_cycles": maxima.get(
+                                (f"core{core}:rocc",
+                                 "attention_cluster_qk_boundary_ii_cycles"), 0
+                            ),
+                        },
+                        "overlap_cycles": {
+                            name: observed.get(
+                                (f"core{core}:rocc",
+                                 f"attention_cluster_{name}_overlap_cycles"), 0
+                            )
+                            for name in ("qk_sfu", "sfu_pv", "qk_pv", "three_stage")
+                        },
+                    }
+                    for core in range(4, 20)
+                ],
+            },
+        }
+        if attention_cluster:
+            critical_worker_core = lifecycle["worker_critical_path"][
+                "slowest_worker_core"
+            ]
+            lifecycle["attention_cluster"]["resource_profile"] = (
+                summarize_attention_cluster_resource_profile(
+                    observed, maxima, critical_worker_core,
+                    accelerator_clock_hz, timebase_ticks_per_second,
+                )
+            )
+        o_stats = (
+            "attention_cluster_o_context_reservations",
+            "attention_cluster_o_context_releases",
+            "attention_cluster_o_context_cancelled",
+            "attention_cluster_o_scale_segments",
+            "attention_cluster_o_accumulate_segments",
+            "attention_cluster_o_drain_requests",
+            "attention_cluster_o_drain_bytes",
+            "attention_cluster_o_read_wait_cycles",
+            "attention_cluster_o_write_wait_cycles",
+            "attention_cluster_o_alu_wait_cycles",
+            "attention_cluster_o_bank_conflict_cycles",
+            "attention_cluster_o_drain_wait_cycles",
+        )
+        lifecycle["attention_cluster"]["resident_o"] = {
+            "contexts": 4,
+            "bytes_per_context": 8192,
+            "banks": 16,
+            "max_context_high_water": max(
+                maxima.get(
+                    (f"core{core}:rocc",
+                     "attention_cluster_o_context_high_water"), 0
+                )
+                for core in range(4, 20)
+            ),
+            "worker_totals": {
+                statistic: sum(
+                    observed.get((f"core{core}:rocc", statistic), 0)
+                    for core in range(4, 20)
+                )
+                for statistic in o_stats
+            },
+        }
         active_k_stats = (
             "active_k_launches",
             "active_k_columns",
@@ -1600,7 +2285,7 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
         lifecycle["pv_active_k"] = {
             "configured": pv_active_k,
             "enabled": effective_pv_active_k,
-            "active_columns": 32,
+            "active_columns": active_columns,
             "mac_per_cu_per_cycle": array_mac_per_cu_per_cycle,
             "pipeline_depth": array_pipeline_depth,
             "worker_totals": {
@@ -1762,6 +2447,7 @@ def main():
     parser.add_argument("--queries", type=int)
     parser.add_argument("--keys", type=int)
     parser.add_argument("--head-dim", type=int)
+    parser.add_argument("--key-block-rows", type=int, default=32)
     parser.add_argument(
         "--normalization-clock", "--accelerator-clock",
         dest="normalization_clock", type=parse_frequency_hz,
@@ -1849,8 +2535,16 @@ def main():
     parser.add_argument("--pv-early-compute", action="store_true")
     parser.add_argument("--pv-matrix-softmax-overlap", action="store_true")
     parser.add_argument("--pv-active-k", action="store_true")
+    parser.add_argument("--attention-cluster", action="store_true")
+    parser.add_argument("--attention-cluster-qk-arrays", type=int, default=16)
     parser.add_argument("--array-mac-per-cu-per-cycle", type=float, default=1.0)
     parser.add_argument("--array-pipeline-depth", type=int, default=2)
+    parser.add_argument(
+        "--near-array-output-bytes-per-cycle", type=int, default=512
+    )
+    parser.add_argument(
+        "--array-buffer-base-latency-cycles", type=int, default=1
+    )
     parser.add_argument("--generic-gemm", action="store_true")
     parser.add_argument("--matrix-broadcast-max-fanout", type=int, default=16)
     parser.add_argument("--matrix-broadcast-bytes-per-cycle", type=int, default=64)
@@ -1876,7 +2570,10 @@ def main():
         if not all(value is not None for value in explicit_shape):
             parser.error("--queries, --keys, and --head-dim must be supplied together")
         try:
-            activity = make_attention_activity(*explicit_shape)
+            activity = make_attention_activity(
+                *explicit_shape,
+                key_block_rows=args.key_block_rows,
+            )
         except ValueError as error:
             parser.error(str(error))
         case_id = args.case_id or (
@@ -1915,6 +2612,10 @@ def main():
         parser.error("array MACs per CU per cycle must be positive")
     if args.array_pipeline_depth < 0:
         parser.error("array pipeline depth cannot be negative")
+    if args.near_array_output_bytes_per_cycle <= 0:
+        parser.error("near-array output bytes per cycle must be positive")
+    if args.array_buffer_base_latency_cycles < 0:
+        parser.error("array buffer base latency cannot be negative")
     if not 1 <= args.qk_readout_window <= 16:
         parser.error("QK readout window must be from 1 through 16")
     if args.qk_input_pipeline and args.qk_dataflow_transpose:
@@ -1930,6 +2631,8 @@ def main():
         parser.error("KV query group size must be 1, 2, or 4")
     if args.kv_pair_reuse and args.kv_query_group_size == 1:
         parser.error("KV pair reuse requires query group size 2 or 4")
+    if args.attention_cluster_qk_arrays not in (16, 24, 32, 40):
+        parser.error("Attention cluster QK arrays must be 16, 24, 32, or 40")
     if args.cross_tile_operand_pipeline and not args.kv_pair_reuse:
         parser.error("cross-tile operand pipeline requires KV pair reuse")
     result = verify(args.stats_file, case_id, args.normalization_clock,
@@ -1967,7 +2670,14 @@ def main():
                     args.attention_tile_storage_bank_bytes_per_cycle,
                     args.runtime_log, dma_credit_cap,
                     cross_tile_operand_pipeline=
-                        args.cross_tile_operand_pipeline)
+                        args.cross_tile_operand_pipeline,
+                    attention_cluster=args.attention_cluster,
+                    attention_cluster_qk_arrays=
+                        args.attention_cluster_qk_arrays,
+                    near_array_output_bytes_per_cycle=
+                        args.near_array_output_bytes_per_cycle,
+                    array_buffer_base_latency_cycles=
+                        args.array_buffer_base_latency_cycles)
     print(json.dumps(result, indent=2))
     if args.result_json:
         output = Path(args.result_json)

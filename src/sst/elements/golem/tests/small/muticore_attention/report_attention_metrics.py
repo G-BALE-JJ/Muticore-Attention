@@ -44,6 +44,7 @@ def build_report(lifecycle_result, numerical_result, *, profile, mpi_ranks,
     qk_row_burst = dict(lifecycle.get("qk_panel_row_burst", {}))
     v_tile = dict(lifecycle.get("pv_v_tile_buffer", {}))
     cross_query = dict(lifecycle.get("kv_cross_query_prefetch", {}))
+    attention_cluster = dict(lifecycle.get("attention_cluster", {}))
     if wcp:
         wcp["clock_domain"] = "worker_command_processor_component_cycles"
         wcp["clock_hz"] = clock.get("model_clocks_hz", {}).get(
@@ -229,6 +230,7 @@ def build_report(lifecycle_result, numerical_result, *, profile, mpi_ranks,
         "qk_panel_row_burst": qk_row_burst,
         "pv_v_tile_buffer": v_tile,
         "kv_cross_query_prefetch": cross_query,
+        "attention_cluster": attention_cluster,
         "numerical_verification": numerical_result,
         "mpi_partition_verification": mpi_summary,
         "baseline_verification": baseline_result or {},
@@ -470,6 +472,30 @@ def _csv_rows(report):
         for name, value in v_tile.get("worker_totals", {}).items()
         if name in v_tile_total_units
     )
+    resource_profile = report.get("attention_cluster", {}).get(
+        "resource_profile", {}
+    )
+    for resource_name, resource in resource_profile.get("resources", {}).items():
+        critical_resource = resource.get("critical_worker", {})
+        for name, unit in (
+            ("busy_ticks", "sst_ticks"),
+            ("busy_cycles", "normalized_cycles"),
+            ("span_ticks", "sst_ticks"),
+            ("span_cycles", "normalized_cycles"),
+            ("idle_ticks", "sst_ticks"),
+            ("idle_cycles", "normalized_cycles"),
+            ("busy_fraction_of_span", "ratio"),
+            ("max_concurrency", "count"),
+        ):
+            rows.append((
+                f"resource_critical_worker_{resource_name}", name,
+                critical_resource.get(name, 0), unit,
+            ))
+        for name, value in resource.get("worker_totals", {}).items():
+            rows.append((
+                f"resource_worker_sum_{resource_name}", name, value,
+                "sst_ticks" if name.endswith("_ticks") else "normalized_cycles",
+            ))
     verification = report["numerical_verification"]
     for name in ("checked", "mismatches", "max_abs_error"):
         if name in verification:
@@ -601,6 +627,84 @@ def print_summary(report):
             f"{_color('1;33', f'{cycles:>12,}')}"
         )
     _result_metric("Critical worker", f"core{critical['core']}", value_color="1;35")
+    cluster_pipeline = report.get("attention_cluster", {}).get(
+        "group_pipeline", {}
+    )
+    if cluster_pipeline.get("tile_ii_applicable"):
+        worker_pipeline = next(
+            (
+                worker for worker in cluster_pipeline.get("workers", [])
+                if worker.get("core") == critical["core"]
+            ),
+            {},
+        )
+        tile_ii = worker_pipeline.get("tile_ii", {})
+        count = tile_ii.get("count", 0)
+        average = tile_ii.get("sum_cycles", 0) / count if count else 0.0
+        accepted = cluster_pipeline.get("tile_ii_accepted")
+        _result_metric(
+            "Cluster tile II",
+            f"avg={average:,.1f} | min={tile_ii.get('min_cycles', 0):,} | "
+            f"max={tile_ii.get('max_cycles', 0):,} | "
+            f"p95{tile_ii.get('p95_relation', 'unknown')} | "
+            f"target<={cluster_pipeline.get('tile_ii_target_cycles', 0):,} | "
+            f"gate={'PASS' if accepted else 'FAIL'}",
+            value_color="1;32" if accepted else "1;31",
+        )
+        overlap = worker_pipeline.get("overlap_cycles", {})
+        _result_metric(
+            "Cluster overlap",
+            f"QK+SFU={overlap.get('qk_sfu', 0):,} | "
+            f"SFU+PV={overlap.get('sfu_pv', 0):,} | "
+            f"QK+PV={overlap.get('qk_pv', 0):,} | "
+            f"triple={cluster_pipeline.get('three_stage_overlap_cycles_total', 0):,} "
+            "cycle sum",
+            value_color="1;34",
+        )
+        _result_metric(
+            "Ahead contexts",
+            f"launched={worker_pipeline.get('ahead_launched', 0):,} | "
+            f"completed={worker_pipeline.get('ahead_completed', 0):,} | "
+            f"promoted={worker_pipeline.get('ahead_promoted', 0):,} | "
+            f"retries={worker_pipeline.get('initial_enqueue_retries', 0):,}",
+            value_color="1;32",
+        )
+        boundary_ii = worker_pipeline.get("boundary_ii", {})
+        boundary_count = boundary_ii.get("count", 0)
+        _result_metric(
+            "Boundary tile II",
+            f"count={boundary_count:,} | "
+            f"avg={(boundary_ii.get('sum_cycles', 0) / boundary_count if boundary_count else 0):,.1f} | "
+            f"min={boundary_ii.get('min_cycles', 0):,} | "
+            f"max={boundary_ii.get('max_cycles', 0):,}",
+            value_color="1;33",
+        )
+    resident_o = report.get("attention_cluster", {}).get("resident_o", {})
+    if resident_o and report.get("attention_cluster", {}).get("enabled"):
+        o_totals = resident_o.get("worker_totals", {})
+        _result_metric(
+            "Resident O",
+            f"contexts={o_totals.get('attention_cluster_o_context_reservations', 0):,}/"
+            f"{o_totals.get('attention_cluster_o_context_releases', 0):,} | "
+            f"scale={o_totals.get('attention_cluster_o_scale_segments', 0):,} | "
+            f"accumulate={o_totals.get('attention_cluster_o_accumulate_segments', 0):,} | "
+            f"drain={o_totals.get('attention_cluster_o_drain_requests', 0):,}",
+            value_color="1;32",
+        )
+    resource_profile = report.get("attention_cluster", {}).get(
+        "resource_profile", {}
+    )
+    for resource_name, resource in resource_profile.get("resources", {}).items():
+        critical_resource = resource.get("critical_worker", {})
+        _result_metric(
+            f"Resource {resource_name}",
+            f"busy={critical_resource.get('busy_cycles', 0):,} | "
+            f"idle={critical_resource.get('idle_cycles', 0):,} | "
+            f"span={critical_resource.get('span_cycles', 0):,} | "
+            f"util={100.0 * critical_resource.get('busy_fraction_of_span', 0.0):.1f}% | "
+            f"max={critical_resource.get('max_concurrency', 0):,}",
+            value_color="1;34",
+        )
     prefetch = critical.get("kv_prefetch_timing", {})
     prefetch_counts = prefetch.get("counts", {})
     prefetch_cycles = prefetch.get("cycles", {})

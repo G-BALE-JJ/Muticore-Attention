@@ -92,6 +92,8 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
     localAccessQueueDepth_ = params.find<uint32_t>("local_access_queue_depth", 32);
     localAccessMaxRequestBytes_ =
         params.find<uint32_t>("local_access_max_request_bytes", 4096);
+    attentionClusterEnable_ =
+        params.find<bool>("attention_cluster_enable", false);
     if (localAccessBaseLatencyCycles_ == 0 || localAccessBytesPerCycle_ == 0 ||
         localAccessReadPorts_ == 0 || localAccessWritePorts_ == 0 ||
         localAccessQueueDepth_ == 0 || localAccessMaxRequestBytes_ == 0) {
@@ -144,6 +146,22 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
     statReductionSendQueued_ = registerStatistic<uint64_t>("gmem_reduction_send_queued");
     statReductionSendRejected_ = registerStatistic<uint64_t>("gmem_reduction_send_rejected");
     statReductionReceived_ = registerStatistic<uint64_t>("gmem_reduction_received");
+    statAttentionClusterLocalReadBusyUnion_ = registerStatistic<uint64_t>(
+        "attention_cluster_local_read_busy_union_ticks");
+    statAttentionClusterLocalReadBusySpan_ = registerStatistic<uint64_t>(
+        "attention_cluster_local_read_busy_span_ticks");
+    statAttentionClusterLocalReadIdleGap_ = registerStatistic<uint64_t>(
+        "attention_cluster_local_read_idle_gap_ticks");
+    statAttentionClusterLocalReadMaxConcurrency_ = registerStatistic<uint64_t>(
+        "attention_cluster_local_read_max_concurrency");
+    statAttentionClusterLocalWriteBusyUnion_ = registerStatistic<uint64_t>(
+        "attention_cluster_local_write_busy_union_ticks");
+    statAttentionClusterLocalWriteBusySpan_ = registerStatistic<uint64_t>(
+        "attention_cluster_local_write_busy_span_ticks");
+    statAttentionClusterLocalWriteIdleGap_ = registerStatistic<uint64_t>(
+        "attention_cluster_local_write_idle_gap_ticks");
+    statAttentionClusterLocalWriteMaxConcurrency_ = registerStatistic<uint64_t>(
+        "attention_cluster_local_write_max_concurrency");
     write_vn = params.find<uint32_t>("dma_write_vn", (num_vns >= 3) ? 2u : request_vn);
     if (write_vn >= static_cast<uint32_t>(num_vns)) {
         output->fatal(CALL_INFO, -1,
@@ -251,9 +269,10 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
     latencyTC = getTimeConverter(globalMemTransLatency);
     selfLink = configureSelfLink("Self", *latencyTC, new Event::Handler2<GlobalMemoryImplement,&GlobalMemoryImplement::handleSelfEvent>(this));
     selfLink->setDefaultTimeBase(*latencyTC);
+    localAccessTC_ = getTimeConverter(localAccessClock);
     localAccessSelfLink_ = configureSelfLink(
         "LocalAccessSelf",
-        localAccessClock,
+        *localAccessTC_,
         new Event::Handler2<GlobalMemoryImplement,
                             &GlobalMemoryImplement::handleLocalAccessEvent>(this));
 
@@ -593,6 +612,8 @@ bool GlobalMemoryImplement::localReadAsync(uint64_t addr,
     request.client = client;
     request.tag = tag;
     request.submitCycle = getCurrentSimCycle();
+    request.ownerGeneration = attentionClusterEnable_
+        ? attentionGenerationFence_.active() : 0;
     request.readCallback = std::move(cb);
     const uint64_t requestId = request.requestId;
     localAccessPending_.emplace(requestId, std::move(request));
@@ -627,6 +648,8 @@ bool GlobalMemoryImplement::localWriteAsync(uint64_t addr,
     request.client = client;
     request.tag = tag;
     request.submitCycle = getCurrentSimCycle();
+    request.ownerGeneration = attentionClusterEnable_
+        ? attentionGenerationFence_.active() : 0;
     request.writeData = data;
     request.writeCallback = std::move(cb);
     const uint64_t requestId = request.requestId;
@@ -654,14 +677,28 @@ void GlobalMemoryImplement::issueLocalAccess(uint64_t requestId)
     if (it == localAccessPending_.end()) {
         return;
     }
-    const PendingLocalAccess& request = it->second;
+    PendingLocalAccess& request = it->second;
+    request.issued = true;
     const uint64_t queueCycles = getCurrentSimCycle() - request.submitCycle;
     if (request.kind == PendingLocalAccess::Kind::Read) {
         localReadQueueCycles_ += queueCycles;
     } else {
         localWriteQueueCycles_ += queueCycles;
     }
-    localAccessSelfLink_->send(localAccessDelayCycles(request.length),
+    const uint64_t serviceCycles = localAccessDelayCycles(request.length);
+    if (attentionClusterEnable_) {
+        BusyIntervalUnion& intervals =
+            request.kind == PendingLocalAccess::Kind::Read
+                ? attentionClusterLocalReadIntervals_
+                : attentionClusterLocalWriteIntervals_;
+        const uint64_t start = getCurrentSimCycle();
+        if (!intervals.add(
+                start, start + localAccessTC_->convertToCoreTime(serviceCycles))) {
+            output->fatal(CALL_INFO, -1,
+                          "Attention cluster Local-GM interval order violation\n");
+        }
+    }
+    localAccessSelfLink_->send(serviceCycles,
                                new LocalMemoryAccessEvent(requestId));
 }
 
@@ -698,9 +735,17 @@ void GlobalMemoryImplement::handleLocalAccessEvent(Event* ev)
     PendingLocalAccess request = std::move(it->second);
     localAccessPending_.erase(it);
 
+    const bool generationValid = request.ownerGeneration == 0 ||
+        attentionGenerationFence_.matches(request.ownerGeneration);
+
     if (request.kind == PendingLocalAccess::Kind::Read) {
         if (localReadsInFlight_ > 0) {
             --localReadsInFlight_;
+        }
+        if (request.cancelled || !generationValid) {
+            tryIssueLocalAccesses();
+            request.readCallback(false, request.tag, {});
+            return;
         }
         std::vector<uint8_t> data;
         const uint64_t offset = request.addr - baseAddr;
@@ -715,6 +760,11 @@ void GlobalMemoryImplement::handleLocalAccessEvent(Event* ev)
     if (localWritesInFlight_ > 0) {
         --localWritesInFlight_;
     }
+    if (request.cancelled || !generationValid) {
+        tryIssueLocalAccesses();
+        request.writeCallback(false, request.tag);
+        return;
+    }
     const uint64_t offset = request.addr - baseAddr;
     std::copy(request.writeData.begin(), request.writeData.end(),
               storage.begin() + offset);
@@ -726,6 +776,10 @@ void GlobalMemoryImplement::handleLocalAccessEvent(Event* ev)
 void GlobalMemoryImplement::completeDmaReadToLocalMemory(
     PendingDmaOp op, const std::vector<uint8_t>& data)
 {
+    if (op.ownerGeneration != 0 &&
+        !attentionGenerationFence_.matches(op.ownerGeneration)) {
+        return;
+    }
     const uint64_t landingTag = nextLocalDmaTag_++;
     PendingDmaLanding landing;
     landing.op = std::move(op);
@@ -742,8 +796,9 @@ void GlobalMemoryImplement::issueNextDmaLandingChunk(uint64_t landingTag)
     }
     PendingDmaLanding& landing = it->second;
     if (landing.offset >= landing.data.size()) {
-        finishDmaReadLanding(landing.op, true);
+        PendingDmaOp completedOp = std::move(landing.op);
         pendingDmaLandings_.erase(it);
+        finishDmaReadLanding(completedOp, true);
         return;
     }
 
@@ -761,16 +816,18 @@ void GlobalMemoryImplement::issueNextDmaLandingChunk(uint64_t landingTag)
                 return;
             }
             if (!ok) {
-                finishDmaReadLanding(landingIt->second.op, false);
+                PendingDmaOp failedOp = std::move(landingIt->second.op);
                 pendingDmaLandings_.erase(landingIt);
+                finishDmaReadLanding(failedOp, false);
                 return;
             }
             landingIt->second.offset += chunkBytes;
             issueNextDmaLandingChunk(tag);
         });
     if (!accepted) {
-        finishDmaReadLanding(landing.op, false);
+        PendingDmaOp failedOp = std::move(landing.op);
         pendingDmaLandings_.erase(it);
+        finishDmaReadLanding(failedOp, false);
     }
 }
 
@@ -988,6 +1045,7 @@ void GlobalMemoryImplement::issue_dma_read_chunk(PendingDmaOp& op, const char* r
         op.request_id,
         op.dmaRequestKind,
         op.dmaConsumer);
+    payload->setOwnerGenerationToken(op.ownerGenerationToken);
     req->givePayload(payload);
 
     dma_read_req_to_key[req] = op.request_id;
@@ -1209,6 +1267,24 @@ void GlobalMemoryImplement::complete(unsigned int phase) {
 }
 
 void GlobalMemoryImplement::finish() {
+    if (attentionClusterEnable_) {
+        statAttentionClusterLocalReadBusyUnion_->addData(
+            attentionClusterLocalReadIntervals_.unionCycles());
+        statAttentionClusterLocalReadBusySpan_->addData(
+            attentionClusterLocalReadIntervals_.spanCycles());
+        statAttentionClusterLocalReadIdleGap_->addData(
+            attentionClusterLocalReadIntervals_.idleCycles());
+        statAttentionClusterLocalReadMaxConcurrency_->addData(
+            attentionClusterLocalReadIntervals_.maxConcurrency());
+        statAttentionClusterLocalWriteBusyUnion_->addData(
+            attentionClusterLocalWriteIntervals_.unionCycles());
+        statAttentionClusterLocalWriteBusySpan_->addData(
+            attentionClusterLocalWriteIntervals_.spanCycles());
+        statAttentionClusterLocalWriteIdleGap_->addData(
+            attentionClusterLocalWriteIntervals_.idleCycles());
+        statAttentionClusterLocalWriteMaxConcurrency_->addData(
+            attentionClusterLocalWriteIntervals_.maxConcurrency());
+    }
     output->output(
         "GOLEM_LOCAL_GM_STATS core=%d gmem_local_read_requests=%" PRIu64
         " gmem_local_write_requests=%" PRIu64
@@ -1466,6 +1542,89 @@ void GlobalMemoryImplement::dma_completion_retire(uint64_t token)
     dma_completion_tokens.erase(token);
 }
 
+bool GlobalMemoryImplement::beginAttentionGeneration(uint64_t generation)
+{
+    return attentionClusterEnable_ && attentionGenerationFence_.begin(generation);
+}
+
+bool GlobalMemoryImplement::attentionGenerationDrained(uint64_t generation) const
+{
+    const auto dmaMatches = [generation](const auto& item) {
+        return item.second.ownerGeneration == generation;
+    };
+    const auto localMatches = [generation](const auto& item) {
+        return item.second.ownerGeneration == generation;
+    };
+    const auto landingMatches = [generation](const auto& item) {
+        return item.second.op.ownerGeneration == generation;
+    };
+    return std::none_of(dma_pending.begin(), dma_pending.end(), dmaMatches) &&
+        std::none_of(localAccessPending_.begin(), localAccessPending_.end(),
+                     localMatches) &&
+        std::none_of(pendingDmaLandings_.begin(), pendingDmaLandings_.end(),
+                     landingMatches);
+}
+
+bool GlobalMemoryImplement::retireAttentionGeneration(uint64_t generation)
+{
+    return attentionGenerationDrained(generation) &&
+        attentionGenerationFence_.retire(generation);
+}
+
+uint32_t GlobalMemoryImplement::cancelAttentionGeneration(uint64_t generation)
+{
+    uint32_t cancelled = 0;
+    attentionGenerationFence_.cancel(generation);
+    size_t pendingRemoteWrites = 0;
+    for (const auto& item : dma_pending) {
+        if (item.second.ownerGeneration == generation &&
+            item.second.kind == PendingDmaOp::WRITE_TO_HOST) {
+            ++pendingRemoteWrites;
+        }
+    }
+    AttentionGenerationCancelRegistry::cancel(
+        static_cast<uint64_t>(core_id), generation, pendingRemoteWrites);
+    const uint64_t generationToken = AttentionGenerationCancelRegistry::token(
+        static_cast<uint64_t>(core_id), generation);
+    for (auto it = send_retry_queue.begin(); it != send_retry_queue.end();) {
+        auto* event = dynamic_cast<NetworkDataEvent*>((*it)->inspectPayload());
+        if (event != nullptr && event->getType() == NetworkDataEvent::DMA_WRITE &&
+            event->getOwnerGenerationToken() == generationToken) {
+            delete *it;
+            it = send_retry_queue.erase(it);
+            AttentionGenerationCancelRegistry::discardToken(generationToken);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = dma_pending.begin(); it != dma_pending.end();) {
+        if (it->second.ownerGeneration == generation) {
+            it = dma_pending.erase(it);
+            ++cancelled;
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = pendingDmaLandings_.begin();
+         it != pendingDmaLandings_.end();) {
+        if (it->second.op.ownerGeneration == generation) {
+            it = pendingDmaLandings_.erase(it);
+            ++cancelled;
+        } else {
+            ++it;
+        }
+    }
+    for (auto& item : localAccessPending_) {
+        PendingLocalAccess& request = item.second;
+        if (request.ownerGeneration == generation && !request.cancelled) {
+            request.cancelled = true;
+            ++cancelled;
+        }
+    }
+    issue_pending_dma_read_window();
+    return cancelled;
+}
+
 void GlobalMemoryImplement::dma_write_to_host_impl(uint64_t dst_pa, size_t length, const std::vector<uint8_t>& data, DmaCallback cb,
                                                    uint64_t completion_token, DmaRequestKind kind)
 {
@@ -1551,6 +1710,11 @@ void GlobalMemoryImplement::dma_write_to_host_impl(uint64_t dst_pa, size_t lengt
         op.completion_value = seq_value;
         op.completion_token = ctx ? ctx->completion_token : completion_token;
         op.dmaRequestKind = kind;
+        op.ownerGeneration = attentionClusterEnable_
+            ? attentionGenerationFence_.active() : 0;
+        op.ownerGenerationToken = op.ownerGeneration == 0 ? 0 :
+            AttentionGenerationCancelRegistry::token(
+                static_cast<uint64_t>(core_id), op.ownerGeneration);
         // The architecture clock is 1 GHz, so nanoseconds are architectural cycles.
         op.issue_cycle = getCurrentSimTimeNano();
 
@@ -1565,6 +1729,7 @@ void GlobalMemoryImplement::dma_write_to_host_impl(uint64_t dst_pa, size_t lengt
         // 创建 DMA_WRITE 负载
         auto* payload = new NetworkDataEvent(NetworkDataEvent::DMA_WRITE, dst_pa + offset, xfer, chunk,
                                              0, -1, 0, 0, op.request_id, op.dmaRequestKind);
+        payload->setOwnerGenerationToken(op.ownerGenerationToken);
         req->givePayload(payload);
 
         const uint64_t pending_key = op.host_addr;
@@ -1656,6 +1821,11 @@ void GlobalMemoryImplement::dma_read_from_host_to_globalmem_impl(uint64_t src_pa
         op.gm_dst_addr = gm_dst_addr + offset;
         op.dmaRequestKind = kind;
         op.dmaConsumer = consumer;
+        op.ownerGeneration = attentionClusterEnable_
+            ? attentionGenerationFence_.active() : 0;
+        op.ownerGenerationToken = op.ownerGeneration == 0 ? 0 :
+            AttentionGenerationCancelRegistry::token(
+                static_cast<uint64_t>(core_id), op.ownerGeneration);
         op.cb = ctx ? DmaCallback() : cb;
         op.length = xfer;
         op.ctx = ctx;
@@ -1837,6 +2007,7 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
                 ev->getCompletionFlagAddr(),
                 ev->getCompletionValue(),
                 ev->getRequestId());
+            respEv->setOwnerGenerationToken(ev->getOwnerGenerationToken());
             SST::Interfaces::SimpleNetwork::Request* respReq = new SST::Interfaces::SimpleNetwork::Request();
             respReq->src = network_id;
             respReq->dest = (responseEndpoint >= 0) ? static_cast<SST::Interfaces::SimpleNetwork::nid_t>(responseEndpoint) : req->src;
@@ -1848,7 +2019,10 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
         else if (ev->getType() == NetworkDataEvent::DMA_WRITE) {
             // DMA 写请求：直接写入本地内存
             check_range("DMA_WRITE");
-            wr_to_globalmem(ev->getAddr(), ev->getLength(), ev->getData());
+            if (!AttentionGenerationCancelRegistry::cancelledToken(
+                    ev->getOwnerGenerationToken())) {
+                wr_to_globalmem(ev->getAddr(), ev->getLength(), ev->getData());
+            }
             output->verbose(CALL_INFO, 1, 2,
                             "handle_receives: DMA_WRITE addr=0x%" PRIx64 " len=%zu from_ep=%" PRI_NID "\n",
                             ev->getAddr(), ev->getLength(), req->src);
@@ -1976,6 +2150,8 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
         }
         else if (ev->getType() == NetworkDataEvent::DMA_WRITE_COMPLETE) {
             // DMA 写完成通知：调用回调（对称实现）
+            AttentionGenerationCancelRegistry::discardToken(
+                ev->getOwnerGenerationToken());
             output->verbose(CALL_INFO, 1, 2,
                             "handle_receives: DMA_WRITE_COMPLETE addr=0x%" PRIx64 "\n",
                             ev->getAddr());
@@ -2125,12 +2301,16 @@ bool GlobalMemoryImplement::handleDmaReceives(int vn) {
             output->verbose(CALL_INFO, 1, 2,
                             "handleDmaReceives: DMA_WRITE addr=0x%" PRIx64 " len=%zu from_ep=%" PRI_NID "\n",
                             addr, length, req->src);
-            wr_to_globalmem(addr, length, ev->getData());
+            if (!AttentionGenerationCancelRegistry::cancelledToken(
+                    ev->getOwnerGenerationToken())) {
+                wr_to_globalmem(addr, length, ev->getData());
+            }
 
             // 发送 DMA_WRITE_COMPLETE 回源（对称实现）
             NetworkDataEvent* respEv = new NetworkDataEvent(
                 NetworkDataEvent::DMA_WRITE_COMPLETE, ev->getAddr(), length, std::vector<uint8_t>(),
                 ev->getAddr(), req->src, 0, 0, ev->getRequestId());
+            respEv->setOwnerGenerationToken(ev->getOwnerGenerationToken());
             auto* respReq = new SST::Interfaces::SimpleNetwork::Request();
             respReq->src = network_id;
             respReq->dest = req->src;
@@ -2159,6 +2339,7 @@ bool GlobalMemoryImplement::handleDmaReceives(int vn) {
                 ev->getCompletionFlagAddr(),
                 ev->getCompletionValue(),
                 ev->getRequestId());
+            respEv->setOwnerGenerationToken(ev->getOwnerGenerationToken());
             auto* respReq = new SST::Interfaces::SimpleNetwork::Request();
             respReq->src = network_id;
             respReq->dest = (ev->getReturnEndpoint() >= 0)

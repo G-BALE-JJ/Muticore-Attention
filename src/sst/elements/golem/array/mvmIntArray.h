@@ -45,6 +45,7 @@ public:
         {"inputOperandSize",   "Number of bytes in a single input value"},
         {"outputOperandSize",  "Number of bytes in a single output value"},
         {"functionalCompute",  "Execute host-side numerical MACs (1) or timing only (0)", "1"},
+        {"attention_cluster_qk_arrays", "First PV array id in the 64-array Attention partition", "16"},
     )
 
     MVMIntArray(ComponentId_t id, Params& params,
