@@ -36,32 +36,50 @@ time and is not accelerator latency.
 The verified cluster model uses four control-only managers and 16 workers. Each
 worker has 64 physical 64x64 arrays, 64 CUs per array, two operand banks, and a
 default 16-QK + 48-PV ownership split. D128 is mapped through paired D64 paths;
-Br16/Bc32 and two K/V buffers are the accepted R6 configuration.
+Br16/Bc32 and two worker K/V buffers are retained. R8 adds a two-slot manager
+K/V distributor that coalesces four worker requests per group. R9 fuses each
+128-element PV output row into eight parallel 16-lane resident-O banks. R10
+adds demand-paced manager K/V lookahead and overlaps the next P-row read with
+current-row PV input programming.
+R11 splits K-ready from V completion and preprograms the next physical tile's
+K and V matrices into inactive QK/PV operand banks.
 
 | Workload | Current SST cycles | RTX 5060 FP32 Scope A | SST/GPU | Status |
 |---|---:|---:|---:|---|
-| Q256/K128 | 30,607 | - | - | numerical/lifecycle PASS |
-| Q256/K1024 | 308,481 | - | - | numerical/lifecycle PASS |
-| E3 Q1024/K1024 | **330,125** | 97,568 | 3.384x | GPU gate FAIL |
-| E4 Q2048/K2048 | **1,007,628** | 345,984 | 2.912x | GPU gate FAIL |
-| Q256/K128 WCP pressure | 31,657 | - | - | numerical/lifecycle PASS |
+| Q256/K128 | 16,112 | - | - | numerical/lifecycle PASS |
+| Q256/K1024 | 119,054 | - | - | numerical/lifecycle PASS |
+| E3 Q1024/K1024 | **127,589** | 97,568 | 1.308x | GPU gate FAIL |
+| E4 Q2048/K2048 | **430,131** | 345,984 | 1.243x | GPU gate FAIL |
+| Q256/K128 WCP pressure | 16,112 | - | - | numerical/lifecycle PASS |
 
 R1-R6 added ownership-aware QK/PV mapping, direct score/P storage, bounded
 tagged scheduling, resident O, resource interval profiling, and a timed 16-lane
 two-cycle FP32 O FMA. The final review found no remaining Critical or Important
 issues. R7 experiments confirmed that downstream score/SFU/PV users outlive the
 visible QK bank lease; unsafe multi-producer changes were reverted and the R6
-baseline was reproduced.
+baseline was reproduced. R8 then moved K/V loading to the four managers, added
+bounded tagged distribution over GroupCtrl, and reduced E3/E4 by 46.6%/31.7%.
+R9 removes eight serialized PV-to-O submissions per row. R10 adds manager
+lookahead and P-row overlap. R11 moves next-tile K/V matrix programming off the
+critical path, reducing the R10 E3/E4 results by another 13.88%/16.81% without
+additional worker buffers, manager slots, or arrays.
 
-The next task is explicit operand-bank lifetime accounting before retrying QK
-producer overlap. The next larger hardware candidate is bounded four-worker K/V
-distribution and reassembly, not additional arrays or unqualified HBM/O width.
+The next task is the E4 cross-group delivery tail, followed by an end-to-end P
+row wavefront that includes PV readout and O commit.
 
 See
 [`src/sst/elements/golem/tests/small/muticore_attention/README.md`](src/sst/elements/golem/tests/small/muticore_attention/README.md)
 for the runner contract,
 [`attention_cluster/R1_R6_OPTIMIZATION_RESULTS.md`](attention_cluster/R1_R6_OPTIMIZATION_RESULTS.md)
-for final measurements and verification, and
+for the historical baseline,
+[`attention_cluster/R8_KV_DISTRIBUTION_RESULTS.md`](attention_cluster/R8_KV_DISTRIBUTION_RESULTS.md)
+for K/V distribution measurements,
+[`attention_cluster/R9_PV_O_ROW_FUSION_RESULTS.md`](attention_cluster/R9_PV_O_ROW_FUSION_RESULTS.md)
+for the prior measurements,
+[`attention_cluster/R10_MANAGER_KV_P_OVERLAP_RESULTS.md`](attention_cluster/R10_MANAGER_KV_P_OVERLAP_RESULTS.md)
+for the prior measurements,
+[`attention_cluster/R11_QK_PV_MATRIX_LOOKAHEAD_RESULTS.md`](attention_cluster/R11_QK_PV_MATRIX_LOOKAHEAD_RESULTS.md)
+for current measurements and verification, and
 [`GPU_COMPETITIVE_ROADMAP.md`](src/sst/elements/golem/tests/small/muticore_attention/GPU_COMPETITIVE_ROADMAP.md)
 for the GPU comparison and remaining architecture plan.
 

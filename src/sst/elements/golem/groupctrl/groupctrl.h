@@ -2,7 +2,10 @@
 #define _H_GOLEM_GROUPCTRL_ENDPOINT
 
 #include <deque>
+#include <array>
+#include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <cinttypes>
 
@@ -23,6 +26,10 @@ enum class GroupCtrlMsgType : uint8_t {
     DONE = 2,
     FINISHED = 3,
     GROUP_DONE = 4,
+    ATTENTION_KV_REQUEST = 5,
+    ATTENTION_KV_DELIVERY = 6,
+    ATTENTION_KV_ACK = 7,
+    ATTENTION_KV_CANCEL = 8,
 };
 
 enum class GroupCtrlRole : uint8_t {
@@ -35,7 +42,11 @@ public:
     GroupCtrlMsg()
         : SST::Event(), type(GroupCtrlMsgType::REQUEST), groupId(0), workerSlot(0),
           window(0), status(0), reqSeq(0), srcAddr(0), dstAddr(0), bytes(0),
-          targetNode(0) {}
+          targetNode(0), generation(0), jobTag(0), queryGroup(0),
+          keyTileOrdinal(0), keyTile(0), keyTiles(0), totalKeys(0),
+          keyBlockRows(0), tileRows(0),
+          rowsPerBand(0), headDim(0), nodeStrideBytes(0), kAddr(0), vAddr(0),
+          kDstAddr(0), vDstAddr(0) {}
 
     explicit GroupCtrlMsg(GroupCtrlMsgType t)
         : GroupCtrlMsg() {
@@ -54,6 +65,24 @@ public:
         ser & dstAddr;
         ser & bytes;
         ser & targetNode;
+        ser & generation;
+        ser & jobTag;
+        ser & queryGroup;
+        ser & keyTileOrdinal;
+        ser & keyTile;
+        ser & keyTiles;
+        ser & totalKeys;
+        ser & keyBlockRows;
+        ser & tileRows;
+        ser & rowsPerBand;
+        ser & headDim;
+        ser & nodeStrideBytes;
+        ser & kAddr;
+        ser & vAddr;
+        ser & kDstAddr;
+        ser & vDstAddr;
+        ser & kData;
+        ser & vData;
     }
 
     ImplementSerializable(SST::Golem::GroupCtrlMsg);
@@ -70,6 +99,43 @@ public:
     uint64_t dstAddr;
     uint32_t bytes;
     uint16_t targetNode;
+    uint64_t generation;
+    uint64_t jobTag;
+    uint32_t queryGroup;
+    uint32_t keyTileOrdinal;
+    uint32_t keyTile;
+    uint32_t keyTiles;
+    uint32_t totalKeys;
+    uint32_t keyBlockRows;
+    uint32_t tileRows;
+    uint32_t rowsPerBand;
+    uint32_t headDim;
+    uint64_t nodeStrideBytes;
+    uint64_t kAddr;
+    uint64_t vAddr;
+    uint64_t kDstAddr;
+    uint64_t vDstAddr;
+    std::vector<uint8_t> kData;
+    std::vector<uint8_t> vData;
+};
+
+struct AttentionKvRequest {
+    uint64_t generation = 0;
+    uint64_t jobTag = 0;
+    uint32_t queryGroup = 0;
+    uint32_t keyTileOrdinal = 0;
+    uint32_t keyTile = 0;
+    uint32_t keyTiles = 0;
+    uint32_t totalKeys = 0;
+    uint32_t keyBlockRows = 0;
+    uint32_t tileRows = 0;
+    uint32_t rowsPerBand = 0;
+    uint32_t headDim = 0;
+    uint64_t nodeStrideBytes = 0;
+    uint64_t kAddr = 0;
+    uint64_t vAddr = 0;
+    uint64_t kDstAddr = 0;
+    uint64_t vDstAddr = 0;
 };
 
 class GroupCtrlAPI : public SST::SubComponent {
@@ -79,6 +145,12 @@ public:
     GroupCtrlAPI(ComponentId_t id, SST::Params& params) : SST::SubComponent(id) {}
     virtual ~GroupCtrlAPI() = default;
     virtual void bindGlobalMemory(GlobalMemoryAPI* globalMemory) = 0;
+    virtual bool attentionKvDistributionEnabled() const = 0;
+    virtual bool requestAttentionKvPair(
+        const AttentionKvRequest& request,
+        std::function<void(bool)> callback,
+        std::function<void(bool)> kReadyCallback = {}) = 0;
+    virtual uint32_t cancelAttentionKvGeneration(uint64_t generation) = 0;
 };
 
 class GroupCtrlEndpoint : public GroupCtrlAPI {
@@ -103,7 +175,26 @@ public:
         {"max_inflight_per_node", "Manager per-memory-node inflight cap", "2"},
         {"max_grants_per_schedule", "Max GRANTs issued per scheduling pass", "1"},
         {"num_memory_nodes", "HBM/data node count", "5"},
+        {"attention_kv_distribution_enable", "Enable manager-level Attention K/V distribution", "0"},
+        {"attention_kv_manager_lookahead", "Stage one sequential K/V tile in a free manager slot", "0"},
+        {"attention_kv_distribution_slots", "Manager resident K/V tile slots", "2"},
+        {"attention_kv_distribution_tile_bytes", "Maximum bytes per K or V tile", "16384"},
+        {"attention_kv_distribution_scratch_offset", "Manager-local scratch offset", "0x40000"},
+        {"attention_kv_distribution_expected_workers", "Consumers required before slot release", "4"},
         {"verbose", "Verbosity", "0"})
+
+    SST_ELI_DOCUMENT_STATISTICS(
+        {"attention_kv_distribution_requests", "Worker K/V pair requests", "requests", 1},
+        {"attention_kv_distribution_manager_loads", "K/V pairs loaded once by a manager", "pairs", 1},
+        {"attention_kv_distribution_manager_bytes", "Manager HBM bytes for K/V pairs", "bytes", 1},
+        {"attention_kv_distribution_coalesced", "Worker requests coalesced into an existing manager slot", "requests", 1},
+        {"attention_kv_distribution_deliveries", "K/V pair deliveries to workers", "deliveries", 1},
+        {"attention_kv_distribution_delivery_bytes", "Worker-local K/V delivery bytes", "bytes", 1},
+        {"attention_kv_distribution_slot_stalls", "Requests queued because both manager slots were occupied", "requests", 1},
+        {"attention_kv_distribution_cancels", "Worker K/V requests cancelled by generation", "requests", 1},
+        {"attention_kv_distribution_max_slots", "Maximum simultaneously occupied manager slots", "slots", 1},
+        {"attention_kv_manager_lookahead_loads", "K/V pairs speculatively staged by a manager", "pairs", 1},
+        {"attention_kv_manager_lookahead_hits", "Worker requests served from speculative manager slots", "requests", 1})
 
     SST_ELI_DOCUMENT_PORTS(
         {"req_out", "Worker request output", {"SST::Golem::GroupCtrlMsg"}},
@@ -124,6 +215,14 @@ public:
     void setup() override;
     void finish() override;
     void bindGlobalMemory(GlobalMemoryAPI* globalMemory) override;
+    bool attentionKvDistributionEnabled() const override {
+        return attentionKvDistributionEnable_;
+    }
+    bool requestAttentionKvPair(
+        const AttentionKvRequest& request,
+        std::function<void(bool)> callback,
+        std::function<void(bool)> kReadyCallback = {}) override;
+    uint32_t cancelAttentionKvGeneration(uint64_t generation) override;
 
 private:
     struct PendingReq {
@@ -145,6 +244,73 @@ private:
         uint16_t inflightNode = 0;
     };
 
+    struct KvSubscriber {
+        bool present = false;
+        uint64_t requestId = 0;
+        uint64_t generation = 0;
+        uint64_t kDstAddr = 0;
+        uint64_t vDstAddr = 0;
+    };
+
+    struct KvSlot {
+        bool occupied = false;
+        bool failed = false;
+        bool speculative = false;
+        bool readInflight = false;
+        bool readingV = false;
+        uint64_t epoch = 0;
+        uint64_t generation = 0;
+        uint64_t jobTag = 0;
+        uint32_t queryGroup = 0;
+        uint32_t keyTileOrdinal = 0;
+        uint32_t keyTile = 0;
+        uint32_t keyTiles = 0;
+        uint32_t totalKeys = 0;
+        uint32_t keyBlockRows = 0;
+        uint32_t tileRows = 0;
+        uint32_t rowsPerBand = 0;
+        uint32_t headDim = 0;
+        uint64_t nodeStrideBytes = 0;
+        uint64_t kAddr = 0;
+        uint64_t vAddr = 0;
+        uint32_t bytes = 0;
+        uint32_t kLoadsPending = 0;
+        uint32_t vLoadsPending = 0;
+        uint8_t requestedMask = 0;
+        uint8_t deliveredMask = 0;
+        uint8_t completedMask = 0;
+        uint8_t cancelledMask = 0;
+        size_t readOffset = 0;
+        std::array<KvSubscriber, 4> subscribers = {};
+        std::vector<uint8_t> kData;
+        std::vector<uint8_t> vData;
+    };
+
+    struct WorkerKvCallback {
+        uint64_t generation = 0;
+        std::function<void(bool)> callback;
+        std::function<void(bool)> kReadyCallback;
+        bool kReadySent = false;
+    };
+
+    struct PendingKvRequest {
+        int workerSlot = -1;
+        uint64_t requestId = 0;
+        AttentionKvRequest request;
+    };
+
+    struct WorkerKvDelivery {
+        uint64_t generation = 0;
+        uint64_t requestId = 0;
+        uint64_t kDstAddr = 0;
+        uint64_t vDstAddr = 0;
+        size_t offset = 0;
+        bool writingV = false;
+        bool inflight = false;
+        std::vector<uint8_t> kData;
+        std::vector<uint8_t> vData;
+    };
+
     GroupCtrlRole role_;
     uint32_t coreId_;
     uint32_t groupId_;
@@ -156,6 +322,12 @@ private:
     std::string ctrlLatency_;
     uint64_t gmBaseAddr_;
     uint64_t gmSize_;
+    bool attentionKvDistributionEnable_;
+    bool attentionKvManagerLookahead_;
+    uint32_t attentionKvDistributionSlots_;
+    uint32_t attentionKvDistributionTileBytes_;
+    uint64_t attentionKvDistributionScratchOffset_;
+    uint32_t attentionKvDistributionExpectedWorkers_;
     int verbose_;
     SST::Output output_;
 
@@ -177,6 +349,25 @@ private:
     bool localFinishedSeen_;
     GlobalMemoryImplement* gm_;
     bool gmBoundLogged_;
+    uint64_t nextKvRequestId_;
+    uint64_t nextKvSlotEpoch_;
+    uint64_t nextKvLocalTag_;
+    std::vector<KvSlot> kvSlots_;
+    std::deque<PendingKvRequest> pendingKvRequests_;
+    std::unordered_map<uint64_t, WorkerKvCallback> workerKvCallbacks_;
+    std::unordered_map<uint64_t, WorkerKvDelivery> workerKvDeliveries_;
+
+    Statistics::Statistic<uint64_t>* statKvRequests_;
+    Statistics::Statistic<uint64_t>* statKvManagerLoads_;
+    Statistics::Statistic<uint64_t>* statKvManagerBytes_;
+    Statistics::Statistic<uint64_t>* statKvCoalesced_;
+    Statistics::Statistic<uint64_t>* statKvDeliveries_;
+    Statistics::Statistic<uint64_t>* statKvDeliveryBytes_;
+    Statistics::Statistic<uint64_t>* statKvSlotStalls_;
+    Statistics::Statistic<uint64_t>* statKvCancels_;
+    Statistics::Statistic<uint64_t>* statKvMaxSlots_;
+    Statistics::Statistic<uint64_t>* statKvManagerLookaheadLoads_;
+    Statistics::Statistic<uint64_t>* statKvManagerLookaheadHits_;
 
     GroupCtrlRole parseRole(const std::string& role) const;
     static uint32_t parseU32Param(SST::Params& params, const std::string& key, uint32_t defaultValue);
@@ -195,6 +386,25 @@ private:
     bool groupDrained() const;
     void maybeSendGroupDone();
     void sendRsp(int slot, GroupCtrlMsg* msg);
+    void handleAttentionKvRequest(const GroupCtrlMsg& message, int slot);
+    void handleAttentionKvAck(const GroupCtrlMsg& message, int slot);
+    void handleAttentionKvCancel(const GroupCtrlMsg& message, int slot);
+    int findAttentionKvSlot(const GroupCtrlMsg& message) const;
+    int findFreeAttentionKvSlot() const;
+    void startAttentionKvSlot(size_t slotIndex, const GroupCtrlMsg& message);
+    void addAttentionKvSubscriber(size_t slotIndex, const GroupCtrlMsg& message, int workerSlot);
+    void issueAttentionKvDma(size_t slotIndex, bool valueOperand);
+    void completeAttentionKvDma(size_t slotIndex, uint64_t epoch,
+                                bool valueOperand, bool ok);
+    void pumpAttentionKvManagerRead(size_t slotIndex);
+    void deliverAttentionKvSlot(size_t slotIndex);
+    void maybeReleaseAttentionKvSlot(size_t slotIndex, bool allowLookahead = true);
+    void maybeStartAttentionKvLookahead(const KvSlot& released);
+    void processPendingAttentionKvRequests();
+    void handleAttentionKvDelivery(GroupCtrlMsg* message);
+    void pumpWorkerAttentionKvDelivery(uint64_t requestId);
+    void completeWorkerAttentionKvDelivery(uint64_t requestId, bool ok);
+    void sendAttentionKvAck(uint64_t requestId, uint64_t generation);
     uint64_t mailboxAddr(uint64_t off) const;
     uint64_t readMailbox(uint64_t off) const;
     void writeMailbox(uint64_t off, uint64_t value);

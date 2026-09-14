@@ -96,6 +96,7 @@ _enabled_control_plane = [
     for name, default in _control_plane_defaults.items()
     if _env_flag(name, default)
     and not (name == "GOLEM_GROUP_MANAGER_ENABLE" and _manager_rocc_only)
+    and not (name == "GOLEM_CTRL_LINK_ENABLE" and _attention_fused)
     and not (name == "GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE" and _attention_local_wcp)
 ]
 if _enabled_control_plane:
@@ -478,6 +479,7 @@ print("[SST] 实例化 CPU_Builder...")
 builder = CPU_Builder()
 
 cpu_ports = []
+ctrl_eps = {}
 for core_id in range(numCpus):
     print(f"[SST] 构建 core{core_id}...")
     ports = builder.build(
@@ -488,6 +490,7 @@ for core_id in range(numCpus):
             f"core{core_id}", attention_rank_for_core(core_id)
         )
     cpu_ports.append(ports)
+    ctrl_eps[core_id] = ports[6] if len(ports) > 6 else None
 
 print("[SST] CPU 模块构建完成。")
 
@@ -720,6 +723,29 @@ for core_id, ports in enumerate(cpu_ports):
     link_mmu_itlb.connect((node_os_mmu, f"core{core_id}.itlb", "1ns"), itlb)
     if not MPI_PARTITIONING:
         link_mmu_itlb.setNoCut()
+
+if _env_flag("GOLEM_CTRL_LINK_ENABLE", False):
+    for worker_core in range(MESH_DIM_X, numCpus):
+        manager_core = worker_core % MESH_DIM_X
+        worker_slot = (worker_core // MESH_DIM_X) - 1
+        worker_ep = ctrl_eps[worker_core]
+        manager_ep = ctrl_eps[manager_core]
+        if worker_ep is None or manager_ep is None:
+            raise RuntimeError(
+                "control endpoint missing while GOLEM_CTRL_LINK_ENABLE=1"
+            )
+
+        req_link = sst.Link(f"ctrl_req_{worker_core}_to_{manager_core}")
+        req_link.connect(
+            (worker_ep, "req_out", "2ns"),
+            (manager_ep, f"req_in_{worker_slot}", "2ns"),
+        )
+
+        rsp_link = sst.Link(f"ctrl_rsp_{manager_core}_to_{worker_core}")
+        rsp_link.connect(
+            (manager_ep, f"rsp_out_{worker_slot}", "2ns"),
+            (worker_ep, "rsp_in", "2ns"),
+        )
 
 if ATTENTION_QUERY_BLOCK_MPI:
     if not ATTENTION_PLACEMENT_FILE:

@@ -438,6 +438,9 @@ public:
     static constexpr size_t kValuesPerContext =
         kRows * kPanels * kValuesPerSegment;
     static constexpr uint32_t kFmaLanes = 16;
+    static constexpr uint32_t kRowFmaBanks = kPanels;
+    static constexpr uint32_t kRowFmaLanes =
+        kRowFmaBanks * kFmaLanes;
     static constexpr uint64_t kFmaLatencyCycles = 2;
     static constexpr bool kFp32Fused = true;
 
@@ -527,6 +530,70 @@ public:
         return true;
     }
 
+    bool submitRow(uint32_t slot, const AttentionClusterTag& tag,
+                   uint32_t keyTile, uint32_t row, float alpha,
+                   const std::vector<float>& values, uint64_t now,
+                   uint64_t* id, uint64_t* readyCycle) {
+        if (!matches(slot, tag) || row >= kRows ||
+            values.size() != kRowFmaLanes || !std::isfinite(alpha) ||
+            id == nullptr || readyCycle == nullptr) return false;
+        Context& context = contexts_[slot];
+        const size_t firstSegment = static_cast<size_t>(row) * kPanels;
+        if (context.draining || keyTile != context.expectedKeyTile ||
+            std::any_of(context.segmentState.begin() + firstSegment,
+                        context.segmentState.begin() + firstSegment + kPanels,
+                        [](uint8_t state) { return state != 0; })) return false;
+
+        uint64_t cursor = std::max(now, bankReadyCycle_[row]);
+        if (keyTile != 0) {
+            const uint64_t readStart = std::max(cursor, nextReadCycle_);
+            readWaitCycles_ += readStart - cursor;
+            nextReadCycle_ = readStart + 1;
+            intervalOrderValid_ = readIntervals_.add(readStart, readStart + 1) &&
+                intervalOrderValid_;
+            const uint64_t fmaIssue = std::max(readStart + 1, nextAluCycle_);
+            aluWaitCycles_ += fmaIssue - (readStart + 1);
+            nextAluCycle_ = fmaIssue + 1;
+            intervalOrderValid_ = aluIntervals_.add(fmaIssue, fmaIssue + 1) &&
+                intervalOrderValid_;
+            cursor = fmaIssue + fmaLatency_;
+            scaleOperations_ += kPanels;
+        } else {
+            const uint64_t accumulateIssue = std::max(cursor, nextAluCycle_);
+            aluWaitCycles_ += accumulateIssue - cursor;
+            nextAluCycle_ = accumulateIssue + 1;
+            intervalOrderValid_ =
+                aluIntervals_.add(accumulateIssue, accumulateIssue + 1) &&
+                intervalOrderValid_;
+            cursor = accumulateIssue + addLatency_;
+        }
+        const uint64_t writeStart = std::max(cursor, nextWriteCycle_);
+        writeWaitCycles_ += writeStart - cursor;
+        nextWriteCycle_ = writeStart + 1;
+        intervalOrderValid_ = writeIntervals_.add(writeStart, writeStart + 1) &&
+            intervalOrderValid_;
+        bankReadyCycle_[row] = writeStart + 1;
+
+        Pending pending;
+        pending.id = nextId_++;
+        pending.readyCycle = writeStart + 1;
+        pending.slot = slot;
+        pending.tag = tag;
+        pending.keyTile = keyTile;
+        pending.row = row;
+        pending.rowFused = true;
+        pending.alpha = alpha;
+        std::copy(values.begin(), values.end(), pending.rowValues.begin());
+        std::fill(context.segmentState.begin() + firstSegment,
+                  context.segmentState.begin() + firstSegment + kPanels, 1);
+        pending_.emplace(pending.id, pending);
+        *id = pending.id;
+        *readyCycle = pending.readyCycle;
+        accumulateOperations_ += kPanels;
+        ++rowOperations_;
+        return true;
+    }
+
     bool requestDrain(uint32_t slot, const AttentionClusterTag& tag,
                       uint64_t now, uint64_t* id, uint64_t* readyCycle) {
         if (!matches(slot, tag) || id == nullptr || readyCycle == nullptr)
@@ -589,19 +656,27 @@ public:
             }
             const size_t segment =
                 static_cast<size_t>(pending.row) * kPanels + pending.panel;
-            completion.ok = pending.keyTile == context.expectedKeyTile &&
-                context.segmentState[segment] == 1;
+            completion.ok = pending.keyTile == context.expectedKeyTile;
+            const uint32_t committed = pending.rowFused ? kPanels : 1;
+            for (uint32_t panel = 0; completion.ok && panel < committed; ++panel) {
+                completion.ok = context.segmentState[segment + panel] == 1;
+            }
             if (completion.ok) {
-                const size_t offset = segment * kValuesPerSegment;
-                for (size_t lane = 0; lane < kValuesPerSegment; ++lane) {
-                    context.values[offset + lane] = pending.keyTile == 0
-                        ? pending.values[lane]
-                        : std::fma(pending.alpha,
-                                   context.values[offset + lane],
-                                   pending.values[lane]);
+                for (uint32_t panel = 0; panel < committed; ++panel) {
+                    const size_t targetSegment = segment + panel;
+                    const size_t offset = targetSegment * kValuesPerSegment;
+                    for (size_t lane = 0; lane < kValuesPerSegment; ++lane) {
+                        const float value = pending.rowFused
+                            ? pending.rowValues[panel * kValuesPerSegment + lane]
+                            : pending.values[lane];
+                        context.values[offset + lane] = pending.keyTile == 0
+                            ? value
+                            : std::fma(pending.alpha,
+                                       context.values[offset + lane], value);
+                    }
+                    context.segmentState[targetSegment] = 2;
                 }
-                context.segmentState[segment] = 2;
-                ++context.committedSegments;
+                context.committedSegments += committed;
                 if (context.committedSegments == kRows * kPanels) {
                     ++context.expectedKeyTile;
                     context.committedSegments = 0;
@@ -642,6 +717,7 @@ public:
     uint32_t highWater() const { return highWater_; }
     uint64_t scaleOperations() const { return scaleOperations_; }
     uint64_t accumulateOperations() const { return accumulateOperations_; }
+    uint64_t rowOperations() const { return rowOperations_; }
     uint64_t drainOperations() const { return drainOperations_; }
     uint64_t readWaitCycles() const { return readWaitCycles_; }
     uint64_t writeWaitCycles() const { return writeWaitCycles_; }
@@ -688,7 +764,9 @@ private:
         uint32_t panel = 0;
         float alpha = 1.0f;
         bool drain = false;
+        bool rowFused = false;
         std::array<float, kValuesPerSegment> values = {};
+        std::array<float, kRowFmaLanes> rowValues = {};
     };
 
     bool matches(uint32_t slot, const AttentionClusterTag& tag) const {
@@ -716,6 +794,7 @@ private:
     uint32_t highWater_ = 0;
     uint64_t scaleOperations_ = 0;
     uint64_t accumulateOperations_ = 0;
+    uint64_t rowOperations_ = 0;
     uint64_t drainOperations_ = 0;
     uint64_t readWaitCycles_ = 0;
     uint64_t writeWaitCycles_ = 0;
@@ -860,6 +939,14 @@ public:
     uint32_t bankRefcount(uint32_t arrayId, uint32_t bank) const {
         return arrayId < kArrayCount && bank < kOperandBanks
             ? bankLeases_[arrayId][bank].refs : 0;
+    }
+
+    bool bankMatches(uint32_t arrayId, uint32_t bank,
+                     AttentionArrayOwner owner,
+                     const AttentionClusterTag& tag) const {
+        return owns(arrayId, owner) && bank < kOperandBanks &&
+            bankLeases_[arrayId][bank].refs != 0 &&
+            bankLeases_[arrayId][bank].tag == tag;
     }
 
     uint32_t liveBankRefs() const {

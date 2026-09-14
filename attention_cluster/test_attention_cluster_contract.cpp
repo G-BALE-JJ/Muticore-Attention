@@ -127,6 +127,54 @@ int main() {
     assert(state.drained());
     assert(!state.enabled());
 
+    // Array operands may be handed to the next tagged QK operation once the
+    // prior output is committed, while the prior score context remains live.
+    assert(state.configure(9));
+    AttentionClusterTag producerTag = tag;
+    producerTag.generation = 9;
+    producerTag.queryBlock = 0;
+    producerTag.sequence = 1;
+    const int producerQk = state.reserve(
+        AttentionClusterContextKind::Qk, producerTag, 0);
+    const int producerScore = state.reserve(
+        AttentionClusterContextKind::Score, producerTag, 0);
+    assert(producerQk >= 0 && producerScore >= 0);
+    assert(state.acquireBank(
+        0, 0, AttentionArrayOwner::Qk, producerTag));
+    assert(state.releaseBank(
+        0, 0, AttentionArrayOwner::Qk, producerTag));
+    assert(state.release(
+        AttentionClusterContextKind::Qk,
+        static_cast<uint32_t>(producerQk), producerTag));
+    assert(state.callbackMatches(
+        AttentionClusterContextKind::Score,
+        static_cast<uint32_t>(producerScore), producerTag));
+
+    AttentionClusterTag nextProducerTag = producerTag;
+    nextProducerTag.queryBlock = 1;
+    nextProducerTag.queryContext = 1;
+    nextProducerTag.sequence = 2;
+    const int nextQk = state.reserve(
+        AttentionClusterContextKind::Qk, nextProducerTag, 0);
+    assert(nextQk >= 0);
+    assert(state.acquireBank(
+        0, 0, AttentionArrayOwner::Qk, nextProducerTag));
+    assert(!state.releaseBank(
+        0, 0, AttentionArrayOwner::Qk, producerTag));
+    assert(state.callbackMatches(
+        AttentionClusterContextKind::Score,
+        static_cast<uint32_t>(producerScore), producerTag));
+    assert(state.release(
+        AttentionClusterContextKind::Score,
+        static_cast<uint32_t>(producerScore), producerTag));
+    assert(state.releaseBank(
+        0, 0, AttentionArrayOwner::Qk, nextProducerTag));
+    assert(state.release(
+        AttentionClusterContextKind::Qk,
+        static_cast<uint32_t>(nextQk), nextProducerTag));
+    assert(state.drained());
+    assert(state.cancel() == 0);
+
     for (uint32_t qkArrays : {16u, 24u, 32u, 40u}) {
         assert(state.configure(8, qkArrays));
         for (uint32_t id = 0; id < qkArrays; ++id)
@@ -247,5 +295,48 @@ int main() {
     assert(accumulator.reserve(1, oTag, 1));
     assert(accumulator.cancelGeneration(oTag.generation) == 1);
     assert(accumulator.drained());
+
+    AttentionOAccumulator fusedAccumulator;
+    assert(AttentionOAccumulator::kRowFmaBanks == 8);
+    assert(AttentionOAccumulator::kRowFmaLanes == 128);
+    assert(fusedAccumulator.reserve(0, oTag, 2));
+    std::vector<float> pvRow(128, 1.0f);
+    maxReady = 0;
+    for (uint32_t keyTile = 0; keyTile < 2; ++keyTile) {
+        for (uint32_t row = 0; row < 16; ++row) {
+            uint64_t operation = 0;
+            uint64_t ready = 0;
+            assert(fusedAccumulator.submitRow(
+                0, oTag, keyTile, row, 0.5f, pvRow, maxReady,
+                &operation, &ready));
+            assert(operation != 0 && ready > maxReady);
+            maxReady = ready;
+        }
+        const auto completed = fusedAccumulator.progress(maxReady);
+        assert(completed.size() == 16);
+        assert(std::all_of(completed.begin(), completed.end(),
+            [](const AttentionOAccumulator::Completion& item) {
+                return item.ok && !item.drain;
+            }));
+        std::fill(pvRow.begin(), pvRow.end(), 2.0f);
+    }
+    assert(fusedAccumulator.requestDrain(
+        0, oTag, maxReady, &drainId, &drainReady));
+    const auto fusedDrain = fusedAccumulator.progress(drainReady);
+    assert(fusedDrain.size() == 1 && fusedDrain.front().ok &&
+           fusedDrain.front().drain);
+    assert(std::all_of(fusedDrain.front().values.begin(),
+                       fusedDrain.front().values.end(),
+        [](float value) { return value == 2.5f; }));
+    assert(fusedAccumulator.release(0, oTag));
+    assert(fusedAccumulator.rowOperations() == 32);
+    assert(fusedAccumulator.scaleOperations() == 128);
+    assert(fusedAccumulator.accumulateOperations() == 256);
+    // Sixteen fused row reads for the second key tile, plus 128 segment reads
+    // when the completed O context is drained.
+    assert(fusedAccumulator.readBusyCycles() == 144);
+    assert(fusedAccumulator.writeBusyCycles() == 32);
+    assert(fusedAccumulator.aluBusyCycles() == 32);
+    assert(fusedAccumulator.intervalOrderValid());
     return 0;
 }

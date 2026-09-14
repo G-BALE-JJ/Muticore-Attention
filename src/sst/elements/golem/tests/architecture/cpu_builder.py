@@ -337,6 +337,9 @@ attention_kv_pair_reuse = int(
 attention_kv_query_group_size = int(
     os.getenv("GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE", "2")
 )
+attention_kv_distribution_enable = int(
+    os.getenv("GOLEM_ATTENTION_KV_DISTRIBUTION_ENABLE", "0")
+)
 if attention_kv_query_group_size not in (1, 2, 4):
     raise ValueError(
         "GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE must be 1, 2, or 4"
@@ -605,6 +608,7 @@ roccarrayParams = {
     "attention_kv_buffer_count": int(
         os.getenv("GOLEM_ATTENTION_KV_BUFFER_COUNT", "2")
     ),
+    "attention_kv_distribution_enable": attention_kv_distribution_enable,
     "attention_key_block_rows": int(
         os.getenv("GOLEM_ATTENTION_KEY_BLOCK_ROWS", "32")
     ),
@@ -637,6 +641,15 @@ roccarrayParams = {
     "attention_pv_input_pipeline": int(
         os.getenv("GOLEM_ATTENTION_PV_INPUT_PIPELINE", "0")
     ),
+    "attention_cluster_pv_row_wavefront": int(
+        os.getenv("GOLEM_ATTENTION_CLUSTER_PV_ROW_WAVEFRONT", "0")
+    ),
+    "attention_cluster_qk_matrix_lookahead": int(
+        os.getenv("GOLEM_ATTENTION_CLUSTER_QK_MATRIX_LOOKAHEAD", "0")
+    ),
+    "attention_cluster_pv_matrix_lookahead": int(
+        os.getenv("GOLEM_ATTENTION_CLUSTER_PV_MATRIX_LOOKAHEAD", "0")
+    ),
     "attention_pv_compact_input": int(
         os.getenv("GOLEM_ATTENTION_PV_COMPACT_INPUT", "0")
     ),
@@ -651,6 +664,9 @@ roccarrayParams = {
     ),
     "attention_pv_output_pipeline": int(
         os.getenv("GOLEM_ATTENTION_PV_OUTPUT_PIPELINE", "0")
+    ),
+    "attention_pv_o_row_fusion": int(
+        os.getenv("GOLEM_ATTENTION_PV_O_ROW_FUSION", "0")
     ),
     "attention_pv_early_compute": int(
         os.getenv("GOLEM_ATTENTION_PV_EARLY_COMPUTE", "0")
@@ -1063,9 +1079,27 @@ class CPU_Builder:
                         "ctrl_latency": ctrl_link_latency,
                         "gm_base_addr": GLOBAL_BASE + cpuId * GLOBAL_STRIDE,
                         "gm_size": GLOBAL_STRIDE,
+                        "attention_kv_distribution_enable": attention_kv_distribution_enable,
+                        "attention_kv_manager_lookahead": int(
+                            os.getenv("GOLEM_ATTENTION_KV_MANAGER_LOOKAHEAD", "0")
+                        ),
+                        "attention_kv_distribution_slots": int(
+                            os.getenv("GOLEM_ATTENTION_KV_DISTRIBUTION_SLOTS", "2")
+                        ),
+                        "attention_kv_distribution_tile_bytes": int(
+                            os.getenv("GOLEM_ATTENTION_KV_DISTRIBUTION_TILE_BYTES", "16384")
+                        ),
+                        "attention_kv_distribution_scratch_offset": int(
+                            os.getenv("GOLEM_ATTENTION_KV_DISTRIBUTION_SCRATCH_OFFSET", "0x40000"), 0
+                        ),
+                        "attention_kv_distribution_expected_workers": int(
+                            os.getenv("GOLEM_ATTENTION_KV_DISTRIBUTION_EXPECTED_WORKERS", "4")
+                        ),
                         "verbose": ctrl_link_verbose,
                     }
                 )
+                if enable_all_stats:
+                    groupCtrl.enableAllStatistics()
 
             if request_scheduler_enable:
                 requestScheduler = cpu_rocc.setSubComponent(

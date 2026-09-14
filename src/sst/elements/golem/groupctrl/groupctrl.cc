@@ -1,5 +1,6 @@
 #include <sst/core/link.h>
 
+#include <algorithm>
 #include <stdexcept>
 
 #include <sst/elements/golem/groupctrl/groupctrl.h>
@@ -20,6 +21,49 @@ constexpr uint64_t CTRL_LOCAL_REQ_BYTES_OFF = 0x50;
 constexpr uint64_t CTRL_LOCAL_REQ_NODE_OFF = 0x58;
 constexpr uint64_t CTRL_LOCAL_REQ_WINDOW_OFF = 0x60;
 constexpr uint64_t GOLEM_WCP_COARSE_FINISHED_FLAG = 0x8000000000000000ULL;
+
+SST::Golem::AttentionKvRequest attentionKvRequestFromMessage(
+    const SST::Golem::GroupCtrlMsg& message) {
+    SST::Golem::AttentionKvRequest request;
+    request.generation = message.generation;
+    request.jobTag = message.jobTag;
+    request.queryGroup = message.queryGroup;
+    request.keyTileOrdinal = message.keyTileOrdinal;
+    request.keyTile = message.keyTile;
+    request.keyTiles = message.keyTiles;
+    request.totalKeys = message.totalKeys;
+    request.keyBlockRows = message.keyBlockRows;
+    request.tileRows = message.tileRows;
+    request.rowsPerBand = message.rowsPerBand;
+    request.headDim = message.headDim;
+    request.nodeStrideBytes = message.nodeStrideBytes;
+    request.kAddr = message.kAddr;
+    request.vAddr = message.vAddr;
+    request.kDstAddr = message.kDstAddr;
+    request.vDstAddr = message.vDstAddr;
+    return request;
+}
+
+void fillAttentionKvMessage(
+    SST::Golem::GroupCtrlMsg& message,
+    const SST::Golem::AttentionKvRequest& request) {
+    message.generation = request.generation;
+    message.jobTag = request.jobTag;
+    message.queryGroup = request.queryGroup;
+    message.keyTileOrdinal = request.keyTileOrdinal;
+    message.keyTile = request.keyTile;
+    message.keyTiles = request.keyTiles;
+    message.totalKeys = request.totalKeys;
+    message.keyBlockRows = request.keyBlockRows;
+    message.tileRows = request.tileRows;
+    message.rowsPerBand = request.rowsPerBand;
+    message.headDim = request.headDim;
+    message.nodeStrideBytes = request.nodeStrideBytes;
+    message.kAddr = request.kAddr;
+    message.vAddr = request.vAddr;
+    message.kDstAddr = request.kDstAddr;
+    message.vDstAddr = request.vDstAddr;
+}
 }
 
 namespace SST {
@@ -38,10 +82,23 @@ GroupCtrlEndpoint::GroupCtrlEndpoint(SST::ComponentId_t id, SST::Params& params)
       ctrlLatency_(params.find<std::string>("ctrl_latency", "2ns")),
       gmBaseAddr_(parseU64Param(params, "gm_base_addr", 0)),
       gmSize_(parseU64Param(params, "gm_size", 0)),
+      attentionKvDistributionEnable_(
+          params.find<bool>("attention_kv_distribution_enable", false)),
+      attentionKvManagerLookahead_(
+          params.find<bool>("attention_kv_manager_lookahead", false)),
+      attentionKvDistributionSlots_(parseU32Param(
+          params, "attention_kv_distribution_slots", 2)),
+      attentionKvDistributionTileBytes_(parseU32Param(
+          params, "attention_kv_distribution_tile_bytes", 16384)),
+      attentionKvDistributionScratchOffset_(parseU64Param(
+          params, "attention_kv_distribution_scratch_offset", 0x40000)),
+      attentionKvDistributionExpectedWorkers_(parseU32Param(
+          params, "attention_kv_distribution_expected_workers", 4)),
       verbose_(parseI32Param(params, "verbose", 0)),
       output_("GroupCtrlEndpoint[@p:@l]: ", verbose_, 0, SST::Output::STDOUT),
       reqOut_(nullptr),
       rspIn_(nullptr),
+      scheduleCursor_(0),
       localGrantSeq_(0),
       localGrantWindow_(0),
       localGroupDone_(false),
@@ -50,17 +107,49 @@ GroupCtrlEndpoint::GroupCtrlEndpoint(SST::ComponentId_t id, SST::Params& params)
       localFinishedSeen_(false),
       gm_(nullptr),
       gmBoundLogged_(false),
-      scheduleCursor_(0) {
+      nextKvRequestId_(1),
+      nextKvSlotEpoch_(1),
+      nextKvLocalTag_(1) {
     if (maxInflightPerNode_ == 0) {
         maxInflightPerNode_ = 1;
     }
     if (maxGrantsPerSchedule_ == 0) {
         maxGrantsPerSchedule_ = 1;
     }
+    if (attentionKvDistributionSlots_ == 0 ||
+        attentionKvDistributionTileBytes_ == 0 ||
+        attentionKvDistributionExpectedWorkers_ == 0 ||
+        attentionKvDistributionExpectedWorkers_ > 4) {
+        throw std::runtime_error(
+            "GroupCtrlEndpoint invalid Attention K/V distribution dimensions");
+    }
     reqIn_.resize(4, nullptr);
     rspOut_.resize(4, nullptr);
     workers_.resize(4);
     inflightPerNode_.resize(numMemoryNodes_, 0);
+    kvSlots_.resize(attentionKvDistributionSlots_);
+    statKvRequests_ = registerStatistic<uint64_t>(
+        "attention_kv_distribution_requests");
+    statKvManagerLoads_ = registerStatistic<uint64_t>(
+        "attention_kv_distribution_manager_loads");
+    statKvManagerBytes_ = registerStatistic<uint64_t>(
+        "attention_kv_distribution_manager_bytes");
+    statKvCoalesced_ = registerStatistic<uint64_t>(
+        "attention_kv_distribution_coalesced");
+    statKvDeliveries_ = registerStatistic<uint64_t>(
+        "attention_kv_distribution_deliveries");
+    statKvDeliveryBytes_ = registerStatistic<uint64_t>(
+        "attention_kv_distribution_delivery_bytes");
+    statKvSlotStalls_ = registerStatistic<uint64_t>(
+        "attention_kv_distribution_slot_stalls");
+    statKvCancels_ = registerStatistic<uint64_t>(
+        "attention_kv_distribution_cancels");
+    statKvMaxSlots_ = registerStatistic<uint64_t>(
+        "attention_kv_distribution_max_slots");
+    statKvManagerLookaheadLoads_ = registerStatistic<uint64_t>(
+        "attention_kv_manager_lookahead_loads");
+    statKvManagerLookaheadHits_ = registerStatistic<uint64_t>(
+        "attention_kv_manager_lookahead_hits");
     configureLinks();
     registerClock("1GHz", new SST::Clock::Handler<GroupCtrlEndpoint>(this, &GroupCtrlEndpoint::tick));
 }
@@ -204,6 +293,25 @@ void GroupCtrlEndpoint::setup() {
             "core=%u role=%s bound local GM in setup mailbox_base=0x%" PRIx64 "\n",
             coreId_, role_ == GroupCtrlRole::MANAGER ? "manager" : "worker", mailboxAddr(0));
     }
+    if (attentionKvDistributionEnable_ && gm_ == nullptr) {
+        output_.fatal(CALL_INFO, -1,
+            "core=%u Attention K/V distribution requires GlobalMemory\n", coreId_);
+    }
+    if (attentionKvDistributionEnable_ && role_ == GroupCtrlRole::MANAGER) {
+        const uint64_t scratchBytes =
+            static_cast<uint64_t>(attentionKvDistributionSlots_) * 2 *
+            attentionKvDistributionTileBytes_;
+        if (attentionKvDistributionScratchOffset_ < 0x2000 ||
+            attentionKvDistributionScratchOffset_ > gmSize_ ||
+            scratchBytes > gmSize_ - attentionKvDistributionScratchOffset_ ||
+            attentionKvDistributionScratchOffset_ + scratchBytes > gmSize_ - 64) {
+            output_.fatal(CALL_INFO, -1,
+                "core=%u invalid Attention K/V scratch offset=0x%" PRIx64
+                " bytes=%" PRIu64 " gm_size=0x%" PRIx64 "\n",
+                coreId_, attentionKvDistributionScratchOffset_, scratchBytes,
+                gmSize_);
+        }
+    }
     output_.verbose(CALL_INFO, 1, 0,
         "core=%u group=%u role=%s worker_slot=%d queueDepth=%u maxInflightPerNode=%u maxGrantsPerSchedule=%u gm_base=0x%" PRIx64 " gm_size=0x%" PRIx64 "\n",
         coreId_, groupId_, role_ == GroupCtrlRole::MANAGER ? "manager" : "worker",
@@ -234,6 +342,15 @@ void GroupCtrlEndpoint::handleReq(SST::Event* ev, int slot) {
     }
 
     switch (msg->type) {
+    case GroupCtrlMsgType::ATTENTION_KV_REQUEST:
+        handleAttentionKvRequest(*msg, slot);
+        break;
+    case GroupCtrlMsgType::ATTENTION_KV_ACK:
+        handleAttentionKvAck(*msg, slot);
+        break;
+    case GroupCtrlMsgType::ATTENTION_KV_CANCEL:
+        handleAttentionKvCancel(*msg, slot);
+        break;
     case GroupCtrlMsgType::REQUEST: {
         if (pendingQ_.size() >= queueDepth_) {
             output_.verbose(CALL_INFO, 1, 0,
@@ -305,6 +422,14 @@ bool GroupCtrlEndpoint::tick(SST::Cycle_t)
     }
 
     if (role_ == GroupCtrlRole::WORKER) {
+        std::vector<uint64_t> deliveryIds;
+        deliveryIds.reserve(workerKvDeliveries_.size());
+        for (const auto& entry : workerKvDeliveries_) {
+            deliveryIds.push_back(entry.first);
+        }
+        for (const uint64_t requestId : deliveryIds) {
+            pumpWorkerAttentionKvDelivery(requestId);
+        }
         const uint64_t reqValid = readMailboxU32(CTRL_LOCAL_REQ_VALID_OFF);
         const uint64_t reqSeq = readMailboxU32(CTRL_LOCAL_REQ_SEQ_OFF);
         if (reqValid != 0 && reqSeq > localReqSeqSeen_) {
@@ -378,6 +503,10 @@ bool GroupCtrlEndpoint::tick(SST::Cycle_t)
                     coreId_);
             }
         }
+    } else if (attentionKvDistributionEnable_) {
+        for (size_t slotIndex = 0; slotIndex < kvSlots_.size(); ++slotIndex) {
+            pumpAttentionKvManagerRead(slotIndex);
+        }
     }
 
     return false;
@@ -390,6 +519,9 @@ void GroupCtrlEndpoint::handleRsp(SST::Event* ev) {
     }
 
     switch (msg->type) {
+    case GroupCtrlMsgType::ATTENTION_KV_DELIVERY:
+        handleAttentionKvDelivery(msg);
+        return;
     case GroupCtrlMsgType::GRANT:
         localGrantSeq_ = msg->reqSeq;
         localGrantWindow_ = msg->window;
@@ -414,6 +546,566 @@ void GroupCtrlEndpoint::handleRsp(SST::Event* ev) {
     }
 
     delete msg;
+}
+
+bool GroupCtrlEndpoint::requestAttentionKvPair(
+    const AttentionKvRequest& request,
+    std::function<void(bool)> callback,
+    std::function<void(bool)> kReadyCallback) {
+    if (!attentionKvDistributionEnable_ || role_ != GroupCtrlRole::WORKER ||
+        reqOut_ == nullptr || !callback || request.generation == 0 ||
+        request.tileRows == 0 || request.rowsPerBand == 0 ||
+        request.headDim == 0 || request.tileRows > request.keyBlockRows ||
+        workerSlot_ < 0 || workerSlot_ >= 4 ||
+        workerKvCallbacks_.size() >= queueDepth_) {
+        return false;
+    }
+    const uint64_t bytes = static_cast<uint64_t>(request.tileRows) *
+        request.headDim * sizeof(float);
+    if (bytes == 0 || bytes > attentionKvDistributionTileBytes_ ||
+        bytes > UINT32_MAX) {
+        return false;
+    }
+
+    const uint64_t requestId = nextKvRequestId_++;
+    workerKvCallbacks_.emplace(
+        requestId, WorkerKvCallback{
+            request.generation, std::move(callback),
+            std::move(kReadyCallback), false});
+    auto* message = new GroupCtrlMsg(GroupCtrlMsgType::ATTENTION_KV_REQUEST);
+    message->groupId = static_cast<uint8_t>(groupId_);
+    message->workerSlot = static_cast<uint8_t>(workerSlot_);
+    message->reqSeq = requestId;
+    message->bytes = static_cast<uint32_t>(bytes);
+    fillAttentionKvMessage(*message, request);
+    reqOut_->send(message);
+    statKvRequests_->addData(1);
+    return true;
+}
+
+uint32_t GroupCtrlEndpoint::cancelAttentionKvGeneration(uint64_t generation) {
+    if (!attentionKvDistributionEnable_ || generation == 0) return 0;
+    uint32_t cancelled = 0;
+    if (role_ == GroupCtrlRole::WORKER) {
+        for (auto it = workerKvCallbacks_.begin();
+             it != workerKvCallbacks_.end();) {
+            if (it->second.generation == generation) {
+                workerKvDeliveries_.erase(it->first);
+                it = workerKvCallbacks_.erase(it);
+                ++cancelled;
+            } else {
+                ++it;
+            }
+        }
+        if (reqOut_ != nullptr) {
+            auto* message = new GroupCtrlMsg(GroupCtrlMsgType::ATTENTION_KV_CANCEL);
+            message->groupId = static_cast<uint8_t>(groupId_);
+            message->workerSlot = static_cast<uint8_t>(workerSlot_);
+            message->generation = generation;
+            reqOut_->send(message);
+        }
+        if (cancelled != 0) statKvCancels_->addData(cancelled);
+    }
+    return cancelled;
+}
+
+int GroupCtrlEndpoint::findAttentionKvSlot(const GroupCtrlMsg& message) const {
+    for (size_t index = 0; index < kvSlots_.size(); ++index) {
+        const KvSlot& slot = kvSlots_[index];
+        if (slot.occupied && slot.jobTag == message.jobTag &&
+            slot.queryGroup == message.queryGroup &&
+            slot.keyTileOrdinal == message.keyTileOrdinal &&
+            slot.keyTile == message.keyTile) {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
+int GroupCtrlEndpoint::findFreeAttentionKvSlot() const {
+    for (size_t index = 0; index < kvSlots_.size(); ++index) {
+        if (!kvSlots_[index].occupied) return static_cast<int>(index);
+    }
+    return -1;
+}
+
+void GroupCtrlEndpoint::handleAttentionKvRequest(
+    const GroupCtrlMsg& message, int workerSlot) {
+    if (!attentionKvDistributionEnable_ || role_ != GroupCtrlRole::MANAGER ||
+        workerSlot < 0 || workerSlot >= 4 || message.generation == 0 ||
+        message.bytes == 0 || message.keyTiles == 0 ||
+        message.totalKeys == 0 || message.keyTileOrdinal >= message.keyTiles ||
+        message.bytes > attentionKvDistributionTileBytes_) {
+        auto* failure = new GroupCtrlMsg(GroupCtrlMsgType::ATTENTION_KV_DELIVERY);
+        failure->reqSeq = message.reqSeq;
+        failure->generation = message.generation;
+        failure->status = 0;
+        sendRsp(workerSlot, failure);
+        return;
+    }
+
+    int slotIndex = findAttentionKvSlot(message);
+    if (slotIndex >= 0) {
+        KvSlot& slot = kvSlots_[static_cast<size_t>(slotIndex)];
+        const bool compatible = slot.bytes == message.bytes &&
+            slot.keyBlockRows == message.keyBlockRows &&
+            slot.keyTiles == message.keyTiles &&
+            slot.totalKeys == message.totalKeys &&
+            slot.tileRows == message.tileRows &&
+            slot.rowsPerBand == message.rowsPerBand &&
+            slot.headDim == message.headDim &&
+            slot.nodeStrideBytes == message.nodeStrideBytes &&
+            slot.kAddr == message.kAddr && slot.vAddr == message.vAddr;
+        if (!compatible || slot.subscribers[workerSlot].present) {
+            auto* failure = new GroupCtrlMsg(GroupCtrlMsgType::ATTENTION_KV_DELIVERY);
+            failure->reqSeq = message.reqSeq;
+            failure->generation = message.generation;
+            failure->status = 0;
+            sendRsp(workerSlot, failure);
+            return;
+        }
+        statKvCoalesced_->addData(1);
+        addAttentionKvSubscriber(
+            static_cast<size_t>(slotIndex), message, workerSlot);
+        deliverAttentionKvSlot(static_cast<size_t>(slotIndex));
+        return;
+    }
+
+    slotIndex = findFreeAttentionKvSlot();
+    if (slotIndex < 0) {
+        if (pendingKvRequests_.size() >= queueDepth_) {
+            auto* failure = new GroupCtrlMsg(GroupCtrlMsgType::ATTENTION_KV_DELIVERY);
+            failure->reqSeq = message.reqSeq;
+            failure->generation = message.generation;
+            failure->status = 0;
+            sendRsp(workerSlot, failure);
+            return;
+        }
+        pendingKvRequests_.push_back(PendingKvRequest{
+            workerSlot, message.reqSeq, attentionKvRequestFromMessage(message)});
+        statKvSlotStalls_->addData(1);
+        return;
+    }
+
+    startAttentionKvSlot(static_cast<size_t>(slotIndex), message);
+    addAttentionKvSubscriber(static_cast<size_t>(slotIndex), message, workerSlot);
+    issueAttentionKvDma(static_cast<size_t>(slotIndex), false);
+    issueAttentionKvDma(static_cast<size_t>(slotIndex), true);
+}
+
+void GroupCtrlEndpoint::startAttentionKvSlot(
+    size_t slotIndex, const GroupCtrlMsg& message) {
+    KvSlot slot;
+    slot.occupied = true;
+    slot.epoch = nextKvSlotEpoch_++;
+    slot.generation = message.generation;
+    slot.jobTag = message.jobTag;
+    slot.queryGroup = message.queryGroup;
+    slot.keyTileOrdinal = message.keyTileOrdinal;
+    slot.keyTile = message.keyTile;
+    slot.keyTiles = message.keyTiles;
+    slot.totalKeys = message.totalKeys;
+    slot.keyBlockRows = message.keyBlockRows;
+    slot.tileRows = message.tileRows;
+    slot.rowsPerBand = message.rowsPerBand;
+    slot.headDim = message.headDim;
+    slot.nodeStrideBytes = message.nodeStrideBytes;
+    slot.kAddr = message.kAddr;
+    slot.vAddr = message.vAddr;
+    slot.bytes = message.bytes;
+    slot.kData.reserve(slot.bytes);
+    slot.vData.reserve(slot.bytes);
+    kvSlots_[slotIndex] = std::move(slot);
+    statKvManagerLoads_->addData(1);
+    statKvManagerBytes_->addData(static_cast<uint64_t>(2) * message.bytes);
+    uint64_t occupied = 0;
+    for (const KvSlot& candidate : kvSlots_) occupied += candidate.occupied ? 1 : 0;
+    statKvMaxSlots_->addData(occupied);
+}
+
+void GroupCtrlEndpoint::addAttentionKvSubscriber(
+    size_t slotIndex, const GroupCtrlMsg& message, int workerSlot) {
+    KvSlot& slot = kvSlots_[slotIndex];
+    if (slot.speculative) {
+        slot.speculative = false;
+        statKvManagerLookaheadHits_->addData(1);
+    }
+    KvSubscriber& subscriber = slot.subscribers[workerSlot];
+    subscriber.present = true;
+    subscriber.requestId = message.reqSeq;
+    subscriber.generation = message.generation;
+    subscriber.kDstAddr = message.kDstAddr;
+    subscriber.vDstAddr = message.vDstAddr;
+    slot.requestedMask |= static_cast<uint8_t>(1u << workerSlot);
+}
+
+void GroupCtrlEndpoint::issueAttentionKvDma(
+    size_t slotIndex, bool valueOperand) {
+    KvSlot& slot = kvSlots_[slotIndex];
+    uint32_t& pending = valueOperand ? slot.vLoadsPending : slot.kLoadsPending;
+    const uint64_t tensorBase = valueOperand ? slot.vAddr : slot.kAddr;
+    const uint64_t scratchBase = gmBaseAddr_ +
+        attentionKvDistributionScratchOffset_ +
+        slotIndex * static_cast<uint64_t>(2) * attentionKvDistributionTileBytes_ +
+        (valueOperand ? attentionKvDistributionTileBytes_ : 0);
+    const uint32_t firstRow = slot.keyTile * slot.keyBlockRows;
+    uint32_t rowsIssued = 0;
+    while (rowsIssued < slot.tileRows) {
+        const uint32_t globalRow = firstRow + rowsIssued;
+        const uint32_t nodeBand = globalRow / slot.rowsPerBand;
+        const uint32_t rowInBand = globalRow % slot.rowsPerBand;
+        const uint32_t rows = std::min(
+            slot.tileRows - rowsIssued, slot.rowsPerBand - rowInBand);
+        const uint64_t rowBytes =
+            static_cast<uint64_t>(slot.headDim) * sizeof(float);
+        const uint64_t source = tensorBase +
+            static_cast<uint64_t>(nodeBand) * slot.nodeStrideBytes +
+            static_cast<uint64_t>(rowInBand) * rowBytes;
+        const uint64_t destination = scratchBase +
+            static_cast<uint64_t>(rowsIssued) * rowBytes;
+        const size_t bytes = static_cast<size_t>(rows) * rowBytes;
+        ++pending;
+        const uint64_t epoch = slot.epoch;
+        gm_->dma_read_from_host_to_globalmem(
+            source, bytes, destination,
+            [this, slotIndex, epoch, valueOperand](bool ok) {
+                completeAttentionKvDma(slotIndex, epoch, valueOperand, ok);
+            }, DmaRequestKind::AttentionKvPrefetch);
+        rowsIssued += rows;
+    }
+}
+
+void GroupCtrlEndpoint::completeAttentionKvDma(
+    size_t slotIndex, uint64_t epoch, bool valueOperand, bool ok) {
+    if (slotIndex >= kvSlots_.size()) return;
+    KvSlot& slot = kvSlots_[slotIndex];
+    if (!slot.occupied || slot.epoch != epoch) return;
+    uint32_t& pending = valueOperand ? slot.vLoadsPending : slot.kLoadsPending;
+    if (pending == 0) return;
+    slot.failed = slot.failed || !ok;
+    --pending;
+    if (slot.kLoadsPending == 0 && slot.vLoadsPending == 0) {
+        if (slot.failed) deliverAttentionKvSlot(slotIndex);
+        else pumpAttentionKvManagerRead(slotIndex);
+    }
+}
+
+void GroupCtrlEndpoint::pumpAttentionKvManagerRead(size_t slotIndex) {
+    if (slotIndex >= kvSlots_.size()) return;
+    KvSlot& slot = kvSlots_[slotIndex];
+    if (!slot.occupied || slot.failed || slot.readInflight ||
+        slot.kLoadsPending != 0 || slot.vLoadsPending != 0) return;
+    std::vector<uint8_t>& destination = slot.readingV ? slot.vData : slot.kData;
+    if (slot.readOffset == slot.bytes) {
+        if (!slot.readingV) {
+            slot.readingV = true;
+            slot.readOffset = 0;
+            pumpAttentionKvManagerRead(slotIndex);
+        } else {
+            deliverAttentionKvSlot(slotIndex);
+        }
+        return;
+    }
+    const size_t chunk = std::min(
+        static_cast<size_t>(slot.bytes - slot.readOffset),
+        gm_->localMaxRequestBytes());
+    const uint64_t source = gmBaseAddr_ +
+        attentionKvDistributionScratchOffset_ +
+        slotIndex * static_cast<uint64_t>(2) * attentionKvDistributionTileBytes_ +
+        (slot.readingV ? attentionKvDistributionTileBytes_ : 0) +
+        slot.readOffset;
+    const uint64_t tag = nextKvLocalTag_++;
+    const uint64_t epoch = slot.epoch;
+    const bool accepted = gm_->localReadAsync(
+        source, chunk, LocalMemoryClient::Control, tag,
+        [this, slotIndex, epoch, tag](
+            bool ok, uint64_t callbackTag, const std::vector<uint8_t>& bytes) {
+            if (slotIndex >= kvSlots_.size()) return;
+            KvSlot& callbackSlot = kvSlots_[slotIndex];
+            if (!callbackSlot.occupied || callbackSlot.epoch != epoch) return;
+            callbackSlot.readInflight = false;
+            if (!ok || callbackTag != tag || bytes.empty()) {
+                callbackSlot.failed = true;
+                deliverAttentionKvSlot(slotIndex);
+                return;
+            }
+            std::vector<uint8_t>& data = callbackSlot.readingV
+                ? callbackSlot.vData : callbackSlot.kData;
+            data.insert(data.end(), bytes.begin(), bytes.end());
+            callbackSlot.readOffset += bytes.size();
+            pumpAttentionKvManagerRead(slotIndex);
+        });
+    if (accepted) slot.readInflight = true;
+}
+
+void GroupCtrlEndpoint::deliverAttentionKvSlot(size_t slotIndex) {
+    if (slotIndex >= kvSlots_.size()) return;
+    KvSlot& slot = kvSlots_[slotIndex];
+    const bool ready = slot.failed ||
+        (slot.kData.size() == slot.bytes && slot.vData.size() == slot.bytes);
+    if (!slot.occupied || !ready) return;
+    for (int workerSlot = 0; workerSlot < 4; ++workerSlot) {
+        const uint8_t bit = static_cast<uint8_t>(1u << workerSlot);
+        const KvSubscriber& subscriber = slot.subscribers[workerSlot];
+        if (!subscriber.present || (slot.deliveredMask & bit) != 0) continue;
+        auto* delivery = new GroupCtrlMsg(GroupCtrlMsgType::ATTENTION_KV_DELIVERY);
+        delivery->groupId = static_cast<uint8_t>(groupId_);
+        delivery->workerSlot = static_cast<uint8_t>(workerSlot);
+        delivery->reqSeq = subscriber.requestId;
+        delivery->generation = subscriber.generation;
+        delivery->kDstAddr = subscriber.kDstAddr;
+        delivery->vDstAddr = subscriber.vDstAddr;
+        delivery->status = slot.failed ? 0 : 1;
+        if (!slot.failed) {
+            delivery->kData = slot.kData;
+            delivery->vData = slot.vData;
+        }
+        sendRsp(workerSlot, delivery);
+        slot.deliveredMask |= bit;
+        statKvDeliveries_->addData(1);
+        if (!slot.failed) {
+            statKvDeliveryBytes_->addData(
+                static_cast<uint64_t>(slot.kData.size() + slot.vData.size()));
+        }
+    }
+}
+
+void GroupCtrlEndpoint::handleAttentionKvDelivery(GroupCtrlMsg* message) {
+    const uint64_t requestId = message->reqSeq;
+    auto callbackIt = workerKvCallbacks_.find(requestId);
+    if (!attentionKvDistributionEnable_ || role_ != GroupCtrlRole::WORKER ||
+        callbackIt == workerKvCallbacks_.end() ||
+        callbackIt->second.generation != message->generation ||
+        message->status == 0 || message->kData.empty() ||
+        message->kData.size() != message->vData.size()) {
+        if (callbackIt != workerKvCallbacks_.end()) {
+            completeWorkerAttentionKvDelivery(requestId, false);
+        }
+        delete message;
+        return;
+    }
+    WorkerKvDelivery delivery;
+    delivery.generation = message->generation;
+    delivery.requestId = requestId;
+    delivery.kDstAddr = message->kDstAddr;
+    delivery.vDstAddr = message->vDstAddr;
+    delivery.kData = std::move(message->kData);
+    delivery.vData = std::move(message->vData);
+    workerKvDeliveries_.emplace(requestId, std::move(delivery));
+    delete message;
+    pumpWorkerAttentionKvDelivery(requestId);
+}
+
+void GroupCtrlEndpoint::pumpWorkerAttentionKvDelivery(uint64_t requestId) {
+    auto deliveryIt = workerKvDeliveries_.find(requestId);
+    if (deliveryIt == workerKvDeliveries_.end() || gm_ == nullptr) return;
+    WorkerKvDelivery& delivery = deliveryIt->second;
+    if (delivery.inflight) return;
+    const std::vector<uint8_t>& source =
+        delivery.writingV ? delivery.vData : delivery.kData;
+    if (delivery.offset == source.size()) {
+        if (!delivery.writingV) {
+            auto callbackIt = workerKvCallbacks_.find(requestId);
+            if (callbackIt == workerKvCallbacks_.end()) {
+                completeWorkerAttentionKvDelivery(requestId, false);
+                return;
+            }
+            if (!callbackIt->second.kReadySent) {
+                callbackIt->second.kReadySent = true;
+                if (callbackIt->second.kReadyCallback) {
+                    callbackIt->second.kReadyCallback(true);
+                }
+            }
+            delivery.writingV = true;
+            delivery.offset = 0;
+            pumpWorkerAttentionKvDelivery(requestId);
+        } else {
+            completeWorkerAttentionKvDelivery(requestId, true);
+        }
+        return;
+    }
+    const size_t chunk = std::min(
+        source.size() - delivery.offset, gm_->localMaxRequestBytes());
+    std::vector<uint8_t> bytes(
+        source.begin() + delivery.offset,
+        source.begin() + delivery.offset + chunk);
+    const uint64_t destination =
+        (delivery.writingV ? delivery.vDstAddr : delivery.kDstAddr) +
+        delivery.offset;
+    const uint64_t tag = nextKvLocalTag_++;
+    const bool accepted = gm_->localWriteAsync(
+        destination, bytes, LocalMemoryClient::Control, tag,
+        [this, requestId, tag, chunk](bool ok, uint64_t callbackTag) {
+            auto it = workerKvDeliveries_.find(requestId);
+            if (it == workerKvDeliveries_.end()) return;
+            it->second.inflight = false;
+            if (!ok || callbackTag != tag) {
+                completeWorkerAttentionKvDelivery(requestId, false);
+                return;
+            }
+            it->second.offset += chunk;
+            pumpWorkerAttentionKvDelivery(requestId);
+        });
+    if (accepted) delivery.inflight = true;
+}
+
+void GroupCtrlEndpoint::completeWorkerAttentionKvDelivery(
+    uint64_t requestId, bool ok) {
+    auto callbackIt = workerKvCallbacks_.find(requestId);
+    if (callbackIt == workerKvCallbacks_.end()) {
+        workerKvDeliveries_.erase(requestId);
+        return;
+    }
+    const uint64_t generation = callbackIt->second.generation;
+    const bool kReadySent = callbackIt->second.kReadySent;
+    auto kReadyCallback = std::move(callbackIt->second.kReadyCallback);
+    auto callback = std::move(callbackIt->second.callback);
+    workerKvCallbacks_.erase(callbackIt);
+    workerKvDeliveries_.erase(requestId);
+    sendAttentionKvAck(requestId, generation);
+    if (!kReadySent && kReadyCallback) kReadyCallback(false);
+    callback(ok);
+}
+
+void GroupCtrlEndpoint::sendAttentionKvAck(
+    uint64_t requestId, uint64_t generation) {
+    if (reqOut_ == nullptr) return;
+    auto* ack = new GroupCtrlMsg(GroupCtrlMsgType::ATTENTION_KV_ACK);
+    ack->groupId = static_cast<uint8_t>(groupId_);
+    ack->workerSlot = static_cast<uint8_t>(workerSlot_);
+    ack->reqSeq = requestId;
+    ack->generation = generation;
+    reqOut_->send(ack);
+}
+
+void GroupCtrlEndpoint::handleAttentionKvAck(
+    const GroupCtrlMsg& message, int workerSlot) {
+    if (!attentionKvDistributionEnable_ || role_ != GroupCtrlRole::MANAGER ||
+        workerSlot < 0 || workerSlot >= 4) return;
+    for (size_t index = 0; index < kvSlots_.size(); ++index) {
+        KvSlot& slot = kvSlots_[index];
+        const KvSubscriber& subscriber = slot.subscribers[workerSlot];
+        if (!slot.occupied || !subscriber.present ||
+            subscriber.requestId != message.reqSeq ||
+            subscriber.generation != message.generation) continue;
+        slot.completedMask |= static_cast<uint8_t>(1u << workerSlot);
+        maybeReleaseAttentionKvSlot(index);
+        return;
+    }
+}
+
+void GroupCtrlEndpoint::handleAttentionKvCancel(
+    const GroupCtrlMsg& message, int workerSlot) {
+    if (!attentionKvDistributionEnable_ || role_ != GroupCtrlRole::MANAGER ||
+        workerSlot < 0 || workerSlot >= 4 || message.generation == 0) return;
+    uint32_t cancelled = 0;
+    for (size_t index = 0; index < kvSlots_.size(); ++index) {
+        KvSlot& slot = kvSlots_[index];
+        KvSubscriber& subscriber = slot.subscribers[workerSlot];
+        if (!slot.occupied || slot.generation != message.generation) continue;
+        const uint8_t bit = static_cast<uint8_t>(1u << workerSlot);
+        if (subscriber.present && subscriber.generation == message.generation) {
+            slot.completedMask |= bit;
+            ++cancelled;
+        } else {
+            slot.cancelledMask |= bit;
+        }
+        maybeReleaseAttentionKvSlot(index, false);
+    }
+    for (auto it = pendingKvRequests_.begin();
+         it != pendingKvRequests_.end();) {
+        if (it->workerSlot == workerSlot &&
+            it->request.generation == message.generation) {
+            it = pendingKvRequests_.erase(it);
+            ++cancelled;
+        } else {
+            ++it;
+        }
+    }
+    if (cancelled != 0) statKvCancels_->addData(cancelled);
+}
+
+void GroupCtrlEndpoint::maybeReleaseAttentionKvSlot(
+    size_t slotIndex, bool allowLookahead) {
+    if (slotIndex >= kvSlots_.size() || !kvSlots_[slotIndex].occupied) return;
+    const uint8_t expectedMask = static_cast<uint8_t>(
+        (1u << attentionKvDistributionExpectedWorkers_) - 1u);
+    const KvSlot& slot = kvSlots_[slotIndex];
+    const uint8_t accountedMask = static_cast<uint8_t>(
+        slot.requestedMask | slot.cancelledMask);
+    const uint8_t doneMask = static_cast<uint8_t>(
+        slot.completedMask | slot.cancelledMask);
+    if ((accountedMask & expectedMask) != expectedMask ||
+        (doneMask & expectedMask) != expectedMask) return;
+    KvSlot released = std::move(kvSlots_[slotIndex]);
+    kvSlots_[slotIndex] = KvSlot{};
+    processPendingAttentionKvRequests();
+    if (allowLookahead) maybeStartAttentionKvLookahead(released);
+}
+
+void GroupCtrlEndpoint::maybeStartAttentionKvLookahead(const KvSlot& released) {
+    if (!attentionKvManagerLookahead_ || role_ != GroupCtrlRole::MANAGER ||
+        released.failed || released.keyTiles == 0 || released.totalKeys == 0 ||
+        !pendingKvRequests_.empty()) return;
+    const int freeSlot = findFreeAttentionKvSlot();
+    if (freeSlot < 0) return;
+
+    uint32_t farthestOrdinal = released.keyTileOrdinal;
+    for (const KvSlot& slot : kvSlots_) {
+        if (slot.occupied && slot.jobTag == released.jobTag &&
+            slot.queryGroup == released.queryGroup &&
+            slot.keyTiles == released.keyTiles) {
+            farthestOrdinal = std::max(farthestOrdinal, slot.keyTileOrdinal);
+        }
+    }
+    const uint32_t nextOrdinal = farthestOrdinal + 1;
+    if (nextOrdinal >= released.keyTiles) return;
+    const uint32_t ordinalDelta = nextOrdinal - released.keyTileOrdinal;
+    const uint32_t nextTile =
+        (released.keyTile + ordinalDelta) % released.keyTiles;
+    const uint64_t firstRow =
+        static_cast<uint64_t>(nextTile) * released.keyBlockRows;
+    if (firstRow >= released.totalKeys) return;
+    const uint32_t tileRows = static_cast<uint32_t>(std::min<uint64_t>(
+        released.keyBlockRows, released.totalKeys - firstRow));
+
+    GroupCtrlMsg message(GroupCtrlMsgType::ATTENTION_KV_REQUEST);
+    message.generation = released.generation;
+    message.jobTag = released.jobTag;
+    message.queryGroup = released.queryGroup;
+    message.keyTileOrdinal = nextOrdinal;
+    message.keyTile = nextTile;
+    message.keyTiles = released.keyTiles;
+    message.totalKeys = released.totalKeys;
+    message.keyBlockRows = released.keyBlockRows;
+    message.tileRows = tileRows;
+    message.rowsPerBand = released.rowsPerBand;
+    message.headDim = released.headDim;
+    message.nodeStrideBytes = released.nodeStrideBytes;
+    message.kAddr = released.kAddr;
+    message.vAddr = released.vAddr;
+    message.bytes = tileRows * released.headDim * sizeof(float);
+    startAttentionKvSlot(static_cast<size_t>(freeSlot), message);
+    kvSlots_[static_cast<size_t>(freeSlot)].speculative = true;
+    statKvManagerLookaheadLoads_->addData(1);
+    issueAttentionKvDma(static_cast<size_t>(freeSlot), false);
+    issueAttentionKvDma(static_cast<size_t>(freeSlot), true);
+}
+
+void GroupCtrlEndpoint::processPendingAttentionKvRequests() {
+    while (!pendingKvRequests_.empty()) {
+        PendingKvRequest pending = std::move(pendingKvRequests_.front());
+        GroupCtrlMsg message(GroupCtrlMsgType::ATTENTION_KV_REQUEST);
+        message.reqSeq = pending.requestId;
+        message.bytes = static_cast<uint32_t>(
+            static_cast<uint64_t>(pending.request.tileRows) *
+            pending.request.headDim * sizeof(float));
+        fillAttentionKvMessage(message, pending.request);
+        const int matching = findAttentionKvSlot(message);
+        if (matching < 0 && findFreeAttentionKvSlot() < 0) return;
+        pendingKvRequests_.pop_front();
+        handleAttentionKvRequest(message, pending.workerSlot);
+    }
 }
 
 void GroupCtrlEndpoint::trySchedule() {

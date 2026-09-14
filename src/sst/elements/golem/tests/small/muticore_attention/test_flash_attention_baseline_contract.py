@@ -42,6 +42,8 @@ CPU_BUILDER = HERE.parents[1] / "architecture" / "cpu_builder.py"
 ARRAY_SOURCE = HERE.parents[2] / "array" / "computeArray.h"
 MVM_ARRAY_SOURCE = HERE.parents[2] / "array" / "mvmComputeArray.h"
 GLOBAL_MEMORY_SOURCE = HERE.parents[2] / "globalmemory" / "globalmemory.h"
+GROUP_CTRL_HEADER = HERE.parents[2] / "groupctrl" / "groupctrl.h"
+GROUP_CTRL_SOURCE = HERE.parents[2] / "groupctrl" / "groupctrl.cc"
 MEMNIC_SOURCE = HERE.parents[3] / "memHierarchy" / "memNICBase.h"
 BASELINE_VERIFIER = HERE / "verify_flash_attention_baseline.py"
 
@@ -886,6 +888,132 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("completeAttentionKvPrefetch(\n            uint64_t generation", source)
         self.assertIn("attentionCallbackGenerationMatches(generation)", source)
         self.assertIn("attention_kv_second_lookahead_prefetches", source)
+
+    def test_attention_cluster_uses_bounded_group_kv_distribution(self):
+        rocc = ROCC_SOURCE.read_text()
+        group_ctrl = GROUP_CTRL_HEADER.read_text() + GROUP_CTRL_SOURCE.read_text()
+        builder = CPU_BUILDER.read_text()
+        runner = SCALE_RUNNER.read_text()
+
+        for token in (
+            "ATTENTION_KV_REQUEST",
+            "ATTENTION_KV_DELIVERY",
+            "ATTENTION_KV_ACK",
+            "ATTENTION_KV_CANCEL",
+            "attentionKvDistributionSlots_",
+            "requestedMask",
+            "completedMask",
+            "cancelAttentionKvGeneration",
+        ):
+            self.assertIn(token, group_ctrl + rocc)
+        self.assertIn("loadAttentionKvPairToLocal", rocc)
+        self.assertGreaterEqual(rocc.count("targetQueryBlock, targetKeyTileOrdinal"), 2)
+        self.assertIn("attention_kv_distribution_enable", rocc + builder)
+        self.assertIn("GOLEM_ATTENTION_KV_DISTRIBUTION_ENABLE", runner)
+        architecture = ARCHIVE_ARCH.read_text()
+        self.assertIn('if _env_flag("GOLEM_CTRL_LINK_ENABLE", False):', architecture)
+        self.assertIn('f"ctrl_req_{worker_core}_to_{manager_core}"', architecture)
+        self.assertIn('f"ctrl_rsp_{manager_core}_to_{worker_core}"', architecture)
+
+        enabled = subprocess.run(
+            [str(SCALE_RUNNER), "--attention-cluster", "--queries", "256",
+             "--keys", "128", "--head-dim", "128", "--dry-run"],
+            cwd=HERE, check=True, capture_output=True, text=True,
+        )
+        self.assertIn("GOLEM_ATTENTION_KV_DISTRIBUTION_ENABLE=1", enabled.stdout)
+        self.assertIn("GOLEM_CTRL_LINK_ENABLE=1", enabled.stdout)
+        self.assertIn("architecture/archive/ncores_selfcom_dma.py", enabled.stdout)
+
+        disabled = subprocess.run(
+            [str(SCALE_RUNNER), "--attention-cluster", "--no-kv-distribution",
+             "--queries", "256", "--keys", "128", "--head-dim", "128",
+             "--dry-run"],
+            cwd=HERE, check=True, capture_output=True, text=True,
+        )
+        self.assertIn("GOLEM_ATTENTION_KV_DISTRIBUTION_ENABLE=0", disabled.stdout)
+        self.assertIn("GOLEM_CTRL_LINK_ENABLE=0", disabled.stdout)
+        self.assertIn("architecture/archive/ncores_selfcom_dma.py", disabled.stdout)
+
+    def test_attention_cluster_pv_o_row_fusion_has_independent_ablation(self):
+        rocc = ROCC_SOURCE.read_text()
+        builder = CPU_BUILDER.read_text()
+        runner = SCALE_RUNNER.read_text()
+        verifier = (HERE / "verify_fused_attention_scale_stats.py").read_text()
+
+        for token in (
+            "submitRow",
+            "attention_cluster_o_fused_rows",
+            "attention_cluster_o_fused_bytes",
+            "attention_pv_o_row_fusion",
+        ):
+            self.assertIn(token, rocc + builder + verifier)
+        self.assertIn("GOLEM_ATTENTION_PV_O_ROW_FUSION", runner)
+        self.assertIn("--pv-o-row-fusion", runner)
+        self.assertIn("if not pv_o_row_fusion:", verifier)
+        self.assertIn('"attention_cluster_qk_pv_overlap_cycles"', verifier)
+
+        base_args = [
+            str(SCALE_RUNNER), "--attention-cluster", "--queries", "256",
+            "--keys", "128", "--head-dim", "128", "--dry-run",
+        ]
+        enabled = subprocess.run(
+            base_args, cwd=HERE, check=True, capture_output=True, text=True,
+        )
+        disabled = subprocess.run(
+            base_args[:-1] + ["--no-pv-o-row-fusion", "--dry-run"],
+            cwd=HERE, check=True, capture_output=True, text=True,
+        )
+        ordered = subprocess.run(
+            [str(SCALE_RUNNER), "--pv-o-row-fusion", "--attention-cluster",
+             "--queries", "256", "--keys", "128", "--head-dim", "128",
+             "--dry-run"],
+            cwd=HERE, check=True, capture_output=True, text=True,
+        )
+        self.assertIn("GOLEM_ATTENTION_PV_O_ROW_FUSION=1", enabled.stdout)
+        self.assertIn("GOLEM_ATTENTION_PV_O_ROW_FUSION=0", disabled.stdout)
+        self.assertIn("GOLEM_ATTENTION_PV_O_ROW_FUSION=1", ordered.stdout)
+
+    def test_attention_cluster_pv_input_pipeline_counts_logical_rows(self):
+        verifier = (
+            HERE / "verify_fused_attention_scale_stats.py"
+        ).read_text()
+        self.assertIn(
+            'activity["jobs"] * 16 if attention_cluster else',
+            verifier,
+        )
+
+    def test_attention_manager_kv_lookahead_is_bounded_and_ablatable(self):
+        groupctrl = (
+            HERE.parents[6] / "src/sst/elements/golem/groupctrl/groupctrl.cc"
+        ).read_text()
+        header = (
+            HERE.parents[6] / "src/sst/elements/golem/groupctrl/groupctrl.h"
+        ).read_text()
+        runner = SCALE_RUNNER.read_text()
+        for token in (
+            "attention_kv_manager_lookahead",
+            "maybeStartAttentionKvLookahead",
+            "attention_kv_manager_lookahead_loads",
+            "attention_kv_manager_lookahead_hits",
+            "cancelledMask",
+        ):
+            self.assertIn(token, groupctrl + header + runner)
+        self.assertIn("GOLEM_ATTENTION_KV_MANAGER_LOOKAHEAD", runner)
+        self.assertIn("--no-kv-manager-lookahead", runner)
+
+        base_args = [
+            str(SCALE_RUNNER), "--attention-cluster", "--queries", "256",
+            "--keys", "128", "--head-dim", "128", "--dry-run",
+        ]
+        enabled = subprocess.run(
+            base_args, cwd=HERE, check=True, capture_output=True, text=True,
+        )
+        disabled = subprocess.run(
+            base_args[:-1] + ["--no-kv-manager-lookahead", "--dry-run"],
+            cwd=HERE, check=True, capture_output=True, text=True,
+        )
+        self.assertIn("GOLEM_ATTENTION_KV_MANAGER_LOOKAHEAD=1", enabled.stdout)
+        self.assertIn("GOLEM_ATTENTION_KV_MANAGER_LOOKAHEAD=0", disabled.stdout)
 
     def test_attention_dma_response_admission_uses_explicit_consumer_metadata(self):
         global_memory = GLOBAL_MEMORY_SOURCE.read_text()
@@ -1913,6 +2041,22 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         verifier = (HERE / "verify_fused_attention_scale_stats.py").read_text()
         self.assertIn('lifecycle["wcp_gemm_proxy"]', verifier)
         self.assertIn("gemm_completions * wcp_gemm_proxy_completion_latency_cycles", verifier)
+
+    def test_cluster_matrix_lookahead_switches_are_independent(self):
+        qk_only = subprocess.run(
+            [str(WRAPPER), "--attention-cluster", "--cluster-qk-matrix-lookahead",
+             "--no-cluster-pv-matrix-lookahead", "--dry-run"],
+            cwd=HERE, check=True, capture_output=True, text=True,
+        )
+        pv_only = subprocess.run(
+            [str(WRAPPER), "--attention-cluster", "--no-cluster-qk-matrix-lookahead",
+             "--cluster-pv-matrix-lookahead", "--dry-run"],
+            cwd=HERE, check=True, capture_output=True, text=True,
+        )
+        self.assertIn("GOLEM_ATTENTION_CLUSTER_QK_MATRIX_LOOKAHEAD=1", qk_only.stdout)
+        self.assertIn("GOLEM_ATTENTION_CLUSTER_PV_MATRIX_LOOKAHEAD=0", qk_only.stdout)
+        self.assertIn("GOLEM_ATTENTION_CLUSTER_QK_MATRIX_LOOKAHEAD=0", pv_only.stdout)
+        self.assertIn("GOLEM_ATTENTION_CLUSTER_PV_MATRIX_LOOKAHEAD=1", pv_only.stdout)
 
     def test_attention_wcp_control_timing_rejects_invalid_configuration(self):
         invalid_environments = (

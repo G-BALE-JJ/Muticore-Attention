@@ -45,7 +45,9 @@ performance claims:
 - `GOLEM_WCP_GEMM_PROXY_*`
 - `GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_*`
 
-The accepted default is 16/48, Bc32, two K/V buffers, and WCP issue width one.
+The accepted default is 16/48, Bc32, two worker K/V buffers, two manager K/V
+distribution slots with demand-paced lookahead, one-row P read/program overlap,
+WCP issue width one, and PV-to-O row fusion.
 Bc64, a third K/V buffer, and WCP issue width two were measured and rejected.
 
 ## Verification
@@ -57,11 +59,11 @@ hashed by `r6_final_manifest.sha256`.
 
 | Case | Cycles | Status |
 |---|---:|---|
-| Q256/K128 | 30,607 | PASS |
-| Q256/K1024 | 308,481 | PASS |
-| E3 | 330,125 | PASS |
-| E4 | 1,007,628 | PASS |
-| WCP pressure | 31,657 | PASS |
+| Q256/K128 | 16,112 | PASS |
+| Q256/K1024 | 119,054 | PASS |
+| E3 | 127,589 | PASS |
+| E4 | 430,131 | PASS |
+| WCP depth 16 | 16,112 | PASS |
 
 ## Key Files
 

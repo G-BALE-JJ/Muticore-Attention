@@ -919,8 +919,13 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
            dma_credit_cap=None, dma_data_nodes=4,
            cross_tile_operand_pipeline=False, attention_cluster=False,
            attention_cluster_qk_arrays=16,
+           pv_o_row_fusion=False,
+           cluster_pv_row_wavefront=False,
+           cluster_qk_matrix_lookahead=False,
+           cluster_pv_matrix_lookahead=False,
            near_array_output_bytes_per_cycle=512,
-           array_buffer_base_latency_cycles=1):
+           array_buffer_base_latency_cycles=1,
+           kv_distribution=False, kv_manager_lookahead=False):
     if activity is None:
         activity = PROFILES[profile]
     observed = {}
@@ -1000,8 +1005,111 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
         expected_counts[(component, "attention_tensor_complete_tick")] = (
             1 if core == 0 else 0
         )
+        if kv_distribution:
+            groupctrl = f"core{core}:rocc:group_ctrl"
+            ideal_lookahead_loads = (
+                kv_query_groups * max(key_tiles - 2, 0)
+                if kv_manager_lookahead else 0
+            )
+            lookahead_loads = observed.get(
+                (groupctrl, "attention_kv_manager_lookahead_loads"), 0
+            ) if kv_manager_lookahead else 0
+            if (kv_manager_lookahead and ideal_lookahead_loads > 0 and
+                    not 0 < lookahead_loads <= ideal_lookahead_loads):
+                expected[(groupctrl,
+                          "attention_kv_manager_lookahead_loads.range")] = (
+                    ideal_lookahead_loads
+                )
+                observed[(groupctrl,
+                          "attention_kv_manager_lookahead_loads.range")] = (
+                    lookahead_loads
+                )
+            manager_stats = {
+                "attention_kv_distribution_requests": 0,
+                "attention_kv_distribution_manager_loads": physical_kv_jobs,
+                "attention_kv_distribution_manager_bytes": (
+                    physical_kv_jobs * 2 * activity["v_tile_bytes"]
+                ),
+                "attention_kv_distribution_coalesced": (
+                    physical_kv_jobs * 3 + lookahead_loads
+                ),
+                "attention_kv_distribution_deliveries": physical_kv_jobs * 4,
+                "attention_kv_distribution_delivery_bytes": (
+                    physical_kv_jobs * 4 * 2 * activity["v_tile_bytes"]
+                ),
+                "attention_kv_distribution_slot_stalls": (
+                    ideal_lookahead_loads - lookahead_loads
+                ),
+                "attention_kv_distribution_cancels": 0,
+                "attention_kv_manager_lookahead_loads": lookahead_loads,
+                "attention_kv_manager_lookahead_hits": lookahead_loads,
+            }
+            for statistic, value in manager_stats.items():
+                expected[(groupctrl, statistic)] = value
+            expected_max = 2 if physical_kv_jobs > 1 else 1
+            actual_max = maxima.get(
+                (groupctrl, "attention_kv_distribution_max_slots"), 0
+            )
+            if actual_max != expected_max:
+                expected[(groupctrl, "attention_kv_distribution_max_slots.max")] = (
+                    expected_max
+                )
+                observed[(groupctrl, "attention_kv_distribution_max_slots.max")] = (
+                    actual_max
+                )
     for core in range(4, 20):
         component = f"core{core}:rocc"
+        qk_lookahead_launches = observed.get(
+            (component, "attention_cluster_qk_matrix_lookahead_launches"), 0
+        )
+        qk_lookahead_min = physical_kv_jobs - kv_query_groups
+        qk_lookahead_max = (
+            physical_kv_jobs - 1 if kv_cross_query_prefetch
+            else qk_lookahead_min
+        )
+        if (cluster_qk_matrix_lookahead and qk_lookahead_max > 0 and
+                not qk_lookahead_min <= qk_lookahead_launches <=
+                    qk_lookahead_max):
+            expected[(component,
+                      "attention_cluster_qk_matrix_lookahead_launches.range")] = (
+                qk_lookahead_max
+            )
+            observed[(component,
+                      "attention_cluster_qk_matrix_lookahead_launches.range")] = (
+                qk_lookahead_launches
+            )
+        pv_lookahead_candidates = physical_kv_jobs - kv_query_groups
+        pv_lookahead_launches = observed.get(
+            (component, "attention_cluster_pv_matrix_lookahead_launches"), 0
+        )
+        if (cluster_pv_matrix_lookahead and pv_lookahead_candidates > 0 and
+                not 0 < pv_lookahead_launches <= pv_lookahead_candidates):
+            expected[(component,
+                      "attention_cluster_pv_matrix_lookahead_launches.range")] = (
+                pv_lookahead_candidates
+            )
+            observed[(component,
+                      "attention_cluster_pv_matrix_lookahead_launches.range")] = (
+                pv_lookahead_launches
+            )
+        if kv_distribution:
+            groupctrl = f"core{core}:rocc:group_ctrl"
+            expected[(groupctrl, "attention_kv_distribution_requests")] = (
+                physical_kv_jobs
+            )
+            for statistic in (
+                "attention_kv_distribution_manager_loads",
+                "attention_kv_distribution_manager_bytes",
+                "attention_kv_distribution_coalesced",
+                "attention_kv_distribution_deliveries",
+                "attention_kv_distribution_delivery_bytes",
+                "attention_kv_distribution_slot_stalls",
+                "attention_kv_distribution_cancels",
+                "attention_kv_distribution_max_slots",
+                "attention_kv_manager_lookahead_loads",
+                "attention_kv_manager_lookahead_hits",
+            ):
+                expected[(groupctrl, statistic)] = 0
         if attention_cluster and pv_v_tile_reuse:
             v_tile = {
                 "hits": 0,
@@ -1037,11 +1145,14 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             pv_array_ops * active_columns if effective_pv_active_k else 0
         )
         expected[(component, "attention_pv_active_k_matrix_elements")] = (
-            (physical_kv_jobs * 2 * 64
+            ((physical_kv_jobs - pv_lookahead_launches) * 2 * 64
              * active_columns)
-            if attention_cluster and effective_pv_active_k else
+            if (attention_cluster and effective_pv_active_k and
+                cluster_pv_matrix_lookahead) else
+            (physical_kv_jobs * 2 * 64 * active_columns
+             if attention_cluster and effective_pv_active_k else
             (activity["pv"] * 16 * active_columns
-             if effective_pv_active_k else 0)
+             if effective_pv_active_k else 0))
         )
         resident_panels = activity["jobs"] * (
             activity["dimension_panels"] - 1
@@ -1100,7 +1211,9 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                 pv_lanes = (64 - attention_cluster_qk_arrays) // 2
                 qk_waves = (16 + qk_lanes - 1) // qk_lanes
                 pv_waves = (16 + pv_lanes - 1) // pv_lanes
-                gemm_launches = activity["jobs"] * (qk_waves + pv_waves)
+                gemm_launches = activity["jobs"] * (
+                    qk_waves + (16 if cluster_pv_row_wavefront else pv_waves)
+                )
             else:
                 gemm_launches = gemm_completions
             expected[(wcp_component, "gemm_proxy_launch_commands")] = gemm_launches
@@ -1208,6 +1321,7 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             activity["jobs"] if kv_double_buffer else 0
         )
         programmed_input_rows = (
+            activity["jobs"] * 16 if attention_cluster else
             activity["jobs"] * 16 if pv_input_residency else activity["pv"]
         )
         expected[(component, "attention_pv_input_pipeline_rows")] = (
@@ -1283,6 +1397,30 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                 ),
                 "attention_cluster_o_accumulate_segments": (
                     activity["jobs"] * 16 * activity["dimension_panels"]
+                ),
+                "attention_cluster_o_fused_rows": (
+                    activity["jobs"] * 16 if pv_o_row_fusion else 0
+                ),
+                "attention_cluster_o_fused_bytes": (
+                    activity["jobs"] * 16 * 128 * 4
+                    if pv_o_row_fusion else 0
+                ),
+                "attention_cluster_pv_wavefront_rows": (
+                    activity["jobs"] * 16 if cluster_pv_row_wavefront else 0
+                ),
+                "attention_cluster_qk_matrix_lookahead_launches": (
+                    qk_lookahead_launches if cluster_qk_matrix_lookahead else 0
+                ),
+                "attention_cluster_qk_matrix_lookahead_hits": (
+                    qk_lookahead_launches if cluster_qk_matrix_lookahead else 0
+                ),
+                "attention_cluster_pv_matrix_lookahead_launches": (
+                    pv_lookahead_launches
+                    if cluster_pv_matrix_lookahead else 0
+                ),
+                "attention_cluster_pv_matrix_lookahead_hits": (
+                    pv_lookahead_launches
+                    if cluster_pv_matrix_lookahead else 0
                 ),
                 "attention_cluster_o_drain_requests": activity["qblocks"],
                 "attention_cluster_o_drain_bytes": (
@@ -1472,15 +1610,27 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                 "attention_cluster_qk_array_max_concurrency": min(
                     attention_cluster_qk_arrays, 32
                 ),
-                "attention_cluster_pv_array_max_concurrency": min(
-                    64 - attention_cluster_qk_arrays, 32
-                ),
             }
+            if not cluster_pv_row_wavefront:
+                expected_concurrency["attention_cluster_pv_array_max_concurrency"] = min(
+                    64 - attention_cluster_qk_arrays, 32
+                )
             for statistic, expected_max in expected_concurrency.items():
                 actual = observed.get((component, statistic), 0)
                 if actual != expected_max:
                     mismatches[f"{component}/{statistic}"] = {
                         "expected": expected_max, "actual": actual,
+                    }
+            if cluster_pv_row_wavefront:
+                pv_concurrency = observed.get(
+                    (component, "attention_cluster_pv_array_max_concurrency"), 0
+                )
+                pv_limit = min(64 - attention_cluster_qk_arrays, 32)
+                if not 1 <= pv_concurrency <= pv_limit:
+                    mismatches[
+                        f"{component}/attention_cluster_pv_array_max_concurrency.bound"
+                    ] = {
+                        "expected": f"1..{pv_limit}", "actual": pv_concurrency,
                     }
             o_high_water = maxima.get(
                 (component, "attention_cluster_o_context_high_water"), 0
@@ -1519,10 +1669,14 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                 mismatches[f"{component}/attention_cluster_promotion_waits.bound"] = {
                     "expected": f"0..{ahead_contexts}", "actual": promotion_waits,
                 }
-            pair_overlap_stats = (
-                "attention_cluster_sfu_pv_overlap_cycles",
-                "attention_cluster_qk_pv_overlap_cycles",
-            )
+            # Row fusion removes the serialized O-submit tail that previously
+            # kept PV active into the following SFU interval. QK/PV overlap
+            # remains the durable cross-tile pipeline contract.
+            pair_overlap_stats = ["attention_cluster_qk_pv_overlap_cycles"]
+            if not pv_o_row_fusion:
+                pair_overlap_stats.append(
+                    "attention_cluster_sfu_pv_overlap_cycles"
+                )
             for statistic in pair_overlap_stats:
                 actual = observed.get((component, statistic), 0)
                 if ahead_contexts > 0 and actual <= 0:
@@ -2249,6 +2403,8 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             "attention_cluster_o_context_cancelled",
             "attention_cluster_o_scale_segments",
             "attention_cluster_o_accumulate_segments",
+            "attention_cluster_o_fused_rows",
+            "attention_cluster_o_fused_bytes",
             "attention_cluster_o_drain_requests",
             "attention_cluster_o_drain_bytes",
             "attention_cluster_o_read_wait_cycles",
@@ -2261,6 +2417,7 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             "contexts": 4,
             "bytes_per_context": 8192,
             "banks": 16,
+            "pv_row_fusion": pv_o_row_fusion,
             "max_context_high_water": max(
                 maxima.get(
                     (f"core{core}:rocc",
@@ -2509,6 +2666,14 @@ def main():
         default=False,
     )
     parser.add_argument(
+        "--kv-distribution", action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--kv-manager-lookahead", action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
         "--kv-pair-reuse", action=argparse.BooleanOptionalAction,
         default=False,
     )
@@ -2537,6 +2702,22 @@ def main():
     parser.add_argument("--pv-active-k", action="store_true")
     parser.add_argument("--attention-cluster", action="store_true")
     parser.add_argument("--attention-cluster-qk-arrays", type=int, default=16)
+    parser.add_argument(
+        "--pv-o-row-fusion", action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--cluster-pv-row-wavefront", action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--cluster-qk-matrix-lookahead", action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--cluster-pv-matrix-lookahead", action=argparse.BooleanOptionalAction,
+        default=False,
+    )
     parser.add_argument("--array-mac-per-cu-per-cycle", type=float, default=1.0)
     parser.add_argument("--array-pipeline-depth", type=int, default=2)
     parser.add_argument(
@@ -2674,10 +2855,18 @@ def main():
                     attention_cluster=args.attention_cluster,
                     attention_cluster_qk_arrays=
                         args.attention_cluster_qk_arrays,
+                    pv_o_row_fusion=args.pv_o_row_fusion,
+                    cluster_pv_row_wavefront=args.cluster_pv_row_wavefront,
+                    cluster_qk_matrix_lookahead=
+                        args.cluster_qk_matrix_lookahead,
+                    cluster_pv_matrix_lookahead=
+                        args.cluster_pv_matrix_lookahead,
                     near_array_output_bytes_per_cycle=
                         args.near_array_output_bytes_per_cycle,
                     array_buffer_base_latency_cycles=
-                        args.array_buffer_base_latency_cycles)
+                        args.array_buffer_base_latency_cycles,
+                    kv_distribution=args.kv_distribution,
+                    kv_manager_lookahead=args.kv_manager_lookahead)
     print(json.dumps(result, indent=2))
     if args.result_json:
         output = Path(args.result_json)
