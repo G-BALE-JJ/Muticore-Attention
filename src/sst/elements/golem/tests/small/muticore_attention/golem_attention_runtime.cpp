@@ -1,6 +1,7 @@
 #include "golem_attention_runtime.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <sched.h>
 
 #ifndef GOLEM_ATTENTION_Q_ADDR
@@ -45,8 +46,8 @@
 #ifndef GOLEM_ATTENTION_O_OFFSET
 #define GOLEM_ATTENTION_O_OFFSET 0x02300000ull
 #endif
-#ifndef GOLEM_ATTENTION_GM_STRIDE
-#define GOLEM_ATTENTION_GM_STRIDE 0x00100000ull
+#ifndef GOLEM_GLOBAL_STRIDE_BYTES
+#define GOLEM_GLOBAL_STRIDE_BYTES 0x00200000ull
 #endif
 
 static bool parse_positive_u32(const char* text, uint32_t* value) {
@@ -85,7 +86,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const uint64_t managerGmBase = manager_id * GOLEM_ATTENTION_GM_STRIDE;
+    const uint64_t managerGmBase = manager_id * GOLEM_GLOBAL_STRIDE_BYTES;
     const uint64_t desc_gm = managerGmBase + 0x1000;
     const uint64_t topology_gm = managerGmBase + 0x1100;
     const uint64_t job_id = 0xD1000001ull + keys;
@@ -125,7 +126,8 @@ int main(int argc, char** argv) {
     desc.queries = manager_queries;
     desc.keys = keys;
     desc.head_dim = head_dim;
-    desc.query_block_rows = 16;
+    const char* sequential64 = std::getenv("GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE");
+    desc.query_block_rows = sequential64 && std::atoi(sequential64) != 0 ? 64 : 16;
     desc.key_block_rows = key_block_rows;
     desc.worker_count = topology.worker_count;
     desc.flags = GOLEM_ATTENTION_CAUSAL ? GOLEM_ATTENTION_FLAG_CAUSAL : 0;

@@ -574,6 +574,7 @@ private:
         PendingDmaOp op;
         std::vector<uint8_t> data;
         size_t offset = 0;
+        bool chunkInFlight = false;
     };
 
     uint64_t baseAddr = 0;
@@ -612,6 +613,8 @@ private:
     void completeDmaReadToLocalMemory(PendingDmaOp op,
                                       const std::vector<uint8_t>& data);
     void issueNextDmaLandingChunk(uint64_t landingTag);
+    void scheduleDmaLandingRetry();
+    void retryDmaLandingChunks();
     void finishDmaReadLanding(PendingDmaOp& op, bool ok);
 
     SST::Link* localAccessSelfLink_ = nullptr;
@@ -634,6 +637,8 @@ private:
     uint64_t localQueueRejected_ = 0;
     uint64_t localReadQueueCycles_ = 0;
     uint64_t localWriteQueueCycles_ = 0;
+    uint64_t dmaLandingBackpressureRetries_ = 0;
+    bool dmaLandingRetryScheduled_ = false;
     bool attentionClusterEnable_ = false;
     AttentionGenerationFence attentionGenerationFence_;
     BusyIntervalUnion attentionClusterLocalReadIntervals_;

@@ -7,51 +7,46 @@ measured from descriptor acceptance through accelerator tensor completion and
 normalized at 1 GHz. RTX 5060 Scope A is a warm-cache CUDA device-timeline
 measurement. MPI affects host simulation wall time only.
 
-| Profile | SST R11 | RTX 5060 Scope A | Ratio | Target |
+| Profile | SST R28 sequential-64 | RTX 5060 Scope A | Ratio | Target |
 |---|---:|---:|---:|---:|
-| E3, Q=K=1024 | 127,589 | 97,568 | 1.308x | `<97,568` |
-| E4, Q=K=2048 | 430,131 | 345,984 | 1.243x | `<345,984` |
+| E3, Q=K=1024 | **31,197** | 97,568 | 0.320x | `<97,568` |
+| E4, Q=K=2048 | deferred | 345,984 | - | after QK1024 optimization |
 
-The GPU gate remains failed. Multi-head Attention and MoE stay deferred until
-both same-precision gates pass or a measured resource lower bound proves that
-the current architecture cannot pass them.
+QK1024 now passes the same-precision latency gate in the modeled architecture.
+Larger performance cases, multi-head Attention, and MoE remain deferred until
+the fixed QK1024 path is fully optimized and its assumptions are frozen.
 
 ## Current Architecture
 
 The verified model uses four managers plus 16 workers. Each worker has 64
-physical 64x64 arrays, 64 CUs per array, two operand banks, and a fixed default
-partition of 16 QK plus 48 PV arrays. D128 is mapped through paired D64 paths.
-Br16/Bc32, two worker K/V buffers, WCP issue width one, the timed 16-lane O FMA,
-and a two-slot manager K/V distributor are retained. R9 adds a 128-lane
-PV-to-resident-O row path implemented as eight parallel 16-lane banks. R10
-uses freed manager slots for one-tile K/V lookahead and overlaps consecutive P
-FIFO reads with PV array input programming.
+physical 64x64 arrays and reuses all 64 in dependency order: QK, online
+softmax, then PV. Br64/Bc64/D128 maps QK and PV through two D64 slices.
 
-R10 improves E3/E4 another 13.46%/20.05% over R9. Numerical/lifecycle, WCP
-pressure, feature-off fallback, and MPI determinism gates pass.
-R11 adds independent QK and PV next-tile matrix lookahead in the existing two
-operand banks, improving E3/E4 another 13.88%/16.81% over R10.
+R24 models independent 256 B/cycle matrix broadcast and vector scatter. R26
+groups old-O restore and output movement into 64-array, 256 B/cycle transfers.
+R28 coalesces identical K/V chunks at each shared memory node, retains completed
+chunks for launch-skewed consumers, and multicasts them at 256 B/cycle. K can
+start QK before V completes; V is checked only at the PV boundary.
 
 ## Evidence
 
-- PV output/read-write falls from 59,708/239,736 to 6,652/26,616 cycles,
-  approximately 88.9%, and measures about 52 cycles per PV tile.
-- K/V critical-worker ready wait is now zero on E3/E4. Each manager still loads
-  every physical tile once; 30/124 lookahead loads per manager all hit.
-- HBM queue p95 is one cycle and NoC maximum port utilization is 2.01%/3.03%,
-  so additional global bandwidth is not currently justified.
-- The fused O path reports zero read/write/ALU waits and bank conflicts; further
-  O widening is not an evidence-backed end-to-end optimization.
-- Bc64, three K/V buffers, and WCP issue width two were measured and rejected.
+- QK1024 falls from the R26 44,790-cycle baseline to 31,197 cycles; numerical,
+  lifecycle, and instantiated-backend verification pass.
+- Critical-worker stages are 137 input, 6,736 QK, 12,567 softmax, and 9,848 PV
+  cycles. All 15 K/V prefetches hit with zero exposed wait.
+- The four data nodes issue exactly 64 physical K/V reads for 1 MiB of unique
+  data and retire every completed cache entry.
+- The current lower bound is 20,600 cycles. Softmax contributes 8,135 of the
+  remaining 10,597-cycle gap.
+- The Ramulator2 microbenchmark reaches 316.67 GB/s without refresh and 295.43
+  GB/s with per-bank refresh for one eight-channel stack.
 
 ## Ordered Next Work
 
-1. Remove the E4 cross-group boundary long tail (maximum 17,309 cycles) while
-   preserving manager slot and score/P context conservation.
-2. Carry P-row wavefront through PV readout and O commit before enabling it.
-3. Re-profile steady II, boundary II, and array-buffer/local-GM contention.
-4. Run the full Q256/K128, Q256/K1024, E3, E4, pressure, MPI, and GPU
-   comparison matrix for every accepted architecture revision.
+1. Reconcile the 12,567-cycle SFU path with its 4,432-cycle lower bound.
+2. Optimize only fixed Q=K=1024/D=128 until that gap is closed.
+3. Freeze the QK1024 architecture assumptions and rerun the broader dimension,
+   pressure, MPI, and GPU comparison matrix.
 
 ## Rejected R7 Hypotheses
 
@@ -61,4 +56,5 @@ operand banks, improving E3/E4 another 13.88%/16.81% over R10.
   visible QK lease did not cover downstream bank consumers.
 - Three-buffer K/V was correct but regressed E3 from 330,125 to 330,300 cycles.
 
-All rejected changes remain disabled. The verified implementation baseline is R11.
+All rejected changes remain disabled. The verified implementation baseline is
+R28 sequential-64 with Ramulator2 HBM2E-2500.

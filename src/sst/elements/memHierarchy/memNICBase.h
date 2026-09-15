@@ -58,6 +58,9 @@ class MemNICBase : public MemLinkBase {
         { "golem_dma_response_vn",       "(int) VN for Golem DMA completion responses. If unset, derives VN1 when num_vns >= 2, otherwise VN0.", ""},\
         { "golem_dma_response_drain_limit", "(int) Max queued Golem DMA responses drained per opportunity. 0 means unlimited.", "0"},\
         { "golem_dma_response_priority_enable", "(int) Prioritize queued Golem DMA responses by semantic kind.", "0"},\
+        { "golem_dma_kv_coalesce_enable", "(int) Coalesce identical in-flight Golem Attention K/V DMA chunks.", "0"},\
+        { "golem_dma_kv_multicast_bytes_per_cycle", "(int) Aggregate bytes per owner cycle for shared K/V response fanout.", "256"},\
+        { "golem_dma_kv_expected_consumers", "(int) Worker consumers per shared K/V chunk before its completed copy can be released.", "16"},\
         { "golem_dma_credit_cap",         "(int) Shared Golem DMA read credits owned by this memory-node NIC. 0 disables admission control.", "0"},\
         { "golem_dma_credit_chunk_bytes", "(int) Bytes represented by one Golem DMA read credit.", "16384"},\
         { "golem_dma_admission_limit", "(int) Max DMA reads admitted from the ingress queue per NIC clock. 0 means unlimited.", "0"},\
@@ -548,19 +551,42 @@ class MemNICBase : public MemLinkBase {
             return static_cast<int>((core << 20) | (slot << 12) | (node << 4) | seq);
         }
 
-        struct GolemDmaBridgeInfo {
+        struct GolemDmaKvSubscriber {
             uint64_t returnAddr = 0;
             int returnEndpoint = -1;
             uint64_t completionFlagAddr = 0;
             uint64_t completionValue = 0;
             uint64_t requestId = 0;
-            uint32_t size = 0;
             uint32_t creditUnits = 0;
-            bool isWrite = false;
-            uint64_t hostAddr = 0;
             uint64_t ingressCycle = 0;
             SST::Golem::DmaRequestKind dmaRequestKind = SST::Golem::DmaRequestKind::Unknown;
             SST::Golem::DmaConsumerMetadata dmaConsumer;
+        };
+
+        struct GolemDmaBridgeInfo : GolemDmaKvSubscriber {
+            uint32_t size = 0;
+            bool isWrite = false;
+            uint64_t hostAddr = 0;
+            std::vector<GolemDmaKvSubscriber> kvSubscribers;
+        };
+
+        struct GolemDmaKvCacheKey {
+            uint64_t hostAddr = 0;
+            uint32_t size = 0;
+            uint64_t jobId = 0;
+            uint32_t targetTile = 0;
+            uint8_t operand = 0;
+
+            bool operator<(const GolemDmaKvCacheKey& other) const {
+                return std::tie(hostAddr, size, jobId, targetTile, operand) <
+                    std::tie(other.hostAddr, other.size, other.jobId,
+                             other.targetTile, other.operand);
+            }
+        };
+
+        struct GolemDmaKvCacheEntry {
+            std::vector<uint8_t> data;
+            std::vector<uint32_t> servedWorkers;
         };
 
         struct GolemDmaIngressRequest {
@@ -583,6 +609,7 @@ class MemNICBase : public MemLinkBase {
         struct GolemDmaResponseRequest {
             SST::Interfaces::SimpleNetwork::Request* request = nullptr;
             uint64_t readyCycle = 0;
+            uint64_t notBeforeCycle = 0;
             uint64_t requestId = 0;
             uint64_t returnAddr = 0;
             size_t length = 0;
@@ -683,7 +710,150 @@ class MemNICBase : public MemLinkBase {
             return getCurrentSimCycle() / golem_dma_clock_factor_;
         }
 
+        static bool isGolemAttentionKvRead(
+                SST::Golem::DmaRequestKind kind,
+                const SST::Golem::DmaConsumerMetadata& consumer) {
+            return consumer.valid != 0 &&
+                (kind == SST::Golem::DmaRequestKind::AttentionKv ||
+                 kind == SST::Golem::DmaRequestKind::AttentionKvPrefetch) &&
+                (consumer.operand == SST::Golem::DmaOperand::AttentionK ||
+                 consumer.operand == SST::Golem::DmaOperand::AttentionV);
+        }
+
+        GolemDmaKvSubscriber makeGolemDmaKvSubscriber(
+                const GolemDmaIngressRequest& ingress) {
+            GolemDmaKvSubscriber subscriber;
+            subscriber.returnAddr = ingress.returnAddr;
+            subscriber.returnEndpoint = ingress.returnEndpoint;
+            subscriber.completionFlagAddr = ingress.completionFlagAddr;
+            subscriber.completionValue = ingress.completionValue;
+            subscriber.requestId = ingress.requestId;
+            subscriber.creditUnits = ingress.creditUnits;
+            subscriber.ingressCycle =
+                ingress.arrivalCycle / golem_dma_clock_factor_;
+            subscriber.dmaRequestKind = ingress.dmaRequestKind;
+            subscriber.dmaConsumer = ingress.dmaConsumer;
+            return subscriber;
+        }
+
+        static GolemDmaKvCacheKey golemDmaKvCacheKey(
+                uint64_t hostAddr, uint32_t size,
+                const SST::Golem::DmaConsumerMetadata& consumer) {
+            return GolemDmaKvCacheKey{
+                hostAddr, size, consumer.jobId, consumer.targetTile,
+                static_cast<uint8_t>(consumer.operand)};
+        }
+
+        bool tryServeGolemDmaKvCache(const GolemDmaIngressRequest& ingress) {
+            const auto key = golemDmaKvCacheKey(
+                ingress.addr, ingress.size, ingress.dmaConsumer);
+            auto cached = golem_dma_kv_cache_.find(key);
+            if (cached == golem_dma_kv_cache_.end()) return false;
+
+            const auto subscriber = makeGolemDmaKvSubscriber(ingress);
+            auto* req = new SST::Interfaces::SimpleNetwork::Request();
+            req->src = this->info.addr;
+            req->dest = subscriber.returnEndpoint >= 0
+                ? static_cast<uint64_t>(subscriber.returnEndpoint)
+                : lookupNetworkAddress(ingress.sourceName);
+            req->vn = golem_dma_response_vn;
+            auto* response = new SST::Golem::NetworkDataEvent(
+                SST::Golem::NetworkDataEvent::DMA_READ_COMPLETE,
+                subscriber.returnAddr, cached->second.data.size(),
+                cached->second.data, subscriber.returnAddr,
+                subscriber.returnEndpoint, subscriber.completionFlagAddr,
+                subscriber.completionValue, subscriber.requestId,
+                subscriber.dmaRequestKind, subscriber.dmaConsumer);
+            // A completed cache hit joins the already materialized multicast
+            // block, so only destination metadata is injected here.
+            req->size_in_bits =
+                (sizeof(subscriber.returnAddr) + sizeof(size_t)) * 8;
+            req->givePayload(response);
+            if (golem_dma_trace && subscriber.requestId != 0) {
+                req->setTraceID(makeGolemMerlinTraceId(subscriber.requestId));
+                req->setTraceType(
+                    SST::Interfaces::SimpleNetwork::Request::FULL);
+            }
+
+            GolemDmaResponseRequest queued;
+            queued.request = req;
+            queued.readyCycle = golemDmaResponseNowCycle();
+            queued.notBeforeCycle = queued.readyCycle;
+            queued.requestId = subscriber.requestId;
+            queued.returnAddr = subscriber.returnAddr;
+            queued.length = cached->second.data.size();
+            queued.ingressCycle = subscriber.ingressCycle;
+            queued.creditUnits = subscriber.creditUnits;
+            queued.dmaRequestKind = subscriber.dmaRequestKind;
+            queued.dmaConsumer = subscriber.dmaConsumer;
+            golem_dma_send_queue_.push_back(std::move(queued));
+            golem_dma_read_response_attempted_++;
+            golem_dma_read_response_enqueued_++;
+            golem_dma_read_response_enqueue_ticks_[req] = getCurrentSimCycle();
+            golem_dma_response_max_queue_ = std::max(
+                golem_dma_response_max_queue_, golem_dma_send_queue_.size());
+            golem_dma_read_response_queue_high_water_ = std::max(
+                golem_dma_read_response_queue_high_water_,
+                static_cast<uint64_t>(
+                    golem_dma_read_response_enqueue_ticks_.size()));
+            if (subscriber.dmaConsumer.valid != 0 &&
+                golemDmaConsumerDistance(subscriber.dmaConsumer) == 0) {
+                golem_dma_response_late_ready_++;
+            }
+            golem_dma_kv_cache_hits_++;
+            golem_dma_kv_multicast_receivers_++;
+
+            auto& workers = cached->second.servedWorkers;
+            if (std::find(workers.begin(), workers.end(),
+                          subscriber.dmaConsumer.worker) == workers.end()) {
+                workers.push_back(subscriber.dmaConsumer.worker);
+            }
+            if (workers.size() >= golem_dma_kv_expected_consumers_) {
+                golem_dma_kv_cache_.erase(cached);
+            }
+            return true;
+        }
+
+        bool tryCoalesceGolemDmaRead(const GolemDmaIngressRequest& ingress) {
+            if (golem_dma_kv_coalesce_enable_ == 0 ||
+                !isGolemAttentionKvRead(
+                    ingress.dmaRequestKind, ingress.dmaConsumer)) {
+                return false;
+            }
+            if (tryServeGolemDmaKvCache(ingress)) return true;
+            for (auto& pending : golem_dma_pending) {
+                GolemDmaBridgeInfo& info = pending.second;
+                if (info.isWrite || info.hostAddr != ingress.addr ||
+                    info.size != ingress.size || info.kvSubscribers.empty() ||
+                    info.dmaConsumer.jobId != ingress.dmaConsumer.jobId ||
+                    info.dmaConsumer.targetQueryBlock !=
+                        ingress.dmaConsumer.targetQueryBlock ||
+                    info.dmaConsumer.targetTile != ingress.dmaConsumer.targetTile ||
+                    info.dmaConsumer.operand != ingress.dmaConsumer.operand) {
+                    continue;
+                }
+                const auto duplicate = std::find_if(
+                    info.kvSubscribers.begin(), info.kvSubscribers.end(),
+                    [&ingress](const GolemDmaKvSubscriber& subscriber) {
+                        return subscriber.requestId == ingress.requestId &&
+                            subscriber.returnEndpoint == ingress.returnEndpoint;
+                    });
+                if (duplicate != info.kvSubscribers.end()) {
+                    releaseGolemDmaCredits(ingress.creditUnits, ingress.requestId);
+                    return true;
+                }
+                info.kvSubscribers.push_back(makeGolemDmaKvSubscriber(ingress));
+                golem_dma_response_pending_by_bundle_[
+                    golemDmaBundleKey(
+                        ingress.requestId, ingress.dmaConsumer)]++;
+                golem_dma_kv_coalesced_requests_++;
+                return true;
+            }
+            return false;
+        }
+
         MemEvent* createGolemDmaRead(const GolemDmaIngressRequest& ingress) {
+            if (tryCoalesceGolemDmaRead(ingress)) return nullptr;
             auto* me = new MemEvent(ingress.sourceName, ingress.addr, ingress.addr, Command::GetS, ingress.size);
             me->setFlag(MemEventBase::F_NONCACHEABLE);
             GolemDmaBridgeInfo info;
@@ -699,6 +869,13 @@ class MemNICBase : public MemLinkBase {
             info.ingressCycle = ingress.arrivalCycle / golem_dma_clock_factor_;
             info.dmaRequestKind = ingress.dmaRequestKind;
             info.dmaConsumer = ingress.dmaConsumer;
+            if (golem_dma_kv_coalesce_enable_ != 0 &&
+                isGolemAttentionKvRead(
+                    ingress.dmaRequestKind, ingress.dmaConsumer)) {
+                info.kvSubscribers.push_back(
+                    makeGolemDmaKvSubscriber(ingress));
+                golem_dma_kv_physical_reads_++;
+            }
             golem_dma_pending.emplace(me->getID(), info);
             golem_dma_response_pending_by_bundle_[
                 golemDmaBundleKey(info.requestId, info.dmaConsumer)]++;
@@ -910,7 +1087,9 @@ class MemNICBase : public MemLinkBase {
                         golem_dma_bundle_active_ = false;
                         golem_dma_bundle_admitted_ = 0;
                     }
-                    admitted.push_back(createGolemDmaRead(ingress));
+                    if (auto* read = createGolemDmaRead(ingress)) {
+                        admitted.push_back(read);
+                    }
                 }
                 return admitted;
             }
@@ -1041,7 +1220,9 @@ class MemNICBase : public MemLinkBase {
                         golem_dma_bundle_active_ = false;
                         golem_dma_bundle_admitted_ = 0;
                     }
-                    admitted.push_back(createGolemDmaRead(ingress));
+                    if (auto* read = createGolemDmaRead(ingress)) {
+                        admitted.push_back(read);
+                    }
                 }
                 return admitted;
             }
@@ -1081,7 +1262,9 @@ class MemNICBase : public MemLinkBase {
                 golem_dma_credit_admitted_requests_++;
                 golem_dma_credit_max_used_ = std::max<uint32_t>(
                     golem_dma_credit_max_used_, golem_dma_credit_cap_ - golem_dma_credit_available_);
-                admitted.push_back(createGolemDmaRead(ingress));
+                if (auto* read = createGolemDmaRead(ingress)) {
+                    admitted.push_back(read);
+                }
             }
             golem_dma_ingress_queue_.swap(waiting);
             return admitted;
@@ -1208,8 +1391,10 @@ class MemNICBase : public MemLinkBase {
                 bool starvationFallback = false;
 
                 auto eligible = [&](const GolemDmaResponseRequest& item) {
-                    return golem_dma_response_tile_priority_enable_ == 0 ||
-                           currentCycle >= item.readyCycle + golem_dma_response_reorder_cycles_;
+                    return currentCycle >= item.notBeforeCycle &&
+                        (golem_dma_response_tile_priority_enable_ == 0 ||
+                         currentCycle >= item.readyCycle +
+                            golem_dma_response_reorder_cycles_);
                 };
 
                 if (golem_dma_response_tile_priority_enable_ != 0 &&
@@ -1505,6 +1690,7 @@ class MemNICBase : public MemLinkBase {
         }
 
         std::map<SST::Event::id_type, GolemDmaBridgeInfo> golem_dma_pending;
+        std::map<GolemDmaKvCacheKey, GolemDmaKvCacheEntry> golem_dma_kv_cache_;
         std::deque<GolemDmaResponseRequest> golem_dma_send_queue_;
         std::unordered_map<SST::Interfaces::SimpleNetwork::Request*, uint64_t>
             golem_dma_read_response_enqueue_ticks_;
@@ -1516,6 +1702,12 @@ class MemNICBase : public MemLinkBase {
         uint64_t golem_dma_read_response_queue_wait_ticks_ = 0;
         uint64_t golem_dma_read_response_queue_wait_max_ticks_ = 0;
         uint64_t golem_dma_response_priority_reorders_ = 0;
+        uint64_t golem_dma_kv_multicast_next_cycle_ = 0;
+        uint64_t golem_dma_kv_physical_reads_ = 0;
+        uint64_t golem_dma_kv_coalesced_requests_ = 0;
+        uint64_t golem_dma_kv_cache_hits_ = 0;
+        uint64_t golem_dma_kv_multicast_receivers_ = 0;
+        uint64_t golem_dma_kv_multicast_bytes_ = 0;
 
         std::string lookupNetworkName(uint64_t addr) const {
             for (const auto& entry : networkAddressMap) {
@@ -1531,21 +1723,47 @@ class MemNICBase : public MemLinkBase {
             if (it == golem_dma_pending.end()) return false;
 
             const GolemDmaBridgeInfo info = it->second;
-            if (!info.isWrite && info.requestId != 0) {
-                const auto bundleKey = golemDmaBundleKey(
-                    info.requestId, info.dmaConsumer);
-                auto pendingIt = golem_dma_response_pending_by_bundle_.find(bundleKey);
-                if (pendingIt != golem_dma_response_pending_by_bundle_.end() && pendingIt->second != 0) {
-                    pendingIt->second--;
+            if (!info.isWrite) {
+                const auto decrementBundle = [this](
+                        const GolemDmaKvSubscriber& subscriber) {
+                    if (subscriber.requestId == 0) return;
+                    const auto bundleKey = golemDmaBundleKey(
+                        subscriber.requestId, subscriber.dmaConsumer);
+                    auto pendingIt =
+                        golem_dma_response_pending_by_bundle_.find(bundleKey);
+                    if (pendingIt != golem_dma_response_pending_by_bundle_.end() &&
+                        pendingIt->second != 0) {
+                        pendingIt->second--;
+                    }
+                };
+                if (info.kvSubscribers.empty()) {
+                    decrementBundle(info);
+                } else {
+                    for (const auto& subscriber : info.kvSubscribers) {
+                        decrementBundle(subscriber);
+                    }
                 }
             }
 
             const uint64_t dest = info.returnEndpoint >= 0 ? static_cast<uint64_t>(info.returnEndpoint) : lookupNetworkAddress(ev->getDst());
+            const uint64_t responseReadyCycle = golemDmaResponseNowCycle();
+            uint64_t multicastReadyCycle = responseReadyCycle;
+            if (!info.kvSubscribers.empty()) {
+                const uint64_t startCycle = std::max(
+                    responseReadyCycle, golem_dma_kv_multicast_next_cycle_);
+                const uint64_t transferCycles =
+                    (static_cast<uint64_t>(info.size) +
+                     golem_dma_kv_multicast_bytes_per_cycle_ - 1) /
+                    golem_dma_kv_multicast_bytes_per_cycle_;
+                multicastReadyCycle = startCycle + transferCycles;
+                golem_dma_kv_multicast_next_cycle_ = multicastReadyCycle;
+            }
 
             auto sendOrQueue = [&](SST::Interfaces::SimpleNetwork::Request* req) -> bool {
                 const int vn = static_cast<int>(req->vn);
                 if (!info.isWrite) golem_dma_read_response_attempted_++;
-                if (golem_dma_send_queue_.empty() &&
+                if (multicastReadyCycle <= responseReadyCycle &&
+                    golem_dma_send_queue_.empty() &&
                     linkcontrol->spaceToSend(vn, req->size_in_bits) &&
                     linkcontrol->send(req, vn)) {
                     if (!info.isWrite) golem_dma_read_response_immediate_++;
@@ -1573,7 +1791,8 @@ class MemNICBase : public MemLinkBase {
                     auto* response = dynamic_cast<SST::Golem::NetworkDataEvent*>(req->inspectPayload());
                     GolemDmaResponseRequest queued;
                     queued.request = req;
-                    queued.readyCycle = golemDmaResponseNowCycle();
+                    queued.readyCycle = responseReadyCycle;
+                    queued.notBeforeCycle = multicastReadyCycle;
                     queued.requestId = response != nullptr ? response->getRequestId() : 0;
                     queued.returnAddr = response != nullptr ? response->getAddr() : 0;
                     queued.length = response != nullptr ? response->getLength() : 0;
@@ -1629,6 +1848,24 @@ class MemNICBase : public MemLinkBase {
                 auto* mev = dynamic_cast<MemEvent*>(ev);
                 std::vector<uint8_t> data;
                 if (mev) data = mev->getPayload();
+                if (!info.kvSubscribers.empty()) {
+                    const auto cacheKey = golemDmaKvCacheKey(
+                        info.hostAddr, info.size, info.dmaConsumer);
+                    GolemDmaKvCacheEntry cacheEntry;
+                    cacheEntry.data = data;
+                    for (const auto& subscriber : info.kvSubscribers) {
+                        const uint32_t worker = subscriber.dmaConsumer.worker;
+                        if (std::find(cacheEntry.servedWorkers.begin(),
+                                      cacheEntry.servedWorkers.end(), worker) ==
+                            cacheEntry.servedWorkers.end()) {
+                            cacheEntry.servedWorkers.push_back(worker);
+                        }
+                    }
+                    if (cacheEntry.servedWorkers.size() <
+                        golem_dma_kv_expected_consumers_) {
+                        golem_dma_kv_cache_[cacheKey] = std::move(cacheEntry);
+                    }
+                }
                 if (golem_dma_trace) {
                     fprintf(stderr, "[memNICBase bridge] send READ_RESP cycle=%" PRIu64
                                     " dst_ep=%" PRIu64 " return_addr=0x%" PRIx64
@@ -1668,6 +1905,64 @@ class MemNICBase : public MemLinkBase {
                             info.returnAddr, data.size(), static_cast<unsigned>(info.dmaRequestKind),
                             golem_dma_send_queue_.size(),
                             static_cast<unsigned>(req->vn));
+                }
+                if (!info.kvSubscribers.empty()) {
+                    golem_dma_kv_multicast_receivers_ +=
+                        info.kvSubscribers.size();
+                    golem_dma_kv_multicast_bytes_ += data.size();
+                    for (size_t index = 1;
+                         index < info.kvSubscribers.size(); ++index) {
+                        const auto& subscriber = info.kvSubscribers[index];
+                        auto* branchReq =
+                            new SST::Interfaces::SimpleNetwork::Request();
+                        branchReq->src = this->info.addr;
+                        branchReq->dest = subscriber.returnEndpoint >= 0
+                            ? static_cast<uint64_t>(subscriber.returnEndpoint)
+                            : lookupNetworkAddress(ev->getDst());
+                        branchReq->vn = golem_dma_response_vn;
+                        auto* branchEv = new SST::Golem::NetworkDataEvent(
+                            SST::Golem::NetworkDataEvent::DMA_READ_COMPLETE,
+                            subscriber.returnAddr, data.size(), data,
+                            subscriber.returnAddr, subscriber.returnEndpoint,
+                            subscriber.completionFlagAddr,
+                            subscriber.completionValue,
+                            subscriber.requestId, subscriber.dmaRequestKind,
+                            subscriber.dmaConsumer);
+                        // The data traverses the shared tree once. Branches add
+                        // destination metadata but do not consume payload width.
+                        branchReq->size_in_bits =
+                            (sizeof(subscriber.returnAddr) + sizeof(size_t)) * 8;
+                        branchReq->givePayload(branchEv);
+                        if (golem_dma_trace && subscriber.requestId != 0) {
+                            branchReq->setTraceID(
+                                makeGolemMerlinTraceId(subscriber.requestId));
+                            branchReq->setTraceType(
+                                SST::Interfaces::SimpleNetwork::Request::FULL);
+                        }
+                        GolemDmaResponseRequest branch;
+                        branch.request = branchReq;
+                        branch.readyCycle = responseReadyCycle;
+                        branch.notBeforeCycle = multicastReadyCycle;
+                        branch.requestId = subscriber.requestId;
+                        branch.returnAddr = subscriber.returnAddr;
+                        branch.length = data.size();
+                        branch.ingressCycle = subscriber.ingressCycle;
+                        branch.creditUnits = subscriber.creditUnits;
+                        branch.dmaRequestKind = subscriber.dmaRequestKind;
+                        branch.dmaConsumer = subscriber.dmaConsumer;
+                        golem_dma_send_queue_.push_back(std::move(branch));
+                        golem_dma_read_response_attempted_++;
+                        golem_dma_read_response_enqueued_++;
+                        golem_dma_read_response_enqueue_ticks_[branchReq] =
+                            getCurrentSimCycle();
+                    }
+                    golem_dma_response_max_queue_ = std::max(
+                        golem_dma_response_max_queue_,
+                        golem_dma_send_queue_.size());
+                    golem_dma_read_response_queue_high_water_ = std::max(
+                        golem_dma_read_response_queue_high_water_,
+                        static_cast<uint64_t>(
+                            golem_dma_read_response_enqueue_ticks_.size()));
                 }
             }
 
@@ -1723,6 +2018,21 @@ class MemNICBase : public MemLinkBase {
                 golem_dma_credit_blocked_cycles_,
                 golem_dma_response_late_ready_, golem_dma_tile_starvation_,
                 golem_dma_consumer_progress_messages_);
+            if (golem_dma_kv_coalesce_enable_ != 0) {
+                std::printf(
+                    "GOLEM_MEMNIC_DMA_KV_MULTICAST_STATS component=%s"
+                    " physical_reads=%" PRIu64
+                    " coalesced_requests=%" PRIu64
+                    " cache_hits=%" PRIu64
+                    " receivers=%" PRIu64
+                    " multicast_bytes=%" PRIu64
+                    " resident_chunks=%zu\n",
+                    getName().c_str(), golem_dma_kv_physical_reads_,
+                    golem_dma_kv_coalesced_requests_,
+                    golem_dma_kv_cache_hits_,
+                    golem_dma_kv_multicast_receivers_,
+                    golem_dma_kv_multicast_bytes_, golem_dma_kv_cache_.size());
+            }
         }
 
         /*** Data Members ***/
@@ -1750,6 +2060,9 @@ class MemNICBase : public MemLinkBase {
         uint32_t golem_dma_write_response_vn = 0;
         uint32_t golem_dma_trace = 0;
         uint32_t golem_dma_response_priority_enable = 0;
+        uint32_t golem_dma_kv_coalesce_enable_ = 0;
+        uint32_t golem_dma_kv_multicast_bytes_per_cycle_ = 256;
+        uint32_t golem_dma_kv_expected_consumers_ = 16;
         size_t golem_dma_response_drain_limit = 0;
         uint32_t golem_dma_credit_cap_ = 0;
         uint32_t golem_dma_credit_available_ = 0;
@@ -1858,6 +2171,19 @@ class MemNICBase : public MemLinkBase {
             golem_dma_response_priority_enable=params.find<uint32_t>(
                 "golem_dma_response_priority_enable",
                 envFlagDefault("GOLEM_DMA_RESPONSE_PRIORITY_ENABLE", 0));
+            golem_dma_kv_coalesce_enable_=params.find<uint32_t>(
+                "golem_dma_kv_coalesce_enable", 0);
+            golem_dma_kv_multicast_bytes_per_cycle_=params.find<uint32_t>(
+                "golem_dma_kv_multicast_bytes_per_cycle", 256);
+            golem_dma_kv_expected_consumers_=params.find<uint32_t>(
+                "golem_dma_kv_expected_consumers", 16);
+            if (golem_dma_kv_coalesce_enable_ != 0 &&
+                (golem_dma_kv_multicast_bytes_per_cycle_ == 0 ||
+                 golem_dma_kv_expected_consumers_ == 0)) {
+                dbg.fatal(CALL_INFO, -1,
+                          "%s, Error: shared K/V bandwidth and expected consumer count must be positive.\n",
+                          getName().c_str());
+            }
             golem_dma_write_response_vn=params.find<uint32_t>(
                 "golem_dma_write_response_vn", golem_network_num_vns_ >= 3 ? 2u : 0u);
             if (golem_dma_write_response_vn >= golem_network_num_vns_) {

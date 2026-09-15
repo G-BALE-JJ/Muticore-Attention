@@ -348,12 +348,18 @@ public:
             (arrayIDs.size() == 1 &&
              arrayIDs.front() < attentionClusterQkArrays &&
              input.size() == 64);
+        const bool validSequentialPvTopology =
+            trafficClass != AttentionClusterTrafficClass::SequentialPvInput ||
+            (arrayIDs.size() == 1 && input.size() == 64 && arrayIDs.front() < 64) ||
+            (arrayIDs.size() == 64 && input.size() == 64);
         if (!validateInputMulticastRequest(
                 arrayIDs, input.size(), elemBytes) ||
             operandBank >= operandContextBanks ||
             (trafficClass != AttentionClusterTrafficClass::QkQPair &&
-             trafficClass != AttentionClusterTrafficClass::PvPInput) ||
-            !validQkTopology || !validPvTopology) {
+             trafficClass != AttentionClusterTrafficClass::PvPInput &&
+             trafficClass != AttentionClusterTrafficClass::SequentialPvInput) ||
+            !validQkTopology || !validPvTopology ||
+            !validSequentialPvTopology) {
             return false;
         }
         return enqueueMatrixBroadcastTransfer(
@@ -365,6 +371,33 @@ public:
                     std::fill(target.begin(), target.end(), T());
                     std::transform(input.begin(), input.end(), target.begin(),
                                    [](double value) { return static_cast<T>(value); });
+                }
+                if (callback) callback(true, tag);
+            }, trafficClass);
+    }
+
+    virtual bool programInputScatterBankAsync(
+        const std::vector<uint32_t>& arrayIDs, uint32_t operandBank,
+        const std::vector<double>& inputs, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        if (!validateInputScatterRequest(arrayIDs, inputs.size(), elemBytes) ||
+            operandBank >= operandContextBanks ||
+            (trafficClass != AttentionClusterTrafficClass::SequentialQkInputScatter &&
+             trafficClass != AttentionClusterTrafficClass::SequentialPvInputScatter)) {
+            return false;
+        }
+        return enqueueInputScatterTransfer(
+            inputs.size() * elemBytes, arrayIDs.size(), tag,
+            [this, arrayIDs, operandBank, inputs, tag,
+             callback = std::move(callback)]() {
+                for (size_t lane = 0; lane < arrayIDs.size(); ++lane) {
+                    auto& target = inputVectors[
+                        operandIndex(arrayIDs[lane], operandBank)];
+                    const auto begin = inputs.begin() + lane * inputArraySize;
+                    std::transform(
+                        begin, begin + inputArraySize, target.begin(),
+                        [](double value) { return static_cast<T>(value); });
                 }
                 if (callback) callback(true, tag);
             }, trafficClass);
@@ -478,8 +511,7 @@ public:
         if (!validateOutputGroupRequest(arrayIDs, elemBytes, trafficClass)) {
             return false;
         }
-        return enqueueNearArrayOutputTransfer(
-            arrayIDs.size() * outputArraySize * elemBytes, tag,
+        auto completion =
             [this, arrayIDs, tag, callback = std::move(callback)]() {
                 std::vector<double> values;
                 values.reserve(arrayIDs.size() * outputArraySize);
@@ -495,6 +527,38 @@ public:
                         [](T value) { return static_cast<double>(value); });
                 }
                 if (callback) callback(true, tag, values);
+            };
+        const size_t bytes = arrayIDs.size() * outputArraySize * elemBytes;
+        if (trafficClass == AttentionClusterTrafficClass::SequentialPvOOutput) {
+            return enqueueOutputScatterGatherTransfer(
+                bytes, arrayIDs.size(), false, tag, std::move(completion),
+                trafficClass);
+        }
+        return enqueueNearArrayOutputTransfer(
+            bytes, tag, std::move(completion), trafficClass);
+    }
+
+    virtual bool writeOutputGroupClassAsync(
+        const std::vector<uint32_t>& arrayIDs,
+        const std::vector<double>& outputs, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        typename ComputeArray::BufferCallback callback) override {
+        if (!validateOutputGroupRequest(arrayIDs, elemBytes, trafficClass) ||
+            trafficClass != AttentionClusterTrafficClass::SequentialPvORestore ||
+            outputs.size() != arrayIDs.size() * outputArraySize) {
+            return false;
+        }
+        return enqueueOutputScatterGatherTransfer(
+            outputs.size() * elemBytes, arrayIDs.size(), true, tag,
+            [this, arrayIDs, outputs, tag, callback = std::move(callback)]() {
+                for (size_t lane = 0; lane < arrayIDs.size(); ++lane) {
+                    auto& target = outputVectors[arrayIDs[lane]];
+                    const auto begin = outputs.begin() + lane * outputArraySize;
+                    std::transform(
+                        begin, begin + outputArraySize, target.begin(),
+                        [](double value) { return static_cast<T>(value); });
+                }
+                if (callback) callback(true, tag);
             }, trafficClass);
     }
 
@@ -508,8 +572,26 @@ public:
             AttentionClusterTrafficClass trafficClass) const override {
         const bool correctElementWidth = elemBytes == sizeof(T);
         if (numArrays != 64 || inputArraySize != 64 ||
-            outputArraySize != 64 || !correctElementWidth ||
-            arrayIDs.size() != 2 ||
+            outputArraySize != 64 || !correctElementWidth) {
+            return false;
+        }
+        if (trafficClass ==
+            AttentionClusterTrafficClass::SequentialQkScoreOut) {
+            if (arrayIDs.size() != 64) return false;
+            for (uint32_t index = 0; index < 64; ++index) {
+                if (arrayIDs[index] != index) return false;
+            }
+            return true;
+        }
+        if (trafficClass == AttentionClusterTrafficClass::SequentialPvORestore ||
+            trafficClass == AttentionClusterTrafficClass::SequentialPvOOutput) {
+            if (arrayIDs.size() != 64) return false;
+            for (uint32_t index = 0; index < 64; ++index) {
+                if (arrayIDs[index] != index) return false;
+            }
+            return true;
+        }
+        if (arrayIDs.size() != 2 ||
             arrayIDs[1] != arrayIDs[0] + 1 || (arrayIDs[0] % 2) != 0) {
             return false;
         }

@@ -186,6 +186,21 @@ public:
         (void)callback;
         return false;
     }
+    virtual bool programGemmInputScatterBankAsync(
+        const std::vector<uint32_t>& arrayIds, uint32_t operandBank,
+        const std::vector<double>& inputs, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmBufferCallback callback) {
+        (void)arrayIds;
+        (void)operandBank;
+        (void)inputs;
+        (void)elemBytes;
+        (void)trafficClass;
+        (void)tag;
+        (void)enqueueCycle;
+        (void)callback;
+        return false;
+    }
     virtual bool programGemmMatrixActiveBankAsync(
         uint32_t arrayId, uint32_t operandBank,
         const std::vector<double>& matrix, uint32_t activeColumns,
@@ -216,6 +231,15 @@ public:
     virtual bool writeGemmOutputAsync(
         uint32_t arrayId, const std::vector<double>& output, size_t elemBytes,
         uint64_t tag, uint64_t enqueueCycle, GemmBufferCallback callback) = 0;
+    virtual bool writeGemmOutputGroupClassAsync(
+        const std::vector<uint32_t>& arrayIds,
+        const std::vector<double>& outputs, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmBufferCallback callback) {
+        (void)arrayIds; (void)outputs; (void)elemBytes; (void)trafficClass;
+        (void)tag; (void)enqueueCycle; (void)callback;
+        return false;
+    }
     virtual bool readGemmOutputAsync(
         uint32_t arrayId, size_t elemBytes, uint64_t tag, uint64_t enqueueCycle,
         GemmReadCallback callback) = 0;
@@ -652,12 +676,18 @@ public:
             (arrayIds.size() == 1 &&
              arrayIds.front() < attentionClusterQkArrays_ &&
              input.size() == 64);
+        const bool validSequentialPvTopology =
+            trafficClass != AttentionClusterTrafficClass::SequentialPvInput ||
+            (arrayIds.size() == 1 && input.size() == 64 && arrayIds.front() < 64) ||
+            (arrayIds.size() == 64 && input.size() == 64);
         if (array_ == nullptr || arrayIds.empty() ||
             !array_->validateOperandContextRequest(arrayIds.front(), operandBank) ||
             (trafficClass != AttentionClusterTrafficClass::QkQPair &&
-             trafficClass != AttentionClusterTrafficClass::PvPInput) ||
+             trafficClass != AttentionClusterTrafficClass::PvPInput &&
+             trafficClass != AttentionClusterTrafficClass::SequentialPvInput) ||
             !validQkTopology ||
             !validPvTopology ||
+            !validSequentialPvTopology ||
             !array_->validateInputMulticastRequest(
                 arrayIds, input.size(), elemBytes)) return false;
         GemmProxyCommand command;
@@ -665,6 +695,31 @@ public:
         command.arrayIds = arrayIds;
         command.operandBank = operandBank;
         command.payload = input;
+        command.elemBytes = elemBytes;
+        command.trafficClass = trafficClass;
+        command.tag = tag;
+        command.enqueueCycle = enqueueCycle;
+        command.bufferCallback = std::move(callback);
+        return enqueueGemmProxyCommand(std::move(command));
+    }
+
+    bool programGemmInputScatterBankAsync(
+        const std::vector<uint32_t>& arrayIds, uint32_t operandBank,
+        const std::vector<double>& inputs, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmBufferCallback callback) override {
+        const bool scatterClass =
+            trafficClass == AttentionClusterTrafficClass::SequentialQkInputScatter ||
+            trafficClass == AttentionClusterTrafficClass::SequentialPvInputScatter;
+        if (array_ == nullptr || arrayIds.size() != 64 || !scatterClass ||
+            !array_->validateOperandContextRequest(arrayIds.front(), operandBank) ||
+            !array_->validateInputScatterRequest(
+                arrayIds, inputs.size(), elemBytes)) return false;
+        GemmProxyCommand command;
+        command.kind = GemmProxyCommandKind::PROGRAM_INPUT_SCATTER;
+        command.arrayIds = arrayIds;
+        command.operandBank = operandBank;
+        command.payload = inputs;
         command.elemBytes = elemBytes;
         command.trafficClass = trafficClass;
         command.tag = tag;
@@ -743,6 +798,30 @@ public:
         command.arrayId = arrayId;
         command.payload = output;
         command.elemBytes = elemBytes;
+        command.tag = tag;
+        command.enqueueCycle = enqueueCycle;
+        command.bufferCallback = std::move(callback);
+        return enqueueGemmProxyCommand(std::move(command));
+    }
+
+    bool writeGemmOutputGroupClassAsync(
+        const std::vector<uint32_t>& arrayIds,
+        const std::vector<double>& outputs, size_t elemBytes,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        uint64_t enqueueCycle, GemmBufferCallback callback) override {
+        if (array_ == nullptr ||
+            trafficClass != AttentionClusterTrafficClass::SequentialPvORestore ||
+            !array_->validateOutputGroupRequest(
+                arrayIds, elemBytes, trafficClass) ||
+            outputs.size() != arrayIds.size() * 64) {
+            return false;
+        }
+        GemmProxyCommand command;
+        command.kind = GemmProxyCommandKind::WRITE_OUTPUT_GROUP;
+        command.arrayIds = arrayIds;
+        command.payload = outputs;
+        command.elemBytes = elemBytes;
+        command.trafficClass = trafficClass;
         command.tag = tag;
         command.enqueueCycle = enqueueCycle;
         command.bufferCallback = std::move(callback);
@@ -1457,7 +1536,9 @@ private:
         PROGRAM_MATRIX,
         PROGRAM_MATRIX_GROUP,
         PROGRAM_INPUT,
+        PROGRAM_INPUT_SCATTER,
         WRITE_OUTPUT,
+        WRITE_OUTPUT_GROUP,
         READ_OUTPUT,
         READ_OUTPUT_GROUP,
         LAUNCH,
@@ -1598,11 +1679,24 @@ private:
                 command.elemBytes,
                 command.tag, std::move(callback));
         }
+        case GemmProxyCommandKind::PROGRAM_INPUT_SCATTER: {
+            auto callback = command.bufferCallback;
+            return array_->programInputScatterBankAsync(
+                command.arrayIds, command.operandBank, command.payload,
+                command.elemBytes, command.trafficClass, command.tag,
+                std::move(callback));
+        }
         case GemmProxyCommandKind::WRITE_OUTPUT: {
             auto callback = command.bufferCallback;
             return array_->writeOutputAsync(
                 command.arrayId, command.payload, command.elemBytes,
                 command.tag, std::move(callback));
+        }
+        case GemmProxyCommandKind::WRITE_OUTPUT_GROUP: {
+            auto callback = command.bufferCallback;
+            return array_->writeOutputGroupClassAsync(
+                command.arrayIds, command.payload, command.elemBytes,
+                command.trafficClass, command.tag, std::move(callback));
         }
         case GemmProxyCommandKind::READ_OUTPUT: {
             auto callback = command.readCallback;

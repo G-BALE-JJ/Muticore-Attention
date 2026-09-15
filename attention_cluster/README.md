@@ -1,7 +1,7 @@
 # Attention Cluster
 
 This directory contains the current worker-local Attention cluster contract,
-the R6 and R8-R11 performance reports, focused C++ contracts, and compact verification
+the R6 and R8-R12 performance reports, focused C++ contracts, and compact verification
 artifacts. Large simulator run directories are generated locally and ignored.
 
 ## Architecture
@@ -31,15 +31,12 @@ path remains available for feature-off regression.
 
 | Case | Cycles | Result |
 |---|---:|---|
-| Q256/K128 | 16,112 | numerical/lifecycle PASS |
-| Q256/K1024 | 119,054 | numerical/lifecycle PASS |
-| E3 Q1024/K1024 | 127,589 | numerical/lifecycle PASS |
-| E4 Q2048/K2048 | 430,131 | numerical/lifecycle PASS |
-| Q256/K128 WCP depth 16 | 16,112 | numerical/lifecycle PASS |
-| Q256/K128 MPI 2 | 16,112 | numerical/lifecycle/MPI PASS |
+| Q256/K128 | 15,565 | numerical/lifecycle/backend PASS |
+| E3 Q1024/K1024 | 142,737 | numerical/lifecycle/backend PASS |
+| E4 Q2048/K2048 | 518,096 | numerical/lifecycle/backend PASS |
 
 RTX 5060 FP32 Scope A is 97,568/345,984 normalized cycles for E3/E4, so the
-current SST result remains 1.308x/1.243x slower. This is a verified architecture
+current SST result remains 1.463x/1.497x slower. This is a verified Ramulator2
 baseline, not a GPU-gate success.
 
 ## Files
@@ -53,7 +50,9 @@ baseline, not a GPU-gate success.
 - `R10_MANAGER_KV_P_OVERLAP_RESULTS.md`: early manager K/V delivery, P-row
   overlap, phase cycles, traffic conservation, and the prior bottleneck.
 - `R11_QK_PV_MATRIX_LOOKAHEAD_RESULTS.md`: K-ready delivery, QK/PV inactive-bank
-  preprogramming, A/B results, and the current bottleneck.
+  preprogramming, A/B results, and the prior DRAMSim3 bottleneck.
+- `R12_RAMULATOR2_HBM2E_RESULTS.md`: actual backend migration, runtime backend
+  gate, HBM2E microbenchmark, and current measurements.
 - `test_attention_cluster_contract.cpp`: finite resource, generation,
   cancellation, bank lease, score/P, and resident-O contracts.
 - `results/r6_final_*/*.json`: compact numerical, lifecycle, and metrics evidence.

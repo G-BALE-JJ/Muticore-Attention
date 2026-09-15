@@ -50,8 +50,14 @@ enum class AttentionClusterTrafficClass : uint8_t {
     QkKMatrix,
     QkQPair,
     QkScoreOut,
+    SequentialQkScoreOut,
+    SequentialQkInputScatter,
     PvVMatrix,
     PvPInput,
+    SequentialPvInput,
+    SequentialPvInputScatter,
+    SequentialPvORestore,
+    SequentialPvOOutput,
     PvOFinalDrain,
     ScoreSfuRead,
     SfuPWrite,
@@ -67,8 +73,20 @@ inline const char* attentionClusterTrafficClassName(
     case AttentionClusterTrafficClass::QkKMatrix: return "qk_k_matrix";
     case AttentionClusterTrafficClass::QkQPair: return "qk_q_pair";
     case AttentionClusterTrafficClass::QkScoreOut: return "qk_score_out";
+    case AttentionClusterTrafficClass::SequentialQkScoreOut:
+        return "sequential_qk_score_out";
+    case AttentionClusterTrafficClass::SequentialQkInputScatter:
+        return "sequential_qk_input_scatter";
     case AttentionClusterTrafficClass::PvVMatrix: return "pv_v_matrix";
     case AttentionClusterTrafficClass::PvPInput: return "pv_p_input";
+    case AttentionClusterTrafficClass::SequentialPvInput:
+        return "sequential_pv_input";
+    case AttentionClusterTrafficClass::SequentialPvInputScatter:
+        return "sequential_pv_input_scatter";
+    case AttentionClusterTrafficClass::SequentialPvORestore:
+        return "sequential_pv_o_restore";
+    case AttentionClusterTrafficClass::SequentialPvOOutput:
+        return "sequential_pv_o_output";
     case AttentionClusterTrafficClass::PvOFinalDrain: return "pv_o_final_drain";
     case AttentionClusterTrafficClass::ScoreSfuRead: return "score_sfu_read";
     case AttentionClusterTrafficClass::SfuPWrite: return "sfu_p_write";

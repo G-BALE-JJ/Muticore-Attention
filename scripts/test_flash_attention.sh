@@ -5,7 +5,9 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/test_flash_attention.sh [options]
 
-Run one parameter-driven Attention test from this worktree.
+Run one Attention test from this worktree. The current performance and cycle
+acceptance point is fixed at Q=K=1024, D=128; dimension overrides are retained
+for correctness-contract use only.
 
   --queries N          Total query rows across four managers (default: 1024)
   --keys N             Total K/V rows (default: 1024)
@@ -14,9 +16,11 @@ Run one parameter-driven Attention test from this worktree.
   --timeout SEC        Test timeout (default: 7200)
   --artifact-root DIR  Output directory (default: /tmp/<case-id>[_mpiN])
   --baseline FILE      Optionally compare against an explicit frozen baseline
-  --attention-cluster  Enable the worker-local 32+32 QK/PV cluster (D128 only)
+  --attention-cluster  Enable the legacy spatially partitioned QK/PV cluster
   --no-attention-cluster
-                       Keep the legacy Attention datapath (default)
+                       Disable the legacy Attention cluster (default)
+  --sequential-64      Use all 64 arrays for QK, then all 64 for PV (default)
+  --no-sequential-64   Keep the original 16-array wide-MVM datapath
   --qk-panel-row-burst Use the 1 KiB WCP C-buffer QK row-burst path (default)
   --no-qk-panel-row-burst
                        Disable the QK row-burst path for an explicit control run
@@ -38,8 +42,10 @@ ARTIFACT_ROOT=""
 BASELINE_JSON=""
 SHOW_CONFIG=0
 ATTENTION_CLUSTER="${GOLEM_ATTENTION_CLUSTER_ENABLE:-0}"
+ATTENTION_SEQUENTIAL_64="${GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE:-1}"
 GOLEM_MATRIX_BROADCAST_MAX_FANOUT=16
-GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=64
+GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256
+GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE=256
 GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1
 GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1
 GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES="${GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES:-16384}"
@@ -80,8 +86,10 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --show-config) SHOW_CONFIG=1; shift ;;
-    --attention-cluster) ATTENTION_CLUSTER=1; QK_PANEL_ROW_BURST=0; shift ;;
+    --attention-cluster) ATTENTION_CLUSTER=1; ATTENTION_SEQUENTIAL_64=0; QK_PANEL_ROW_BURST=0; shift ;;
     --no-attention-cluster) ATTENTION_CLUSTER=0; shift ;;
+    --sequential-64) ATTENTION_SEQUENTIAL_64=1; ATTENTION_CLUSTER=0; QK_PANEL_ROW_BURST=0; shift ;;
+    --no-sequential-64) ATTENTION_SEQUENTIAL_64=0; shift ;;
     --qk-panel-row-burst) QK_PANEL_ROW_BURST=1; shift ;;
     --no-qk-panel-row-burst) QK_PANEL_ROW_BURST=0; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -177,13 +185,22 @@ DISPLAY_PV_RESTORE_PIPELINE=1
 DISPLAY_PV_OUTPUT_PIPELINE=1
 DISPLAY_PV_EARLY_COMPUTE=1
 DISPLAY_PV_MATRIX_SOFTMAX_OVERLAP=1
-if (( ATTENTION_CLUSTER )); then
+if (( ATTENTION_CLUSTER || ATTENTION_SEQUENTIAL_64 )); then
   DISPLAY_PV_V_TILE_REUSE=0
   DISPLAY_PV_INPUT_PIPELINE=0
   DISPLAY_PV_RESTORE_PIPELINE=0
   DISPLAY_PV_OUTPUT_PIPELINE=0
   DISPLAY_PV_EARLY_COMPUTE=0
   DISPLAY_PV_MATRIX_SOFTMAX_OVERLAP=0
+fi
+if (( ATTENTION_SEQUENTIAL_64 )); then
+  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=64
+  KV_PAIR_REUSE=0
+  KV_QUERY_GROUP_SIZE=1
+fi
+DISPLAY_QK_PANEL_ROW_BURST=$QK_PANEL_ROW_BURST
+if (( ATTENTION_SEQUENTIAL_64 )); then
+  DISPLAY_QK_PANEL_ROW_BURST=0
 fi
 
 if [[ "$SHOW_CONFIG" == "1" ]]; then
@@ -200,8 +217,9 @@ if [[ "$SHOW_CONFIG" == "1" ]]; then
     "GENERIC_GEMM_WCP=1" \
     "PV_MATRIX_BROADCAST=1" \
     "QK_MATRIX_BROADCAST=1" \
-    "QK_PANEL_ROW_BURST=$QK_PANEL_ROW_BURST" \
+    "QK_PANEL_ROW_BURST=$DISPLAY_QK_PANEL_ROW_BURST" \
     "ATTENTION_CLUSTER=$ATTENTION_CLUSTER" \
+    "ATTENTION_SEQUENTIAL_64=$ATTENTION_SEQUENTIAL_64" \
     "KV_DOUBLE_BUFFER=1" \
     "KV_SECOND_LOOKAHEAD=1" \
     "KV_PAIR_REUSE=$KV_PAIR_REUSE" \
@@ -221,6 +239,7 @@ if [[ "$SHOW_CONFIG" == "1" ]]; then
     "GOLEM_ARRAY_PIPELINE_DEPTH=$GOLEM_ARRAY_PIPELINE_DEPTH" \
     "GOLEM_MATRIX_BROADCAST_MAX_FANOUT=$GOLEM_MATRIX_BROADCAST_MAX_FANOUT" \
     "GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=$GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE" \
+    "GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE=$GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE" \
     "GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=$GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES" \
     "GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=$GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES"
   exit 0
@@ -246,6 +265,10 @@ fi
 CLUSTER_ARGS=(--no-attention-cluster)
 if (( ATTENTION_CLUSTER )); then
   CLUSTER_ARGS=(--attention-cluster)
+fi
+SEQUENTIAL_ARGS=(--no-sequential-64)
+if (( ATTENTION_SEQUENTIAL_64 )); then
+  SEQUENTIAL_ARGS=(--sequential-64)
 fi
 
 # shellcheck disable=SC1091
@@ -274,17 +297,20 @@ echo "[ATTENTION] Running Q=$QUERIES K=$KEYS D=$HEAD_DIM with $MPI_RANKS MPI ran
 GOLEM_MPI_RANKS="$MPI_RANKS" \
 GOLEM_MATRIX_BROADCAST_MAX_FANOUT="$GOLEM_MATRIX_BROADCAST_MAX_FANOUT" \
 GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE="$GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE" \
+GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE="$GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE" \
 GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES="$GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES" \
 GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES="$GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES" \
 GOLEM_ATTENTION_KV_PAIR_REUSE="$KV_PAIR_REUSE" \
 GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE="$KV_QUERY_GROUP_SIZE" \
 GOLEM_ATTENTION_CLUSTER_ENABLE="$ATTENTION_CLUSTER" \
+GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE="$ATTENTION_SEQUENTIAL_64" \
   "$ATTENTION_DIR/run_flash_attention.sh" \
   --queries "$QUERIES" --keys "$KEYS" --head-dim "$HEAD_DIM" \
   --timeout "$TIMEOUT" --artifact-root "$ARTIFACT_ROOT" \
   --generic-gemm --pv-matrix-broadcast --qk-matrix-broadcast --kv-double-buffer \
   --kv-second-lookahead "${QK_ROW_BURST_ARGS[@]}" \
   "${CLUSTER_ARGS[@]}" \
+  "${SEQUENTIAL_ARGS[@]}" \
   "${BASELINE_ARGS[@]}"
 
 echo "[ATTENTION] $CASE_ID PASS"

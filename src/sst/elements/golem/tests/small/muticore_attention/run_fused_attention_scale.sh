@@ -13,6 +13,7 @@ BASELINE_JSON=""
 TIMEOUT_SECONDS=7200
 DRY_RUN=0
 ATTENTION_CLUSTER="${GOLEM_ATTENTION_CLUSTER_ENABLE:-0}"
+ATTENTION_SEQUENTIAL_64="${GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE:-0}"
 ATTENTION_CLUSTER_QK_ARRAYS="${GOLEM_ATTENTION_CLUSTER_QK_ARRAYS:-16}"
 GENERIC_GEMM=1
 PV_MATRIX_BROADCAST=1
@@ -39,6 +40,12 @@ fi
 KV_TILE_ROTATION=0
 KV_DOUBLE_BUFFER=1
 KV_BUFFER_COUNT="${GOLEM_ATTENTION_KV_BUFFER_COUNT:-2}"
+KV_SHARED_STREAM="${GOLEM_ATTENTION_KV_SHARED_STREAM_ENABLE:-0}"
+KV_SHARED_STREAM_EXPLICIT=0
+if [[ -n "${GOLEM_ATTENTION_KV_SHARED_STREAM_ENABLE+x}" ]]; then
+  KV_SHARED_STREAM_EXPLICIT=1
+fi
+KV_STREAM_BYTES_PER_CYCLE="${GOLEM_ATTENTION_KV_STREAM_BYTES_PER_CYCLE:-256}"
 KV_DISTRIBUTION="${GOLEM_ATTENTION_KV_DISTRIBUTION_ENABLE:-0}"
 KV_DISTRIBUTION_EXPLICIT=0
 if [[ -n "${GOLEM_ATTENTION_KV_DISTRIBUTION_ENABLE+x}" ]]; then
@@ -111,10 +118,13 @@ WCP_GEMM_PROXY_ISSUE_WIDTH="${GOLEM_WCP_GEMM_PROXY_ISSUE_WIDTH:-1}"
 WCP_GEMM_PROXY_COMMAND_LATENCY_CYCLES="${GOLEM_WCP_GEMM_PROXY_COMMAND_LATENCY_CYCLES:-1}"
 WCP_GEMM_PROXY_COMPLETION_LATENCY_CYCLES="${GOLEM_WCP_GEMM_PROXY_COMPLETION_LATENCY_CYCLES:-1}"
 MATRIX_BROADCAST_MAX_FANOUT="${GOLEM_MATRIX_BROADCAST_MAX_FANOUT:-16}"
-MATRIX_BROADCAST_BYTES_PER_CYCLE="${GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE:-64}"
+MATRIX_BROADCAST_BYTES_PER_CYCLE="${GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE:-256}"
+INPUT_SCATTER_BYTES_PER_CYCLE="${GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE:-256}"
+OUTPUT_SCATTER_GATHER_BYTES_PER_CYCLE="${GOLEM_OUTPUT_SCATTER_GATHER_BYTES_PER_CYCLE:-256}"
 MATRIX_BROADCAST_BASE_LATENCY_CYCLES="${GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES:-1}"
 MATRIX_BROADCAST_STAGE_LATENCY_CYCLES="${GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES:-1}"
 DMA_RESPONSE_VN="${GOLEM_DMA_RESPONSE_VN:-1}"
+DIRCTRL_HIGHLINK_BW="${GOLEM_DIRCTRL_HIGHLINK_BW:-320GB/s}"
 ATTENTION_MILESTONE_TRACE="${GOLEM_ATTENTION_MILESTONE_TRACE:-1}"
 ATTENTION_TILE_TRACE="${GOLEM_ATTENTION_TILE_TRACE:-0}"
 ATTENTION_TERMINAL_VERBOSE="${GOLEM_ATTENTION_TERMINAL_VERBOSE:-0}"
@@ -125,6 +135,8 @@ ARRAY_OUTPUT_READ_BANKS="${GOLEM_ARRAY_OUTPUT_READ_BANKS:-1}"
 ARRAY_BUFFER_PORTS="${GOLEM_ARRAY_BUFFER_PORTS:-1}"
 ARRAY_BUFFER_BASE_LATENCY_CYCLES="${GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES:-1}"
 LOCAL_GM_READ_PORTS="${GOLEM_LOCAL_GM_READ_PORTS:-1}"
+LOCAL_GM_BYTES_PER_CYCLE="${GOLEM_LOCAL_GM_BYTES_PER_CYCLE:-64}"
+LOCAL_GM_MAX_REQUEST_BYTES="${GOLEM_LOCAL_GM_MAX_REQUEST_BYTES:-4096}"
 NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE="${GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE:-512}"
 NEAR_ARRAY_OUTPUT_CREDITS="${GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_CREDITS:-2}"
 PV_V_TILE_BUFFER_BYTES="${GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES:-16384}"
@@ -172,6 +184,8 @@ while [[ $# -gt 0 ]]; do
     --no-qk-readout-overlap) QK_READOUT_OVERLAP=0; shift ;;
     --qk-panel-row-burst) QK_PANEL_ROW_BURST=1; QK_PANEL_ROW_BURST_EXPLICIT=1; shift ;;
     --no-qk-panel-row-burst) QK_PANEL_ROW_BURST=0; QK_PANEL_ROW_BURST_EXPLICIT=1; shift ;;
+    --kv-shared-stream) KV_SHARED_STREAM=1; KV_SHARED_STREAM_EXPLICIT=1; shift ;;
+    --no-kv-shared-stream) KV_SHARED_STREAM=0; KV_SHARED_STREAM_EXPLICIT=1; shift ;;
     --cross-tile-operand-pipeline) CROSS_TILE_OPERAND_PIPELINE=1; CROSS_TILE_OPERAND_PIPELINE_EXPLICIT=1; shift ;;
     --no-cross-tile-operand-pipeline) CROSS_TILE_OPERAND_PIPELINE=0; CROSS_TILE_OPERAND_PIPELINE_EXPLICIT=1; shift ;;
     --kv-tile-rotation) KV_TILE_ROTATION=1; shift ;;
@@ -219,6 +233,7 @@ while [[ $# -gt 0 ]]; do
     --no-pv-active-k) PV_ACTIVE_K=0; shift ;;
     --attention-cluster)
       ATTENTION_CLUSTER=1
+      ATTENTION_SEQUENTIAL_64=0
       if (( ! KV_DISTRIBUTION_EXPLICIT )); then
         KV_DISTRIBUTION=1
       fi
@@ -239,11 +254,13 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --no-attention-cluster) ATTENTION_CLUSTER=0; shift ;;
+    --sequential-64) ATTENTION_SEQUENTIAL_64=1; ATTENTION_CLUSTER=0; shift ;;
+    --no-sequential-64) ATTENTION_SEQUENTIAL_64=0; shift ;;
     --generic-gemm) GENERIC_GEMM=1; shift ;;
     --direct-gemm) GENERIC_GEMM=0; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help)
-      echo "Cluster mode: [--attention-cluster|--no-attention-cluster]"
+      echo "Worker mode: [--sequential-64|--no-sequential-64|--attention-cluster]"
       echo "Key tile override: [--key-block-rows 32|64]"
       echo "Usage: run_fused_attention_scale.sh [--queries N] [--keys N] [--head-dim N] [--baseline FILE] [--generic-gemm|--direct-gemm] [--pv-matrix-broadcast|--no-pv-matrix-broadcast] [--qk-matrix-broadcast|--no-qk-matrix-broadcast] [--qk-dataflow-transpose] [--qk-early-compute|--no-qk-early-compute] [--qk-input-pipeline|--no-qk-input-pipeline] [--qk-readout-overlap|--no-qk-readout-overlap] [--qk-panel-row-burst|--no-qk-panel-row-burst] [--cross-tile-operand-pipeline|--no-cross-tile-operand-pipeline] [--kv-tile-rotation] [--kv-double-buffer|--no-kv-double-buffer] [--kv-distribution|--no-kv-distribution] [--kv-second-lookahead|--no-kv-second-lookahead] [--kv-cross-query-prefetch|--no-kv-cross-query-prefetch] [--kv-pair-reuse|--no-kv-pair-reuse] [--kv-query-group-size 1|2|4] [--pv-v-tile-reuse|--no-pv-v-tile-reuse] [--pv-v-tile-group-retention|--no-pv-v-tile-group-retention] [--pv-input-pipeline|--no-pv-input-pipeline] [--pv-compact-input|--no-pv-compact-input] [--pv-input-residency|--no-pv-input-residency] [--o-accumulator-cbuffer|--no-o-accumulator-cbuffer] [--pv-restore-pipeline|--no-pv-restore-pipeline] [--pv-output-pipeline|--no-pv-output-pipeline] [--pv-o-row-fusion|--no-pv-o-row-fusion] [--pv-early-compute|--no-pv-early-compute] [--pv-matrix-softmax-overlap|--no-pv-matrix-softmax-overlap] [--pv-active-k|--no-pv-active-k] [--artifact-root DIR] [--timeout SEC] [--dry-run]"
       exit 0 ;;
@@ -290,6 +307,59 @@ if (( ATTENTION_CLUSTER )); then
   ARRAY_OUTPUT_READ_BANKS=8
 fi
 
+if (( ATTENTION_SEQUENTIAL_64 )); then
+  ATTENTION_CLUSTER=0
+  GENERIC_GEMM=1
+  KEY_BLOCK_ROWS=64
+  QK_EARLY_COMPUTE=0
+  QK_INPUT_PIPELINE=0
+  QK_READOUT_OVERLAP=0
+  QK_PANEL_ROW_BURST=0
+  CROSS_TILE_OPERAND_PIPELINE=0
+  PV_V_TILE_REUSE=0
+  PV_V_TILE_GROUP_RETENTION=0
+  PV_INPUT_PIPELINE=0
+  PV_INPUT_RESIDENCY=0
+  O_ACCUMULATOR_CBUFFER=0
+  PV_RESTORE_PIPELINE=0
+  PV_OUTPUT_PIPELINE=0
+  PV_O_ROW_FUSION=0
+  PV_EARLY_COMPUTE=0
+  PV_MATRIX_SOFTMAX_OVERLAP=0
+  PV_ACTIVE_K=1
+  CLUSTER_PV_ROW_WAVEFRONT=0
+  CLUSTER_QK_MATRIX_LOOKAHEAD=0
+  CLUSTER_PV_MATRIX_LOOKAHEAD=0
+  MATRIX_BROADCAST_MAX_FANOUT=64
+  if [[ -z "${GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE+x}" ]]; then
+    NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE=16384
+  fi
+  if [[ -z "${GOLEM_LOCAL_GM_BYTES_PER_CYCLE+x}" ]]; then
+    LOCAL_GM_BYTES_PER_CYCLE=16384
+  fi
+  if [[ -z "${GOLEM_LOCAL_GM_MAX_REQUEST_BYTES+x}" ]]; then
+    LOCAL_GM_MAX_REQUEST_BYTES=16384
+  fi
+  KV_PAIR_REUSE=0
+  KV_QUERY_GROUP_SIZE=1
+  if (( !KV_SHARED_STREAM_EXPLICIT )); then
+    KV_SHARED_STREAM=1
+  fi
+fi
+
+if [[ "$KV_SHARED_STREAM" != 0 && "$KV_SHARED_STREAM" != 1 ]]; then
+  echo "GOLEM_ATTENTION_KV_SHARED_STREAM_ENABLE must be 0 or 1" >&2
+  exit 2
+fi
+if (( KV_SHARED_STREAM && !ATTENTION_SEQUENTIAL_64 )); then
+  echo "Shared streaming K/V supply requires --sequential-64" >&2
+  exit 2
+fi
+if ! [[ "$KV_STREAM_BYTES_PER_CYCLE" =~ ^[1-9][0-9]*$ ]]; then
+  echo "GOLEM_ATTENTION_KV_STREAM_BYTES_PER_CYCLE must be a positive integer" >&2
+  exit 2
+fi
+
 if [[ "$PV_O_ROW_FUSION" != 0 && "$PV_O_ROW_FUSION" != 1 ]]; then
   echo "GOLEM_ATTENTION_PV_O_ROW_FUSION must be 0 or 1" >&2
   exit 2
@@ -334,6 +404,10 @@ if [[ "$CROSS_TILE_OPERAND_PIPELINE" != 0 &&
 fi
 if [[ "$ATTENTION_CLUSTER" != 0 && "$ATTENTION_CLUSTER" != 1 ]]; then
   echo "GOLEM_ATTENTION_CLUSTER_ENABLE must be 0 or 1" >&2
+  exit 2
+fi
+if [[ "$ATTENTION_SEQUENTIAL_64" != 0 && "$ATTENTION_SEQUENTIAL_64" != 1 ]]; then
+  echo "GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE must be 0 or 1" >&2
   exit 2
 fi
 if [[ "$KV_QUERY_GROUP_SIZE" != 1 && "$KV_QUERY_GROUP_SIZE" != 2 &&
@@ -483,6 +557,10 @@ if ! [[ "$MATRIX_BROADCAST_BYTES_PER_CYCLE" =~ ^[1-9][0-9]*$ ]]; then
   echo "GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE must be a positive integer" >&2
   exit 2
 fi
+if ! [[ "$INPUT_SCATTER_BYTES_PER_CYCLE" =~ ^[1-9][0-9]*$ ]]; then
+  echo "GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE must be a positive integer" >&2
+  exit 2
+fi
 if ! [[ "$MATRIX_BROADCAST_BASE_LATENCY_CYCLES" =~ ^[1-9][0-9]*$ ]]; then
   echo "GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES must be a positive integer" >&2
   exit 2
@@ -588,11 +666,17 @@ if (( ATTENTION_CLUSTER )); then
   ARRAY_INPUT=64
   ARRAY_OUTPUT=64
   NUM_ARRAYS=64
+elif (( ATTENTION_SEQUENTIAL_64 )); then
+  ARRAY_INPUT=64
+  ARRAY_OUTPUT=64
+  NUM_ARRAYS=64
 fi
 RUN_ID="fused_attention_q${TOTAL_QUERIES}_k${KEYS}_d${HEAD_DIM}"
 GUEST_NAME=fused_attention
 
-if (( !ATTENTION_CLUSTER )); then
+if (( ATTENTION_SEQUENTIAL_64 )); then
+  KEY_BLOCK_ROWS=64
+elif (( !ATTENTION_CLUSTER )); then
   KEY_BLOCK_ROWS=32
 elif (( KEY_BLOCK_ROWS == 0 )); then
   KEY_BLOCK_ROWS=$((KEYS <= 128 ? 64 : 32))
@@ -615,11 +699,17 @@ if (( ATTENTION_CLUSTER )); then
   ATTENTION_WINDOW_BYTES=$((128 + 5 * 16 * HEAD_DIM * 4 +
     16 * KEY_BLOCK_ROWS * 4 +
     2 * KV_BUFFER_COUNT_EFFECTIVE * KEY_BLOCK_ROWS * HEAD_DIM * 4))
+elif (( ATTENTION_SEQUENTIAL_64 )); then
+  QUERY_STORAGE_COPIES=2
+  ATTENTION_WINDOW_OFFSET=0xC0000
+  ATTENTION_WINDOW_BYTES=$((128 + QUERY_STORAGE_COPIES * 64 * HEAD_DIM * 4 +
+    64 * KEY_BLOCK_ROWS * 4 +
+    2 * KV_BUFFER_COUNT_EFFECTIVE * KEY_BLOCK_ROWS * HEAD_DIM * 4))
 else
   ATTENTION_WINDOW_OFFSET=0xC0000
   ATTENTION_WINDOW_BYTES=$((KV_DOUBLE_BUFFER ? 0x14880 : 0x10000))
 fi
-if (( KV_PAIR_REUSE && !ATTENTION_CLUSTER )); then
+if (( KV_PAIR_REUSE && !ATTENTION_CLUSTER && !ATTENTION_SEQUENTIAL_64 )); then
   ATTENTION_WINDOW_BYTES=$((ATTENTION_WINDOW_BYTES + \
     (KV_QUERY_GROUP_SIZE - 1) * 2 * 16 * HEAD_DIM * 4))
 fi
@@ -652,7 +742,7 @@ RUN_CONFIG_FILE="$ARTIFACT_ROOT/stats/overlap0/$RUN_ID/run_config.env"
 BASELINE_RESULT_JSON="$ARTIFACT_ROOT/attention_baseline_verification.json"
 MEM_NODE_SIZE=134217728
 MODEL_PLATFORM_CLOCK="${VANADIS_CPU_CLOCK:-2.0GHz}"
-NORMALIZATION_CLOCK="${GOLEM_ATTENTION_NORMALIZATION_CLOCK:-1.0GHz}"
+NORMALIZATION_CLOCK="${GOLEM_ATTENTION_NORMALIZATION_CLOCK:-${VANADIS_CPU_CLOCK:-1.0GHz}}"
 Q_OFFSET=$((0x02000000))
 K_OFFSET=$((0x02100000))
 V_OFFSET=$((0x02200000))
@@ -677,6 +767,8 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "VANADIS_EXE=$GUEST"
   GOLEM_SKIP_DEFAULT_GUEST_BUILD=1
   GOLEM_ARCH_SCRIPT=architecture/archive/ncores_selfcom_dma.py
+  GOLEM_MEMORY_BACKEND=ramulator2
+  "GOLEM_RAMULATOR2_CONFIG=$TESTS_DIR/architecture/ramulator/hbm2e_2500.yaml"
   GOLEM_ATTENTION_FUSED=1
   GOLEM_ATTENTION_HBM_STRIPED=1
   "GOLEM_ATTENTION_QUERY_BLOCK_MPI=$((MPI_RANKS > 1 ? 1 : 0))"
@@ -697,6 +789,7 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ATTENTION_WINDOW_OFFSET=$ATTENTION_WINDOW_OFFSET"
   "GOLEM_ATTENTION_WINDOW_BYTES=$ATTENTION_WINDOW_BYTES"
   "GOLEM_ATTENTION_CLUSTER_ENABLE=$ATTENTION_CLUSTER"
+  "GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE=$ATTENTION_SEQUENTIAL_64"
   "GOLEM_ATTENTION_CLUSTER_QK_ARRAYS=$ATTENTION_CLUSTER_QK_ARRAYS"
   "GOLEM_ATTENTION_QK_DATAFLOW_TRANSPOSE=$QK_DATAFLOW_TRANSPOSE"
   "GOLEM_ATTENTION_QK_MATRIX_BROADCAST=$QK_MATRIX_BROADCAST"
@@ -710,7 +803,9 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE=$CROSS_TILE_OPERAND_PIPELINE"
   "GOLEM_ARRAY_OPERAND_CONTEXT_BANKS=$(((CROSS_TILE_OPERAND_PIPELINE || ATTENTION_CLUSTER) ? 2 : 1))"
   "GOLEM_ATTENTION_KV_DOUBLE_BUFFER=$KV_DOUBLE_BUFFER"
-  "GOLEM_ATTENTION_KV_BUFFER_COUNT=$KV_BUFFER_COUNT"
+  "GOLEM_ATTENTION_KV_BUFFER_COUNT=$KV_BUFFER_COUNT_EFFECTIVE"
+  "GOLEM_ATTENTION_KV_SHARED_STREAM_ENABLE=$KV_SHARED_STREAM"
+  "GOLEM_ATTENTION_KV_STREAM_BYTES_PER_CYCLE=$KV_STREAM_BYTES_PER_CYCLE"
   "GOLEM_ATTENTION_KV_DISTRIBUTION_ENABLE=$KV_DISTRIBUTION"
   "GOLEM_ATTENTION_KV_MANAGER_LOOKAHEAD=$KV_MANAGER_LOOKAHEAD"
   "GOLEM_ATTENTION_KV_DISTRIBUTION_SLOTS=$KV_DISTRIBUTION_SLOTS"
@@ -719,6 +814,7 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   GOLEM_ATTENTION_KV_DISTRIBUTION_EXPECTED_WORKERS=4
   "GOLEM_ATTENTION_KEY_BLOCK_ROWS=$KEY_BLOCK_ROWS"
   "GOLEM_DMA_RESPONSE_VN=$DMA_RESPONSE_VN"
+  "GOLEM_DIRCTRL_HIGHLINK_BW=$DIRCTRL_HIGHLINK_BW"
   "GOLEM_ATTENTION_KV_SECOND_LOOKAHEAD=$KV_SECOND_LOOKAHEAD"
   "GOLEM_ATTENTION_KV_CROSS_QUERY_PREFETCH=$KV_CROSS_QUERY_PREFETCH"
   "GOLEM_ATTENTION_KV_PAIR_REUSE=$KV_PAIR_REUSE"
@@ -745,6 +841,8 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ARRAY_BUFFER_PORTS=$ARRAY_BUFFER_PORTS"
   "GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=$ARRAY_BUFFER_BASE_LATENCY_CYCLES"
   "GOLEM_LOCAL_GM_READ_PORTS=$LOCAL_GM_READ_PORTS"
+  "GOLEM_LOCAL_GM_BYTES_PER_CYCLE=$LOCAL_GM_BYTES_PER_CYCLE"
+  "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES=$LOCAL_GM_MAX_REQUEST_BYTES"
   "GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE=$NEAR_ARRAY_OUTPUT_BYTES_PER_CYCLE"
   "GOLEM_ATTENTION_NEAR_ARRAY_OUTPUT_CREDITS=$NEAR_ARRAY_OUTPUT_CREDITS"
   "GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES=$PV_V_TILE_BUFFER_BYTES"
@@ -762,15 +860,21 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ATTENTION_TILE_STORAGE_BANK_BPC=$ATTENTION_TILE_STORAGE_BANK_BPC"
   "GOLEM_MATRIX_BROADCAST_MAX_FANOUT=$MATRIX_BROADCAST_MAX_FANOUT"
   "GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=$MATRIX_BROADCAST_BYTES_PER_CYCLE"
+  "GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE=$INPUT_SCATTER_BYTES_PER_CYCLE"
+  "GOLEM_OUTPUT_SCATTER_GATHER_BYTES_PER_CYCLE=$OUTPUT_SCATTER_GATHER_BYTES_PER_CYCLE"
   "GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=$MATRIX_BROADCAST_BASE_LATENCY_CYCLES"
   "GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=$MATRIX_BROADCAST_STAGE_LATENCY_CYCLES"
-  GOLEM_SFU_ROW_CONTEXTS=16
+  GOLEM_SFU_ROW_CONTEXTS=64
+  GOLEM_SFU_VECTOR_LANES=16
+  GOLEM_SFU_EXP_LANES=16
   GOLEM_DMA_READ_RETRY_TICKS=4096
   GOLEM_DMA_READ_MAX_RETRIES=32
   GOLEM_GROUP_MANAGER_ENABLE=1
   GOLEM_SFU_MANAGER_COORDINATOR=1
   "GOLEM_CTRL_LINK_ENABLE=$KV_DISTRIBUTION"
   GOLEM_REQUEST_SCHEDULER_ENABLE=0
+  GOLEM_A_REUSE_N_TILES=1
+  GOLEM_B_REUSE_M_TILES=1
   "GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE=$GENERIC_GEMM"
   GOLEM_SFU_ENABLE=1
   GOLEM_SFU_DISTRIBUTED_REDUCTION_TRANSPORT=explicit_noc
@@ -779,12 +883,16 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   --transpose-b 1 --hbm-dump-output 1
   --gemm-m "$TOTAL_QUERIES" --gemm-n "$KEYS" --gemm-k "$HEAD_DIM"
   --orig-m "$TOTAL_QUERIES" --orig-n "$KEYS" --orig-k "$HEAD_DIM"
-  --gemm-block-m 16 --gemm-block-n 16 --gemm-block-k "$HEAD_DIM"
+  --gemm-block-m 64 --gemm-block-n 64 --gemm-block-k 64
   --array-in "$ARRAY_INPUT" --array-out "$ARRAY_OUTPUT" --num-arrays "$NUM_ARRAYS"
   --groups 4 --num-cores 20 --gemm-cores 20 --num-mem-nodes 5 --mesh-dim-x 4
-  --global-stride-kb 1024 --mem-node-size "$MEM_NODE_SIZE"
+  --global-stride-kb 2048 --mem-node-size "$MEM_NODE_SIZE"
   --log "$SST_LOG_BASENAME"
   --mpi-ranks "$MPI_RANKS" --mpi-partitioner "$MPI_PARTITIONER")
+if [[ "${GOLEM_ATTENTION_DIAGNOSTIC_MVM_DUMP:-0}" == "1" ]]; then
+  RUN_CMD+=(--mvm-dump --mvm-dump-dir \
+    "${GOLEM_ATTENTION_DIAGNOSTIC_MVM_DUMP_DIR:-$ARTIFACT_ROOT/mvm_dumps}")
+fi
 
 VERIFY_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_output.py"
   --q-file "$Q_FILE" --k-file "$K_FILE" --v-file "$V_FILE"
@@ -805,6 +913,8 @@ VERIFY_STATS_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_stats.py"
   --wcp-gemm-proxy-completion-latency-cycles "$WCP_GEMM_PROXY_COMPLETION_LATENCY_CYCLES"
   --matrix-broadcast-max-fanout "$MATRIX_BROADCAST_MAX_FANOUT"
   --matrix-broadcast-bytes-per-cycle "$MATRIX_BROADCAST_BYTES_PER_CYCLE"
+  --input-scatter-bytes-per-cycle "$INPUT_SCATTER_BYTES_PER_CYCLE"
+  --output-scatter-gather-bytes-per-cycle "$OUTPUT_SCATTER_GATHER_BYTES_PER_CYCLE"
   --matrix-broadcast-base-latency-cycles "$MATRIX_BROADCAST_BASE_LATENCY_CYCLES"
   --matrix-broadcast-stage-latency-cycles "$MATRIX_BROADCAST_STAGE_LATENCY_CYCLES"
   --array-mac-per-cu-per-cycle "$ARRAY_MAC_PER_CU_PER_CYCLE"
@@ -820,6 +930,9 @@ VERIFY_STATS_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_stats.py"
   --attention-tile-storage-bank-bytes-per-cycle "$ATTENTION_TILE_STORAGE_BANK_BPC"
   --timebase-ticks-per-second 1000000000000
   --result-json "$LIFECYCLE_JSON" "$STATS_FILE")
+if (( ATTENTION_SEQUENTIAL_64 )); then
+  VERIFY_STATS_CMD+=(--sequential-64)
+fi
 VERIFY_MPI_CMD=(python3 "$SCRIPT_DIR/verify_attention_mpi_partition.py"
   --stats-file "$STATS_FILE" --mpi-ranks "$MPI_RANKS"
   --placement-file "$MPI_PLACEMENT_JSON"
@@ -1014,11 +1127,31 @@ attention_test_milestone() {
   fi
 }
 
+verify_attention_memory_backend() {
+  local runtime_log="$1"
+  local expected_backend="$2"
+  if ! grep -Fq "[MEMORY] backend=$expected_backend " "$runtime_log"; then
+    echo "Expected memory backend was not instantiated: $expected_backend" >&2
+    return 1
+  fi
+  if [[ "$expected_backend" == ramulator2 ]]; then
+    if ! grep -Fq "RAMULATOR2_BACKEND_SUMMARY" "$runtime_log"; then
+      echo "Ramulator2 backend produced no runtime summary" >&2
+      return 1
+    fi
+    if grep -Fq "DRAMSIM3_BACKEND_" "$runtime_log"; then
+      echo "DRAMSim3 statistics found in a Ramulator2 run" >&2
+      return 1
+    fi
+  fi
+}
+
 ATTENTION_STAGE_SECONDS=0
 attention_stage_label() {
   case "$1" in
     generate) echo "input generation" ;;
     sst) echo "SST simulation" ;;
+    backend_verify) echo "memory backend verification" ;;
     numerical_verify) echo "numerical verification" ;;
     lifecycle_verify) echo "lifecycle verification" ;;
     mpi_partition_verify) echo "MPI partition verification" ;;
@@ -1087,7 +1220,8 @@ rm -f "$RESULT_JSON" "$LIFECYCLE_JSON" "$METRICS_JSON" "$METRICS_CSV" \
   "$MPI_PARTITION_JSON" "$MPI_PLACEMENT_JSON" "$STATS_FILE" \
   "$BASELINE_RESULT_JSON" \
   "$DRIVER_MILESTONE_LOG" "$DRIVER_LOG_DIR/generate.log" \
-  "$DRIVER_LOG_DIR/sst.log" "$DRIVER_LOG_DIR/numerical_verify.log" \
+  "$DRIVER_LOG_DIR/sst.log" "$DRIVER_LOG_DIR/backend_verify.log" \
+  "$DRIVER_LOG_DIR/numerical_verify.log" \
   "$DRIVER_LOG_DIR/lifecycle_verify.log" \
   "$DRIVER_LOG_DIR/mpi_partition_verify.log" \
   "$DRIVER_LOG_DIR/baseline_verify.log" \
@@ -1100,6 +1234,8 @@ done
 run_attention_stage generate "${GENERATE_CMD[@]}"
 run_attention_stage sst "${RUN_CMD[@]}"
 SST_WALL_SECONDS="$ATTENTION_STAGE_SECONDS"
+run_attention_stage backend_verify \
+  verify_attention_memory_backend "$SST_RUNTIME_LOG" ramulator2
 ATTENTION_TEST_RC=0
 if run_attention_stage numerical_verify "${VERIFY_CMD[@]}"; then
   :

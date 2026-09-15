@@ -75,6 +75,49 @@ def make_attention_activity(queries, keys, head_dim, key_block_rows=32):
     }
 
 
+def make_sequential_64_activity(queries, keys, head_dim, key_block_rows=64):
+    if queries <= 0 or queries % 256 != 0:
+        raise ValueError("queries must be a positive multiple of 256")
+    if key_block_rows != 64:
+        raise ValueError("sequential-64 requires 64 key rows per tile")
+    if keys <= 0 or keys % key_block_rows != 0:
+        raise ValueError("keys must be divisible by 64")
+    if head_dim <= 0 or head_dim % 64 != 0:
+        raise ValueError("sequential-64 head_dim must be divisible by 64")
+    worker_rows = queries // 16
+    query_block_rows = 64
+    query_blocks_per_worker = (
+        worker_rows + query_block_rows - 1
+    ) // query_block_rows
+    key_tiles = keys // key_block_rows
+    jobs = query_blocks_per_worker * key_tiles
+    reduction_panels = head_dim // 64
+    dimension_panels = head_dim // 64
+    row_tiles = worker_rows * key_tiles
+    return {
+        "qk": jobs * reduction_panels * 64,
+        "pv": row_tiles * dimension_panels,
+        "jobs": jobs,
+        "qblocks": query_blocks_per_worker,
+        "rows": row_tiles,
+        "scaled": row_tiles * key_block_rows,
+        "dimension_panels": dimension_panels,
+        "reduction_panels": reduction_panels,
+        "v_tile_bytes": key_block_rows * head_dim * 4,
+        "key_block_rows": key_block_rows,
+        "key_tiles": key_tiles,
+        "query_rows_per_worker": worker_rows,
+        "query_block_rows": query_block_rows,
+        "head_dim": head_dim,
+    }
+
+
+def manager_slot_stalls_valid(ideal_lookahead_loads, lookahead_loads,
+                              slot_stalls, workers_per_group=4):
+    missed_lookaheads = max(ideal_lookahead_loads - lookahead_loads, 0)
+    return 0 <= slot_stalls <= missed_lookaheads * workers_per_group
+
+
 def attention_cluster_ii_sample_counts(qblocks, key_tiles, group_size):
     if qblocks <= 0 or key_tiles <= 0 or group_size <= 0:
         raise ValueError("qblocks, key_tiles, and group_size must be positive")
@@ -240,6 +283,129 @@ def expected_matrix_broadcast_activity(
         "fanout_sum": requests * fanout,
         "min_fanout": fanout,
         "max_observed_fanout_expected": fanout,
+    }
+
+
+def expected_sequential_64_broadcast_activity(
+        activity, bytes_per_cycle, base_latency_cycles,
+        stage_latency_cycles):
+    def transfer_cycles(payload_bytes, fanout):
+        return (
+            base_latency_cycles
+            + (payload_bytes + bytes_per_cycle - 1) // bytes_per_cycle
+            + ceil_log2(fanout) * stage_latency_cycles
+        )
+
+    jobs = activity["jobs"]
+    panels = activity["dimension_panels"]
+    reduction_panels = activity.get("reduction_panels", 1)
+    worker_rows = activity.get("query_rows_per_worker", 16)
+    query_block_rows = activity.get("query_block_rows", 16)
+    key_tiles = activity.get(
+        "key_tiles", activity["jobs"] // activity["qblocks"]
+    )
+    full_blocks, tail_rows = divmod(worker_rows, query_block_rows)
+    block_rows = [query_block_rows] * full_blocks
+    if tail_rows:
+        block_rows.append(tail_rows)
+    qk_requests = jobs * reduction_panels
+    pv_matrix_requests = jobs * panels
+    qk_bytes = 64 * 64 * 4
+    pv_matrix_bytes = 64 * activity["key_block_rows"] * 4
+    request_groups = [(qk_requests, qk_bytes, 64)]
+    request_groups.extend(
+        (key_tiles * panels, pv_matrix_bytes, rows) for rows in block_rows
+    )
+    qk_cycles = transfer_cycles(qk_bytes, 64)
+    pv_matrix_cycles = transfer_cycles(pv_matrix_bytes, query_block_rows)
+    return {
+        "enabled": True,
+        "fanout": 64,
+        "max_fanout": 64,
+        "payload_bytes": qk_bytes,
+        "qk_payload_bytes": qk_bytes,
+        "pv_payload_bytes": pv_matrix_bytes,
+        "qk_requests": qk_requests,
+        "pv_requests": pv_matrix_requests,
+        "cycles_per_request": qk_cycles,
+        "qk_cycles_per_request": qk_cycles,
+        "pv_cycles_per_request": pv_matrix_cycles,
+        "tree_stages": 6,
+        "requests": sum(count for count, _, _ in request_groups),
+        "rejected": 0,
+        "ingress_bytes": sum(count * size for count, size, _ in request_groups),
+        "sink_bytes": sum(
+            count * size * fanout for count, size, fanout in request_groups
+        ),
+        "transfer_cycles": sum(
+            count * transfer_cycles(size, fanout)
+            for count, size, fanout in request_groups
+        ),
+        "fanout_sum": sum(
+            count * fanout for count, _, fanout in request_groups
+        ),
+        "min_fanout": min(fanout for _, _, fanout in request_groups),
+        "max_observed_fanout_expected": 64,
+    }
+
+
+def expected_sequential_64_scatter_activity(
+        activity, bytes_per_cycle, base_latency_cycles):
+    payload_bytes = 64 * 64 * 4
+    qk_requests = activity["jobs"] * activity.get("reduction_panels", 1)
+    pv_requests = activity["jobs"]
+    requests = qk_requests + pv_requests
+    cycles_per_request = (
+        base_latency_cycles
+        + (payload_bytes + bytes_per_cycle - 1) // bytes_per_cycle
+    )
+    return {
+        "enabled": True,
+        "lanes": 64,
+        "bytes_per_cycle": bytes_per_cycle,
+        "payload_bytes": payload_bytes,
+        "qk_requests": qk_requests,
+        "pv_requests": pv_requests,
+        "requests": requests,
+        "bytes": requests * payload_bytes,
+        "cycles_per_request": cycles_per_request,
+        "transfer_cycles": requests * cycles_per_request,
+        "destinations": requests * 64,
+    }
+
+
+def expected_sequential_64_o_scatter_gather_activity(
+        activity, bytes_per_cycle, base_latency_cycles):
+    payload_bytes = 64 * 64 * 4
+    scatter_requests = (
+        activity["jobs"] - activity["qblocks"]
+    ) * activity["dimension_panels"]
+    gather_requests = activity["jobs"] * activity["dimension_panels"]
+    requests = scatter_requests + gather_requests
+    cycles_per_request = (
+        base_latency_cycles
+        + (payload_bytes + bytes_per_cycle - 1) // bytes_per_cycle
+    )
+    return {
+        "enabled": True,
+        "lanes": 64,
+        "bytes_per_cycle": bytes_per_cycle,
+        "payload_bytes": payload_bytes,
+        "scatter_requests": scatter_requests,
+        "gather_requests": gather_requests,
+        "requests": requests,
+        "bytes": requests * payload_bytes,
+        "cycles_per_request": cycles_per_request,
+        "transfer_cycles": requests * cycles_per_request,
+        "destinations": requests * 64,
+    }
+
+
+def expected_sequential_qk_score_readout(activity):
+    tile_bytes = 64 * 64 * 4
+    return {
+        "requests": activity["jobs"],
+        "bytes": activity["jobs"] * tile_bytes,
     }
 
 
@@ -516,7 +682,10 @@ def make_clock_contract(normalization_clock_hz, timebase_ticks_per_second,
             "ceil(sst_timebase_ticks * normalization_clock_hz / "
             "sst_timebase_ticks_per_second)"
         ),
-        "normalized_cycles_are_model_native_cycles": False,
+        "normalized_cycles_are_model_native_cycles": (
+            normalization_clock_hz == model_cpu_clock_hz
+            and normalization_clock_hz == model_array_clock_hz
+        ),
         "model_clocks_hz": {
             "vanadis_cpu_rocc_sfu_local_gm": model_cpu_clock_hz,
             "mvm_array": model_array_clock_hz,
@@ -918,6 +1087,7 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
            runtime_log=None,
            dma_credit_cap=None, dma_data_nodes=4,
            cross_tile_operand_pipeline=False, attention_cluster=False,
+           sequential_64=False,
            attention_cluster_qk_arrays=16,
            pv_o_row_fusion=False,
            cluster_pv_row_wavefront=False,
@@ -925,7 +1095,9 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
            cluster_pv_matrix_lookahead=False,
            near_array_output_bytes_per_cycle=512,
            array_buffer_base_latency_cycles=1,
-           kv_distribution=False, kv_manager_lookahead=False):
+           kv_distribution=False, kv_manager_lookahead=False,
+           input_scatter_bytes_per_cycle=256,
+           output_scatter_gather_bytes_per_cycle=256):
     if activity is None:
         activity = PROFILES[profile]
     observed = {}
@@ -959,7 +1131,7 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
     cluster_ii_counts = attention_cluster_ii_sample_counts(
         activity["qblocks"], key_tiles, effective_kv_query_group_size
     )
-    full_columns = 64 if attention_cluster else (
+    full_columns = 64 if (attention_cluster or sequential_64) else (
         activity["v_tile_bytes"] // (active_columns * 4)
     )
     effective_pv_active_k = pv_active_k and active_columns < full_columns
@@ -971,7 +1143,11 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             physical_kv_jobs,
             attention_cluster_qk_arrays,
         )
-        if attention_cluster else expected_matrix_broadcast_activity(
+        if attention_cluster else expected_sequential_64_broadcast_activity(
+            activity, matrix_broadcast_bytes_per_cycle,
+            matrix_broadcast_base_latency_cycles,
+            matrix_broadcast_stage_latency_cycles,
+        ) if sequential_64 else expected_matrix_broadcast_activity(
             activity, pv_matrix_broadcast, qk_matrix_broadcast,
             qk_dataflow_transpose, matrix_broadcast_max_fanout,
             matrix_broadcast_bytes_per_cycle,
@@ -979,6 +1155,16 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             matrix_broadcast_stage_latency_cycles,
             effective_pv_active_k,
         )
+    )
+    scatter = expected_sequential_64_scatter_activity(
+        activity, input_scatter_bytes_per_cycle,
+        array_buffer_base_latency_cycles,
+    ) if sequential_64 else {"enabled": False}
+    output_scatter_gather = (
+        expected_sequential_64_o_scatter_gather_activity(
+            activity, output_scatter_gather_bytes_per_cycle,
+            array_buffer_base_latency_cycles,
+        ) if sequential_64 else {"enabled": False}
     )
     for core in range(4):
         component = f"core{core}:rocc"
@@ -1014,6 +1200,9 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             lookahead_loads = observed.get(
                 (groupctrl, "attention_kv_manager_lookahead_loads"), 0
             ) if kv_manager_lookahead else 0
+            slot_stalls = observed.get(
+                (groupctrl, "attention_kv_distribution_slot_stalls"), 0
+            )
             if (kv_manager_lookahead and ideal_lookahead_loads > 0 and
                     not 0 < lookahead_loads <= ideal_lookahead_loads):
                 expected[(groupctrl,
@@ -1037,15 +1226,23 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                 "attention_kv_distribution_delivery_bytes": (
                     physical_kv_jobs * 4 * 2 * activity["v_tile_bytes"]
                 ),
-                "attention_kv_distribution_slot_stalls": (
-                    ideal_lookahead_loads - lookahead_loads
-                ),
+                "attention_kv_distribution_slot_stalls": slot_stalls,
                 "attention_kv_distribution_cancels": 0,
                 "attention_kv_manager_lookahead_loads": lookahead_loads,
                 "attention_kv_manager_lookahead_hits": lookahead_loads,
             }
             for statistic, value in manager_stats.items():
                 expected[(groupctrl, statistic)] = value
+            if not manager_slot_stalls_valid(
+                    ideal_lookahead_loads, lookahead_loads, slot_stalls):
+                expected[(groupctrl,
+                          "attention_kv_distribution_slot_stalls.range")] = (
+                    max(ideal_lookahead_loads - lookahead_loads, 0) * 4
+                )
+                observed[(groupctrl,
+                          "attention_kv_distribution_slot_stalls.range")] = (
+                    slot_stalls
+                )
             expected_max = 2 if physical_kv_jobs > 1 else 1
             actual_max = maxima.get(
                 (groupctrl, "attention_kv_distribution_max_slots"), 0
@@ -1138,6 +1335,31 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
         expected[(component, "attention_generic_gemm_pv_ops")] = (
             pv_array_ops if generic_gemm else 0
         )
+        sequential_qk_waves = (
+            activity["jobs"] * activity.get("reduction_panels", 1)
+            if sequential_64 else 0
+        )
+        sequential_pv_waves = (
+            activity["jobs"] * activity["dimension_panels"]
+            if sequential_64 else 0
+        )
+        expected[(component, "attention_sequential_qk_waves")] = (
+            sequential_qk_waves
+        )
+        expected[(component, "attention_sequential_pv_waves")] = sequential_pv_waves
+        expected[(component, "attention_sequential_qk_active_arrays")] = (
+            qk_array_ops if sequential_64 else 0
+        )
+        expected[(component, "attention_sequential_pv_active_arrays")] = (
+            pv_array_ops if sequential_64 else 0
+        )
+        if sequential_64:
+            expected_counts[(component, "attention_sequential_qk_active_arrays")] = (
+                sequential_qk_waves
+            )
+            expected_counts[(component, "attention_sequential_pv_active_arrays")] = (
+                sequential_pv_waves
+            )
         expected[(component, "attention_pv_active_k_launches")] = (
             pv_array_ops if effective_pv_active_k else 0
         )
@@ -1214,6 +1436,8 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                 gemm_launches = activity["jobs"] * (
                     qk_waves + (16 if cluster_pv_row_wavefront else pv_waves)
                 )
+            elif sequential_64:
+                gemm_launches = sequential_qk_waves + sequential_pv_waves
             else:
                 gemm_launches = gemm_completions
             expected[(wcp_component, "gemm_proxy_launch_commands")] = gemm_launches
@@ -1344,12 +1568,16 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
         )
         expected[(component, "attention_qk_matrix_broadcasts")] = (
             physical_kv_jobs * 2 if attention_cluster else
+            activity["jobs"] * activity.get("reduction_panels", 1)
+            if sequential_64 and qk_matrix_broadcast else
             (activity["qk"] // 16 if qk_dataflow_transpose else
              activity["jobs"] - ahead_operand_tiles)
             if qk_matrix_broadcast else 0
         )
         expected[(component, "attention_pv_matrix_broadcasts")] = (
             0 if attention_cluster else
+            activity["jobs"] * activity["dimension_panels"]
+            if sequential_64 and pv_matrix_broadcast else
             activity["pv"] // 16 if pv_matrix_broadcast else 0
         )
         if attention_cluster:
@@ -1461,6 +1689,46 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             }
             for statistic, value in classified_array_stats.items():
                 expected[(array_component, statistic)] = value
+        elif sequential_64:
+            score_readout = expected_sequential_qk_score_readout(activity)
+            expected[(
+                array_component,
+                "attention_cluster_qk_score_out_requests",
+            )] = score_readout["requests"]
+            expected[(
+                array_component,
+                "attention_cluster_qk_score_out_bytes",
+            )] = score_readout["bytes"]
+            scatter_stats = {
+                "input_scatter_requests": scatter["requests"],
+                "input_scatter_rejected": 0,
+                "input_scatter_bytes": scatter["bytes"],
+                "input_scatter_transfer_cycles": scatter["transfer_cycles"],
+                "input_scatter_destinations": scatter["destinations"],
+            }
+            for statistic, value in scatter_stats.items():
+                expected[(array_component, statistic)] = value
+            expected_counts[(array_component, "input_scatter_destinations")] = (
+                scatter["requests"]
+            )
+            output_stats = {
+                "output_scatter_requests":
+                    output_scatter_gather["scatter_requests"],
+                "output_gather_requests":
+                    output_scatter_gather["gather_requests"],
+                "output_scatter_gather_rejected": 0,
+                "output_scatter_gather_bytes":
+                    output_scatter_gather["bytes"],
+                "output_scatter_gather_transfer_cycles":
+                    output_scatter_gather["transfer_cycles"],
+                "output_scatter_gather_destinations":
+                    output_scatter_gather["destinations"],
+            }
+            for statistic, value in output_stats.items():
+                expected[(array_component, statistic)] = value
+            expected_counts[(
+                array_component, "output_scatter_gather_destinations"
+            )] = output_scatter_gather["requests"]
         if broadcast["enabled"]:
             broadcast_stats = {
                 "matrix_broadcast_requests": broadcast["requests"],
@@ -1564,7 +1832,8 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
     })
     if not attention_cluster:
         for (component, statistic), value in observed.items():
-            if "attention_cluster" in statistic and value != 0:
+            if ((component, statistic) not in expected and
+                    "attention_cluster" in statistic and value != 0):
                 mismatches[f"{component}/{statistic}.disabled"] = {
                     "expected": 0, "actual": value,
                 }
@@ -1737,6 +2006,28 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                     "expected": expected_range,
                     "actual": actual_range,
                 }
+    if sequential_64:
+        worker_rows = activity.get("query_rows_per_worker", 64)
+        query_block_rows = activity.get("query_block_rows", 64)
+        tail_rows = worker_rows % query_block_rows
+        pv_min = tail_rows if tail_rows else query_block_rows
+        pv_max = min(worker_rows, query_block_rows)
+        for core in range(4, 20):
+            component = f"core{core}:rocc"
+            for statistic in (
+                    "attention_sequential_qk_active_arrays",
+                    "attention_sequential_pv_active_arrays"):
+                key = (component, statistic)
+                actual_range = [minima.get(key), maxima.get(key)]
+                expected_active_range = (
+                    [64, 64] if statistic.endswith("qk_active_arrays")
+                    else [pv_min, pv_max]
+                )
+                if actual_range != expected_active_range:
+                    mismatches[f"{component}/{statistic}.range"] = {
+                        "expected": expected_active_range,
+                        "actual": actual_range,
+                    }
     if generic_gemm:
         for core in range(4, 20):
             component = f"core{core}:rocc:worker_command_processor"
@@ -1745,7 +2036,11 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
             launches = (
                 activity["jobs"] *
                 (activity["qk"] // activity["jobs"] // 8 + 16)
-                if attention_cluster else completions
+                if attention_cluster else
+                activity["jobs"] * (
+                    activity.get("reduction_panels", 1) +
+                    activity["dimension_panels"]
+                ) if sequential_64 else completions
             )
             if commands is None or commands < launches:
                 mismatches[f"{component}/gemm_proxy_commands_issued"] = {
@@ -1771,6 +2066,8 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                     "actual": queue_wait_sum,
                 }
             minimum_burst_wait = 0 if qk_early_compute else (
+                wcp_gemm_proxy_command_latency_cycles
+                if sequential_64 else
                 wcp_gemm_proxy_command_latency_cycles
                 + (16 + wcp_gemm_proxy_issue_width - 1)
                 // wcp_gemm_proxy_issue_width
@@ -2246,6 +2543,42 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
                 for statistic in broadcast_stats
             },
         }
+        lifecycle["input_scatter_fabric"] = {
+            **scatter,
+            "topology": "64_lane_destination_specific",
+            "shares_array_buffer_ports": True,
+            "base_latency_cycles": array_buffer_base_latency_cycles,
+            "worker_totals": {
+                statistic: sum(
+                    observed.get((f"core{core}:rocc:array", statistic), 0)
+                    for core in range(4, 20)
+                )
+                for statistic in (
+                    "input_scatter_requests", "input_scatter_rejected",
+                    "input_scatter_bytes", "input_scatter_transfer_cycles",
+                    "input_scatter_destinations",
+                )
+            },
+        }
+        lifecycle["output_scatter_gather_fabric"] = {
+            **output_scatter_gather,
+            "topology": "64_lane_accumulator_scatter_gather",
+            "shares_array_buffer_ports": True,
+            "base_latency_cycles": array_buffer_base_latency_cycles,
+            "worker_totals": {
+                statistic: sum(
+                    observed.get((f"core{core}:rocc:array", statistic), 0)
+                    for core in range(4, 20)
+                )
+                for statistic in (
+                    "output_scatter_requests", "output_gather_requests",
+                    "output_scatter_gather_rejected",
+                    "output_scatter_gather_bytes",
+                    "output_scatter_gather_transfer_cycles",
+                    "output_scatter_gather_destinations",
+                )
+            },
+        }
         lifecycle["attention_cluster"] = {
             "enabled": attention_cluster,
             "physical_array_contract": {
@@ -2701,6 +3034,7 @@ def main():
     parser.add_argument("--pv-matrix-softmax-overlap", action="store_true")
     parser.add_argument("--pv-active-k", action="store_true")
     parser.add_argument("--attention-cluster", action="store_true")
+    parser.add_argument("--sequential-64", action="store_true")
     parser.add_argument("--attention-cluster-qk-arrays", type=int, default=16)
     parser.add_argument(
         "--pv-o-row-fusion", action=argparse.BooleanOptionalAction,
@@ -2728,7 +3062,11 @@ def main():
     )
     parser.add_argument("--generic-gemm", action="store_true")
     parser.add_argument("--matrix-broadcast-max-fanout", type=int, default=16)
-    parser.add_argument("--matrix-broadcast-bytes-per-cycle", type=int, default=64)
+    parser.add_argument("--matrix-broadcast-bytes-per-cycle", type=int, default=256)
+    parser.add_argument("--input-scatter-bytes-per-cycle", type=int, default=256)
+    parser.add_argument(
+        "--output-scatter-gather-bytes-per-cycle", type=int, default=256
+    )
     parser.add_argument(
         "--matrix-broadcast-base-latency-cycles", type=int, default=1
     )
@@ -2751,9 +3089,12 @@ def main():
         if not all(value is not None for value in explicit_shape):
             parser.error("--queries, --keys, and --head-dim must be supplied together")
         try:
-            activity = make_attention_activity(
-                *explicit_shape,
-                key_block_rows=args.key_block_rows,
+            activity_factory = (
+                make_sequential_64_activity
+                if args.sequential_64 else make_attention_activity
+            )
+            activity = activity_factory(
+                *explicit_shape, key_block_rows=args.key_block_rows
             )
         except ValueError as error:
             parser.error(str(error))
@@ -2785,6 +3126,10 @@ def main():
         parser.error("matrix broadcast max fanout must be at least 16")
     if args.matrix_broadcast_bytes_per_cycle <= 0:
         parser.error("matrix broadcast bytes per cycle must be positive")
+    if args.input_scatter_bytes_per_cycle <= 0:
+        parser.error("input scatter bytes per cycle must be positive")
+    if args.output_scatter_gather_bytes_per_cycle <= 0:
+        parser.error("output scatter/gather bytes per cycle must be positive")
     if args.matrix_broadcast_base_latency_cycles <= 0:
         parser.error("matrix broadcast base latency must be positive")
     if args.matrix_broadcast_stage_latency_cycles < 0:
@@ -2853,6 +3198,7 @@ def main():
                     cross_tile_operand_pipeline=
                         args.cross_tile_operand_pipeline,
                     attention_cluster=args.attention_cluster,
+                    sequential_64=args.sequential_64,
                     attention_cluster_qk_arrays=
                         args.attention_cluster_qk_arrays,
                     pv_o_row_fusion=args.pv_o_row_fusion,
@@ -2863,6 +3209,10 @@ def main():
                         args.cluster_pv_matrix_lookahead,
                     near_array_output_bytes_per_cycle=
                         args.near_array_output_bytes_per_cycle,
+                    input_scatter_bytes_per_cycle=
+                        args.input_scatter_bytes_per_cycle,
+                    output_scatter_gather_bytes_per_cycle=
+                        args.output_scatter_gather_bytes_per_cycle,
                     array_buffer_base_latency_cycles=
                         args.array_buffer_base_latency_cycles,
                     kv_distribution=args.kv_distribution,

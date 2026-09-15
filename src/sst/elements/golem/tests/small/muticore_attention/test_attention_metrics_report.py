@@ -347,7 +347,7 @@ class AttentionMetricsReportTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("== RESULT ==", result.stdout)
             self.assertIn("Configuration", result.stdout)
-            self.assertIn("Simulated", result.stdout)
+            self.assertNotIn("Simulated", result.stdout)
             self.assertIn("Total cycles", result.stdout)
             self.assertIn("Wait return", result.stdout)
             self.assertIn("Numerical", result.stdout)

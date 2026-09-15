@@ -38,6 +38,7 @@ def build_report(lifecycle_result, numerical_result, *, profile, mpi_ranks,
     critical = lifecycle.get("worker_critical_path", {})
     wcp = dict(lifecycle.get("wcp_gemm_proxy", {})) if generic_gemm else {}
     broadcast = dict(lifecycle.get("matrix_broadcast_fabric", {}))
+    scatter = dict(lifecycle.get("input_scatter_fabric", {}))
     active_k = dict(lifecycle.get("pv_active_k", {}))
     qk_early = dict(lifecycle.get("qk_early_compute", {}))
     qk_input_pipeline = dict(lifecycle.get("qk_input_pipeline", {}))
@@ -224,6 +225,7 @@ def build_report(lifecycle_result, numerical_result, *, profile, mpi_ranks,
         ),
         "wcp": wcp,
         "matrix_broadcast_fabric": broadcast,
+        "input_scatter_fabric": scatter,
         "pv_active_k": active_k,
         "qk_early_compute": qk_early,
         "qk_input_pipeline": qk_input_pipeline,
@@ -256,6 +258,11 @@ def build_report(lifecycle_result, numerical_result, *, profile, mpi_ranks,
 def _csv_rows(report):
     simulated = report["simulated_timing"]
     host = report["host_timing"]
+    cycle_unit = (
+        "accelerator_cycles"
+        if report["time_domains"].get("normalized_cycles_are_model_native_cycles")
+        else "normalized_cycles"
+    )
     rows = [
         ("status", "overall", report["status"], "label"),
         ("status", "lifecycle", report["source_status"]["lifecycle"], "label"),
@@ -266,31 +273,28 @@ def _csv_rows(report):
         ("host", "sst_wall_seconds", host["sst_wall_seconds"], "seconds"),
         ("host", "pipeline_wall_seconds", host["pipeline_wall_seconds"], "seconds"),
         ("summary", "total_ticks", simulated["total_ticks"], "sst_ticks"),
-        ("summary", "total_cycles", simulated["total_cycles"],
-         "normalized_cycles"),
-        ("summary", "total_milliseconds", simulated["total_milliseconds"],
-         "milliseconds"),
+        ("summary", "total_cycles", simulated["total_cycles"], cycle_unit),
         ("summary", "wait_return_cycles", simulated["wait_return_cycles"],
-         "normalized_cycles"),
+         cycle_unit),
     ]
     rows.extend(
         ("system_stage", stage["name"], stage["duration_cycles"],
-         "normalized_cycles")
+         cycle_unit)
         for stage in report["system_stages"]
     )
     rows.extend(
-        ("critical_worker_stage", name, value, "normalized_cycles")
+        ("critical_worker_stage", name, value, cycle_unit)
         for name, value in report["critical_worker"]["stage_cycles"].items()
     )
     rows.extend(
-        ("critical_worker_pipeline", name, value, "normalized_cycles")
+        ("critical_worker_pipeline", name, value, cycle_unit)
         for name, value in report["critical_worker"][
             "aggregate_online_pipeline_cycles"
         ].items()
     )
     prefetch = report["critical_worker"].get("kv_prefetch_timing", {})
     rows.extend(
-        ("kv_prefetch", f"{name}_cycles", value, "normalized_cycles")
+        ("kv_prefetch", f"{name}_cycles", value, cycle_unit)
         for name, value in prefetch.get("cycles", {}).items()
     )
     rows.extend(
@@ -303,7 +307,7 @@ def _csv_rows(report):
         "ready_after_release_before_boundary", "max_available_lead_cycles",
     ):
         if name in lookahead:
-            unit = "normalized_cycles" if name == "max_available_lead_cycles" else "count"
+            unit = cycle_unit if name == "max_available_lead_cycles" else "count"
             rows.append(("kv_second_lookahead", name, lookahead[name], unit))
     if "candidate_rate" in lookahead:
         rows.append((
@@ -479,11 +483,11 @@ def _csv_rows(report):
         critical_resource = resource.get("critical_worker", {})
         for name, unit in (
             ("busy_ticks", "sst_ticks"),
-            ("busy_cycles", "normalized_cycles"),
+            ("busy_cycles", cycle_unit),
             ("span_ticks", "sst_ticks"),
-            ("span_cycles", "normalized_cycles"),
+            ("span_cycles", cycle_unit),
             ("idle_ticks", "sst_ticks"),
-            ("idle_cycles", "normalized_cycles"),
+            ("idle_cycles", cycle_unit),
             ("busy_fraction_of_span", "ratio"),
             ("max_concurrency", "count"),
         ):
@@ -494,7 +498,7 @@ def _csv_rows(report):
         for name, value in resource.get("worker_totals", {}).items():
             rows.append((
                 f"resource_worker_sum_{resource_name}", name, value,
-                "sst_ticks" if name.endswith("_ticks") else "normalized_cycles",
+                "sst_ticks" if name.endswith("_ticks") else cycle_unit,
             ))
     verification = report["numerical_verification"]
     for name in ("checked", "mismatches", "max_abs_error"):
@@ -592,20 +596,19 @@ def print_summary(report):
         f"pre-report pipeline {report['host_timing']['pipeline_wall_seconds']:.3f}s",
         value_color="1;33",
     )
-    _result_metric(
-        "Simulated", _formatted(timing["total_milliseconds"], ".6f", " ms"),
-        value_color="1;32",
+    native_cycles = report["time_domains"].get(
+        "normalized_cycles_are_model_native_cycles", False
     )
+    cycle_label = " accelerator cycles" if native_cycles else " normalized cycles"
     _result_metric(
         "Total cycles", _formatted(
-            timing["total_cycles"], ",", " normalized cycles"
+            timing["total_cycles"], ",", cycle_label
         ), value_color="1;32",
     )
     _result_metric("SST ticks", _formatted(timing["total_ticks"], ","), value_color="0;36")
     _result_metric(
         "Wait return",
-        f"{_formatted(timing['wait_return_cycles'], ',', ' normalized cycles')} | "
-        f"{_formatted(timing['wait_return_milliseconds'], '.6f', ' ms')}",
+        _formatted(timing["wait_return_cycles"], ",", cycle_label),
         value_color="1;33",
     )
     numerical = report["numerical_verification"]

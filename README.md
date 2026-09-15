@@ -33,39 +33,38 @@ The primary Attention comparison is `B=1,H=1,D=128`, non-causal, with SST
 normalized cycles interpreted at 1 GHz. Host wall time is simulator execution
 time and is not accelerator latency.
 
-The verified cluster model uses four control-only managers and 16 workers. Each
-worker has 64 physical 64x64 arrays, 64 CUs per array, two operand banks, and a
-default 16-QK + 48-PV ownership split. D128 is mapped through paired D64 paths;
-Br16/Bc32 and two worker K/V buffers are retained. R8 adds a two-slot manager
-K/V distributor that coalesces four worker requests per group. R9 fuses each
-128-element PV output row into eight parallel 16-lane resident-O banks. R10
-adds demand-paced manager K/V lookahead and overlaps the next P-row read with
-current-row PV input programming.
-R11 splits K-ready from V completion and preprograms the next physical tile's
-K and V matrices into inactive QK/PV operand banks.
+The current default is a worker-local sequential architecture with four
+control-only managers and 16 workers. Every worker has 64 physical 64x64 arrays
+and reuses all of them in the dependency order QK -> online softmax -> PV.
+Br64/Bc64/D128 uses two accumulated QK D64 reduction slices and two PV D64
+output slices. The SFU has 64 online row contexts, balanced 16-lane vector/EXP paths,
+and row-resident intermediate storage. The historical 16-QK + 48-PV Attention
+cluster remains available only through `--attention-cluster`.
 
 | Workload | Current SST cycles | RTX 5060 FP32 Scope A | SST/GPU | Status |
 |---|---:|---:|---:|---|
-| Q256/K128 | 16,112 | - | - | numerical/lifecycle PASS |
-| Q256/K1024 | 119,054 | - | - | numerical/lifecycle PASS |
-| E3 Q1024/K1024 | **127,589** | 97,568 | 1.308x | GPU gate FAIL |
-| E4 Q2048/K2048 | **430,131** | 345,984 | 1.243x | GPU gate FAIL |
-| Q256/K128 WCP pressure | 16,112 | - | - | numerical/lifecycle PASS |
+| Q1024/K1024 | **31,197** | 97,568 | 0.320x | numerical/lifecycle/backend PASS |
 
-R1-R6 added ownership-aware QK/PV mapping, direct score/P storage, bounded
-tagged scheduling, resident O, resource interval profiling, and a timed 16-lane
-two-cycle FP32 O FMA. The final review found no remaining Critical or Important
-issues. R7 experiments confirmed that downstream score/SFU/PV users outlive the
-visible QK bank lease; unsafe multi-producer changes were reverted and the R6
-baseline was reproduced. R8 then moved K/V loading to the four managers, added
-bounded tagged distribution over GroupCtrl, and reduced E3/E4 by 46.6%/31.7%.
-R9 removes eight serialized PV-to-O submissions per row. R10 adds manager
-lookahead and P-row overlap. R11 moves next-tile K/V matrix programming off the
-critical path, reducing the R10 E3/E4 results by another 13.88%/16.81% without
-additional worker buffers, manager slots, or arrays.
+R1-R12 establish the historical cluster implementation and Ramulator2 HBM2E
+backend. R13-R28 replace the default with worker-local 64-array QK -> softmax ->
+PV execution, group QK score readout, 256 B/cycle matrix/vector/O fabrics,
+grouped old-O restore/output, and shared-node K/V delivery.
 
-The next task is the E4 cross-group delivery tail, followed by an end-to-end P
-row wavefront that includes PV readout and O commit.
+For Q1024/K1024, every 32 KiB K or V tile is split into two 16 KiB chunks.
+Identical requests from all 16 workers are coalesced at the shared memory node;
+completed chunks remain resident for launch-skewed consumers and are delivered
+through a 256 B/cycle multicast stream. The final run performs exactly 64
+physical K/V reads for 1 MiB of unique data, versus 1,024 logical deliveries.
+All 15 critical-worker prefetches hit and exposed K/V wait is zero.
+
+The current dependency/resource lower bound is 20,600 cycles: 16,384 cycles for
+the 16-tile operand/compute path plus 4,216 cycles for grouped O movement. The
+measured critical-worker phases are 137 input, 6,736 QK, 12,567 softmax, and
+9,848 PV cycles. End-to-end latency is 31,197 cycles, down 30.35% from the
+44,790-cycle grouped-O baseline. Softmax accounts for 8,135 of the remaining
+10,597 cycles above the bound.
+Performance experiments and cycle acceptance remain fixed to Q=K=1024/D=128;
+other shapes remain available only for correctness contracts.
 
 See
 [`src/sst/elements/golem/tests/small/muticore_attention/README.md`](src/sst/elements/golem/tests/small/muticore_attention/README.md)
@@ -79,7 +78,11 @@ for the prior measurements,
 [`attention_cluster/R10_MANAGER_KV_P_OVERLAP_RESULTS.md`](attention_cluster/R10_MANAGER_KV_P_OVERLAP_RESULTS.md)
 for the prior measurements,
 [`attention_cluster/R11_QK_PV_MATRIX_LOOKAHEAD_RESULTS.md`](attention_cluster/R11_QK_PV_MATRIX_LOOKAHEAD_RESULTS.md)
-for current measurements and verification, and
+for the prior DRAMSim3 measurements,
+[`attention_cluster/R12_RAMULATOR2_HBM2E_RESULTS.md`](attention_cluster/R12_RAMULATOR2_HBM2E_RESULTS.md)
+for historical cluster measurements,
+[`attention_sequential_64/README.md`](attention_sequential_64/README.md)
+for the current architecture, cycle derivation, and measurements, and
 [`GPU_COMPETITIVE_ROADMAP.md`](src/sst/elements/golem/tests/small/muticore_attention/GPU_COMPETITIVE_ROADMAP.md)
 for the GPU comparison and remaining architecture plan.
 

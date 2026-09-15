@@ -728,6 +728,12 @@ void GlobalMemoryImplement::handleLocalAccessEvent(Event* ev)
     const uint64_t requestId = accessEvent->requestId();
     delete accessEvent;
 
+    if (requestId == 0) {
+        dmaLandingRetryScheduled_ = false;
+        retryDmaLandingChunks();
+        return;
+    }
+
     auto it = localAccessPending_.find(requestId);
     if (it == localAccessPending_.end()) {
         return;
@@ -795,6 +801,9 @@ void GlobalMemoryImplement::issueNextDmaLandingChunk(uint64_t landingTag)
         return;
     }
     PendingDmaLanding& landing = it->second;
+    if (landing.chunkInFlight) {
+        return;
+    }
     if (landing.offset >= landing.data.size()) {
         PendingDmaOp completedOp = std::move(landing.op);
         pendingDmaLandings_.erase(it);
@@ -815,6 +824,7 @@ void GlobalMemoryImplement::issueNextDmaLandingChunk(uint64_t landingTag)
             if (landingIt == pendingDmaLandings_.end()) {
                 return;
             }
+            landingIt->second.chunkInFlight = false;
             if (!ok) {
                 PendingDmaOp failedOp = std::move(landingIt->second.op);
                 pendingDmaLandings_.erase(landingIt);
@@ -824,10 +834,35 @@ void GlobalMemoryImplement::issueNextDmaLandingChunk(uint64_t landingTag)
             landingIt->second.offset += chunkBytes;
             issueNextDmaLandingChunk(tag);
         });
-    if (!accepted) {
-        PendingDmaOp failedOp = std::move(landing.op);
-        pendingDmaLandings_.erase(it);
-        finishDmaReadLanding(failedOp, false);
+    if (accepted) {
+        landing.chunkInFlight = true;
+        return;
+    }
+
+    ++dmaLandingBackpressureRetries_;
+    scheduleDmaLandingRetry();
+}
+
+void GlobalMemoryImplement::scheduleDmaLandingRetry()
+{
+    if (dmaLandingRetryScheduled_) {
+        return;
+    }
+    dmaLandingRetryScheduled_ = true;
+    localAccessSelfLink_->send(1, new LocalMemoryAccessEvent(0));
+}
+
+void GlobalMemoryImplement::retryDmaLandingChunks()
+{
+    std::vector<uint64_t> stalledTags;
+    stalledTags.reserve(pendingDmaLandings_.size());
+    for (const auto& item : pendingDmaLandings_) {
+        if (!item.second.chunkInFlight) {
+            stalledTags.push_back(item.first);
+        }
+    }
+    for (const uint64_t tag : stalledTags) {
+        issueNextDmaLandingChunk(tag);
     }
 }
 
@@ -1293,7 +1328,8 @@ void GlobalMemoryImplement::finish() {
         " gmem_local_queue_rejected=%" PRIu64
         " gmem_local_queue_high_water=%" PRIu64
         " gmem_local_read_queue_cycles=%" PRIu64
-        " gmem_local_write_queue_cycles=%" PRIu64 "\n",
+        " gmem_local_write_queue_cycles=%" PRIu64
+        " gmem_dma_landing_backpressure_retries=%" PRIu64 "\n",
         core_id,
         localReadRequests_,
         localWriteRequests_,
@@ -1302,7 +1338,8 @@ void GlobalMemoryImplement::finish() {
         localQueueRejected_,
         localAccessQueueHighWater_,
         localReadQueueCycles_,
-        localWriteQueueCycles_);
+        localWriteQueueCycles_,
+        dmaLandingBackpressureRetries_);
     uint64_t avg_rtt_ticks = (dma_read_rtt_samples > 0)
                                  ? (dma_read_rtt_ticks_sum / dma_read_rtt_samples)
                                  : 0;

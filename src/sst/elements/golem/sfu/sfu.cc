@@ -594,10 +594,9 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
             CALL_INFO, -1,
             "Attention K/V query group size must be 2 or 4 when reuse is enabled\n");
     }
-    attentionOnlineContexts_.resize(
-        attentionKvPairReuse
-            ? static_cast<size_t>(16u * attentionKvQueryGroupSize)
-            : static_cast<size_t>(rowEngineContexts_));
+    attentionOnlineContexts_.resize(std::max<size_t>(64u,
+        attentionKvPairReuse ? static_cast<size_t>(16u * attentionKvQueryGroupSize)
+                              : static_cast<size_t>(rowEngineContexts_)));
     rowEngineTimebaseTicksPerSecond_ = getTimeConverter("1s")->getFactor();
     if (rowEngineTimebaseTicksPerSecond_ == 0) {
         output_.fatal(CALL_INFO, -1, "SST timebase conversion for 1s must be positive\n");
@@ -2226,10 +2225,10 @@ AttentionClusterAdmission SFU::attentionTileAdmission(
     const AttentionTileRequest& request) const
 {
     if (globalMem_ == nullptr || request.jobId == 0 || request.rows == 0 ||
-        request.rows > 16 ||
+        request.rows > 64 ||
         request.cols == 0 || request.headDim == 0 || request.keyTiles == 0 ||
         request.keyTile >= request.keyTiles ||
-        (request.keyTiles > 1 && request.rows > rowEngineContexts_) ||
+        (request.keyTiles > 1 && request.rows > attentionOnlineContexts_.size()) ||
         (!request.directScoreMode &&
          request.localScoreAddr < globalMem_->getBaseAddr()) ||
         (request.directScoreMode &&
@@ -2245,7 +2244,8 @@ AttentionClusterAdmission SFU::attentionTileAdmission(
     if (!request.directScoreMode &&
         (request.localScoreAddr + tileBytes < request.localScoreAddr ||
          request.localScoreAddr + tileBytes >
-            globalMem_->getBaseAddr() + globalMem_->getSize())) {
+            globalMem_->getBaseAddr() + globalMem_->getSize() ||
+         tileBytes > rowEngineScratchpadBytes_)) {
         return AttentionClusterAdmission::Invalid;
     }
     if (request.directScoreMode) {
@@ -2456,6 +2456,11 @@ void SFU::beginTensorRowStage(const TensorWorkerKey& key,
     context.laneValues.clear();
     if (stage == TensorRowEngineStage::Max) {
         context.rowMax = -std::numeric_limits<float>::infinity();
+        if (workerIt->second.localTileMode &&
+            !workerIt->second.directScoreMode) {
+            context.residentValues.assign(
+                workerIt->second.dispatch.expectedCols, 0.0f);
+        }
     } else if (stage == TensorRowEngineStage::ExpSum) {
         context.rowSum = 0.0;
     } else {
@@ -2503,6 +2508,20 @@ void SFU::issueTensorLocalRead(const TensorWorkerKey& key, uint32_t contextIndex
     const size_t chunkBytes = static_cast<size_t>(chunkElems) * sizeof(float);
     context.pendingLocalTag = nextTensorLocalTag_++;
     const uint64_t localTag = context.pendingLocalTag;
+    const bool rowResident = worker.localTileMode && !worker.directScoreMode;
+    if (rowResident && context.stage != TensorRowEngineStage::Max) {
+        if (context.residentValues.size() != worker.dispatch.expectedCols) {
+            finishTensorWorker(key, false);
+            return;
+        }
+        context.laneValues.assign(
+            context.residentValues.begin() + context.chunkBegin,
+            context.residentValues.begin() + context.chunkBegin + chunkElems);
+        tensorLaneBufferHighWater_ = std::max<uint64_t>(
+            tensorLaneBufferHighWater_, context.laneValues.size());
+        scheduleTensorRowStage(key, contextIndex, context.stage);
+        return;
+    }
     if (worker.directScoreMode) {
         const uint32_t rowIndex = context.row - worker.dispatch.row;
         const size_t begin = static_cast<size_t>(rowIndex) *
@@ -2771,6 +2790,7 @@ void SFU::completeTensorRow(const TensorWorkerKey& key, uint32_t contextIndex)
         worker.attentionResult.oldOutputScale[resultIndex] = mutableContext.oldOutputScale;
         mutableContext.busy = false;
         mutableContext.laneValues.clear();
+        mutableContext.residentValues.clear();
         worker.rowsCompleted += 1;
         statSoftmaxRows_->addData(1);
         if (worker.rowsCompleted == worker.dispatch.expectedRows) {
@@ -2923,7 +2943,12 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
         context.rowMax = std::max(
             context.rowMax,
             *std::max_element(context.laneValues.begin(), context.laneValues.end()));
-        if (worker.dispatch.value != 0.0) {
+        const bool rowResident = worker.localTileMode && !worker.directScoreMode;
+        if (rowResident) {
+            std::copy(context.laneValues.begin(), context.laneValues.end(),
+                      context.residentValues.begin() + context.chunkBegin);
+        }
+        if (worker.dispatch.value != 0.0 && !rowResident) {
             issueTensorLocalWrite(key, contextIndex);
         } else {
             advanceTensorRowChunk(key, contextIndex);
@@ -2935,7 +2960,13 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
             value = std::exp(value - context.rowMax);
             context.rowSum += value;
         }
-        issueTensorLocalWrite(key, contextIndex);
+        if (worker.localTileMode && !worker.directScoreMode) {
+            std::copy(context.laneValues.begin(), context.laneValues.end(),
+                      context.residentValues.begin() + context.chunkBegin);
+            advanceTensorRowChunk(key, contextIndex);
+        } else {
+            issueTensorLocalWrite(key, contextIndex);
+        }
         return;
     }
     for (float& value : context.laneValues) {
@@ -2960,6 +2991,21 @@ void SFU::finishTensorWorker(const TensorWorkerKey& key, bool ok)
     const AttentionTileResult attentionResult = workerIt->second.attentionResult;
     std::function<void(bool, const AttentionTileResult&)> callback =
         std::move(workerIt->second.localTileCallback);
+    if (!ok && localTileMode) {
+        uint32_t ownedContexts = 0;
+        for (const AttentionOnlineRowContext& online : attentionOnlineContexts_) {
+            if (online.valid && online.jobId == attentionJobId &&
+                online.globalRow >= attentionRowBegin &&
+                online.globalRow - attentionRowBegin < attentionRows) {
+                ++ownedContexts;
+            }
+        }
+        output_.output(
+            "Attention SFU failure core=%" PRIu32 " key_tile=%" PRIu32
+            " rows_completed=%" PRIu32 " owned_contexts=%" PRIu32 "\n",
+            coreId_, workerIt->second.attentionKeyTile,
+            workerIt->second.rowsCompleted, ownedContexts);
+    }
     if (attentionClusterEnable_ && localTileMode &&
         !attentionClusterSfuActivity_.leave(getCurrentSimCycle())) {
         output_.fatal(CALL_INFO, -1,

@@ -1,5 +1,9 @@
 # R11 QK/PV Matrix Lookahead
 
+> Historical backend note: these measurements used DRAMSim3 because the
+> selected archive architecture ignored the resolved Ramulator2 setting. See
+> `R12_RAMULATOR2_HBM2E_RESULTS.md` for the corrected current baseline.
+
 R11 keeps the R10 16-QK + 48-PV array split, two operand banks, two worker K/V
 buffers, and two manager distributor slots. It changes scheduling and readiness
 signaling, not physical capacity.

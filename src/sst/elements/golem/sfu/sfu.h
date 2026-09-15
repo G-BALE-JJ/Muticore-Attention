@@ -292,7 +292,7 @@ enum class AttentionClusterAdmission : uint8_t {
 
 struct AttentionTileResult {
     uint32_t rows = 0;
-    std::array<float, 16> oldOutputScale = {};
+    std::array<float, 64> oldOutputScale = {};
 };
 
 class SFUAPI : public SST::SubComponent {
@@ -588,6 +588,7 @@ private:
             float oldOutputScale = 0.0f;
             float tileWeightScale = 1.0f;
             std::vector<float> laneValues;
+            std::vector<float> residentValues;
         };
 
         ReductionTransportMessage dispatch;

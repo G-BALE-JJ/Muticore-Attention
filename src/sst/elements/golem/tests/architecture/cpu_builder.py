@@ -237,7 +237,13 @@ matrix_broadcast_max_fanout = int(
     os.getenv("GOLEM_MATRIX_BROADCAST_MAX_FANOUT", "16")
 )
 matrix_broadcast_bytes_per_cycle = int(
-    os.getenv("GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE", "64")
+    os.getenv("GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE", "256")
+)
+input_scatter_bytes_per_cycle = int(
+    os.getenv("GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE", "256")
+)
+output_scatter_gather_bytes_per_cycle = int(
+    os.getenv("GOLEM_OUTPUT_SCATTER_GATHER_BYTES_PER_CYCLE", "256")
 )
 matrix_broadcast_base_latency_cycles = int(
     os.getenv("GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES", "1")
@@ -598,6 +604,9 @@ roccarrayParams = {
     "attention_cluster_enable": int(
         os.getenv("GOLEM_ATTENTION_CLUSTER_ENABLE", "0")
     ),
+    "attention_sequential_64_enable": int(
+        os.getenv("GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE", "0")
+    ),
     "attention_cluster_qk_arrays": attention_cluster_qk_arrays,
     "attention_kv_tile_rotation": int(
         os.getenv("GOLEM_ATTENTION_KV_TILE_ROTATION", "0")
@@ -736,6 +745,8 @@ arrayParams = {
     "attentionNearArrayOutputCredits": attention_near_array_output_credits,
     "matrixBroadcastMaxFanout": matrix_broadcast_max_fanout,
     "matrixBroadcastBytesPerCycle": matrix_broadcast_bytes_per_cycle,
+    "inputScatterBytesPerCycle": input_scatter_bytes_per_cycle,
+    "outputScatterGatherBytesPerCycle": output_scatter_gather_bytes_per_cycle,
     "matrixBroadcastBaseLatencyCycles": matrix_broadcast_base_latency_cycles,
     "matrixBroadcastStageLatencyCycles": matrix_broadcast_stage_latency_cycles,
     # "CrossSimJSONParameters" : crosssim_json_params

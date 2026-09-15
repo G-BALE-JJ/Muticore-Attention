@@ -106,9 +106,11 @@ public:
         {"attentionNearArrayOutputCredits", "Maximum grouped PV drains in flight", "2"},
         {"operandContextBanks", "Number of matrix/input operand contexts per physical array", "1"},
         {"matrixBroadcastMaxFanout", "Maximum number of array matrix banks reached by one broadcast", "16"},
-        {"matrixBroadcastBytesPerCycle", "Ingress bytes delivered per cycle by the matrix broadcast tree", "64"},
+        {"matrixBroadcastBytesPerCycle", "Ingress bytes delivered per cycle by the matrix broadcast tree", "256"},
         {"matrixBroadcastBaseLatencyCycles", "Base setup latency for a matrix broadcast", "1"},
         {"matrixBroadcastStageLatencyCycles", "Additional startup latency per binary fanout-tree stage", "1"},
+        {"inputScatterBytesPerCycle", "Aggregate bytes delivered per cycle by the destination-specific input scatter fabric", "256"},
+        {"outputScatterGatherBytesPerCycle", "Aggregate bytes delivered per cycle by the grouped output scatter/gather fabric", "256"},
         {"attention_cluster_enable", "Enable Attention cluster traffic classification and interval statistics", "0"},
     )
 
@@ -119,6 +121,17 @@ public:
         {"matrix_broadcast_sink_bytes", "Aggregate matrix bytes written across destination array banks", "bytes", 1},
         {"matrix_broadcast_transfer_cycles", "Aggregate modeled matrix broadcast occupancy", "cycles", 1},
         {"matrix_broadcast_fanout", "Destination array count per accepted matrix broadcast", "arrays", 1},
+        {"input_scatter_requests", "Accepted destination-specific input scatter transfers", "scatters", 1},
+        {"input_scatter_rejected", "Input scatters rejected by shape or queue limits", "scatters", 1},
+        {"input_scatter_bytes", "Aggregate destination bytes transferred by input scatters", "bytes", 1},
+        {"input_scatter_transfer_cycles", "Aggregate modeled input scatter occupancy", "cycles", 1},
+        {"input_scatter_destinations", "Destination array count per accepted input scatter", "arrays", 1},
+        {"output_scatter_requests", "Accepted grouped output restore scatters", "scatters", 1},
+        {"output_gather_requests", "Accepted grouped output drains", "gathers", 1},
+        {"output_scatter_gather_rejected", "Rejected grouped output scatter/gather transfers", "requests", 1},
+        {"output_scatter_gather_bytes", "Aggregate bytes transferred by grouped output scatter/gather", "bytes", 1},
+        {"output_scatter_gather_transfer_cycles", "Aggregate modeled grouped output scatter/gather occupancy", "cycles", 1},
+        {"output_scatter_gather_destinations", "Array destinations per grouped output transfer", "arrays", 1},
         {"active_k_launches", "Array launches using fewer than the physical input columns", "launches", 1},
         {"active_k_columns", "Aggregate active input columns across active-K launches", "columns", 1},
         {"active_k_compute_cycles", "Aggregate modeled compute cycles across active-K launches", "cycles", 1},
@@ -192,11 +205,15 @@ public:
         matrixBroadcastMaxFanout_ =
             std::max<uint64_t>(params.find<uint64_t>("matrixBroadcastMaxFanout", 16), 1);
         matrixBroadcastBytesPerCycle_ =
-            std::max<uint64_t>(params.find<uint64_t>("matrixBroadcastBytesPerCycle", 64), 1);
+            std::max<uint64_t>(params.find<uint64_t>("matrixBroadcastBytesPerCycle", 256), 1);
         matrixBroadcastBaseLatencyCycles_ =
             std::max<uint64_t>(params.find<uint64_t>("matrixBroadcastBaseLatencyCycles", 1), 1);
         matrixBroadcastStageLatencyCycles_ =
             params.find<uint64_t>("matrixBroadcastStageLatencyCycles", 1);
+        inputScatterBytesPerCycle_ =
+            std::max<uint64_t>(params.find<uint64_t>("inputScatterBytesPerCycle", 256), 1);
+        outputScatterGatherBytesPerCycle_ = std::max<uint64_t>(
+            params.find<uint64_t>("outputScatterGatherBytesPerCycle", 256), 1);
         attentionClusterEnable_ =
             params.find<bool>("attention_cluster_enable", false);
         bufferLink_ = configureSelfLink(
@@ -215,6 +232,27 @@ public:
             registerStatistic<uint64_t>("matrix_broadcast_transfer_cycles");
         statMatrixBroadcastFanout_ =
             registerStatistic<uint64_t>("matrix_broadcast_fanout");
+        statInputScatterRequests_ =
+            registerStatistic<uint64_t>("input_scatter_requests");
+        statInputScatterRejected_ =
+            registerStatistic<uint64_t>("input_scatter_rejected");
+        statInputScatterBytes_ = registerStatistic<uint64_t>("input_scatter_bytes");
+        statInputScatterTransferCycles_ =
+            registerStatistic<uint64_t>("input_scatter_transfer_cycles");
+        statInputScatterDestinations_ =
+            registerStatistic<uint64_t>("input_scatter_destinations");
+        statOutputScatterRequests_ =
+            registerStatistic<uint64_t>("output_scatter_requests");
+        statOutputGatherRequests_ =
+            registerStatistic<uint64_t>("output_gather_requests");
+        statOutputScatterGatherRejected_ =
+            registerStatistic<uint64_t>("output_scatter_gather_rejected");
+        statOutputScatterGatherBytes_ =
+            registerStatistic<uint64_t>("output_scatter_gather_bytes");
+        statOutputScatterGatherTransferCycles_ =
+            registerStatistic<uint64_t>("output_scatter_gather_transfer_cycles");
+        statOutputScatterGatherDestinations_ =
+            registerStatistic<uint64_t>("output_scatter_gather_destinations");
         statActiveKLaunches_ = registerStatistic<uint64_t>("active_k_launches");
         statActiveKColumns_ = registerStatistic<uint64_t>("active_k_columns");
         statActiveKComputeCycles_ =
@@ -282,6 +320,17 @@ public:
             " matrix_broadcast_sink_bytes=%" PRIu64
             " matrix_broadcast_transfer_cycles=%" PRIu64
             " matrix_broadcast_max_fanout=%" PRIu64
+            " input_scatter_requests=%" PRIu64
+            " input_scatter_rejected=%" PRIu64
+            " input_scatter_bytes=%" PRIu64
+            " input_scatter_transfer_cycles=%" PRIu64
+            " input_scatter_max_destinations=%" PRIu64
+            " output_scatter_requests=%" PRIu64
+            " output_gather_requests=%" PRIu64
+            " output_scatter_gather_rejected=%" PRIu64
+            " output_scatter_gather_bytes=%" PRIu64
+            " output_scatter_gather_transfer_cycles=%" PRIu64
+            " output_scatter_gather_max_destinations=%" PRIu64
             " output_read_credits=%" PRIu64
             " output_read_banks=%" PRIu64
             " output_read_max_in_flight=%" PRIu64
@@ -296,6 +345,12 @@ public:
             matrixBroadcastRequests_, matrixBroadcastRejected_,
             matrixBroadcastIngressBytes_, matrixBroadcastSinkBytes_,
             matrixBroadcastTransferCycles_, matrixBroadcastObservedMaxFanout_,
+            inputScatterRequests_, inputScatterRejected_, inputScatterBytes_,
+            inputScatterTransferCycles_, inputScatterObservedMaxDestinations_,
+            outputScatterRequests_, outputGatherRequests_,
+            outputScatterGatherRejected_, outputScatterGatherBytes_,
+            outputScatterGatherTransferCycles_,
+            outputScatterGatherObservedMaxDestinations_,
             arrayOutputReadCredits_, arrayOutputReadBanks_, outputReadMaxInFlight_,
             outputReadCreditStalls_, outputReadBankConflicts_,
             activeKLaunches_, activeKColumns_, activeKComputeCycles_,
@@ -390,6 +445,20 @@ public:
         (void)callback;
         return false;
     }
+    virtual bool programInputScatterBankAsync(
+            const std::vector<uint32_t>& arrayIDs, uint32_t operandBank,
+            const std::vector<double>& inputs, size_t elemBytes,
+            AttentionClusterTrafficClass trafficClass, uint64_t tag,
+            BufferCallback callback) {
+        (void)arrayIDs;
+        (void)operandBank;
+        (void)inputs;
+        (void)elemBytes;
+        (void)trafficClass;
+        (void)tag;
+        (void)callback;
+        return false;
+    }
     virtual bool programMatrixActiveAsync(
             uint32_t arrayID, const std::vector<double>& matrix,
             uint32_t activeColumns, size_t elemBytes, uint64_t tag,
@@ -459,6 +528,19 @@ public:
             AttentionClusterTrafficClass trafficClass, uint64_t tag,
             BufferReadCallback callback) {
         (void)arrayIDs;
+        (void)elemBytes;
+        (void)trafficClass;
+        (void)tag;
+        (void)callback;
+        return false;
+    }
+    virtual bool writeOutputGroupClassAsync(
+            const std::vector<uint32_t>& arrayIDs,
+            const std::vector<double>& outputs, size_t elemBytes,
+            AttentionClusterTrafficClass trafficClass, uint64_t tag,
+            BufferCallback callback) {
+        (void)arrayIDs;
+        (void)outputs;
         (void)elemBytes;
         (void)trafficClass;
         (void)tag;
@@ -551,6 +633,24 @@ public:
                 [this](uint32_t id) { return id < numArrays; });
     }
 
+    bool validateInputScatterRequest(
+            const std::vector<uint32_t>& arrayIDs, size_t inputElements,
+            size_t elemBytes) {
+        const std::unordered_set<uint32_t> uniqueIDs(
+            arrayIDs.begin(), arrayIDs.end());
+        const bool valid = !arrayIDs.empty() &&
+            uniqueIDs.size() == arrayIDs.size() &&
+            inputElements == arrayIDs.size() * inputArraySize &&
+            elemBytes > 0 &&
+            std::all_of(arrayIDs.begin(), arrayIDs.end(),
+                [this](uint32_t id) { return id < numArrays; });
+        if (!valid) {
+            ++inputScatterRejected_;
+            statInputScatterRejected_->addData(1);
+        }
+        return valid;
+    }
+
 protected:
     bool enqueueBufferTransfer(
             size_t bytes, uint64_t tag, std::function<void()> completion,
@@ -581,7 +681,9 @@ protected:
             size_t bytes, uint64_t tag, std::function<void()> completion,
             AttentionClusterTrafficClass trafficClass =
                 AttentionClusterTrafficClass::PvOFinalDrain) {
-        if (!completion || !attentionClusterEnable_ ||
+        const bool sequentialQk = trafficClass ==
+            AttentionClusterTrafficClass::SequentialQkScoreOut;
+        if (!completion || (!attentionClusterEnable_ && !sequentialQk) ||
             nearArrayOutputInFlight_ >= attentionNearArrayOutputCredits_ ||
             bufferRequests_.size() >= arrayBufferQueueDepth_) return false;
         const uint64_t transferCycles = arrayBufferBaseLatencyCycles_ +
@@ -599,7 +701,9 @@ protected:
             statAttentionClusterPvGroupDrains_->addData(1);
             statAttentionClusterPvGroupDrainBytes_->addData(bytes);
             statAttentionClusterPvGroupDrainCycles_->addData(transferCycles);
-        } else if (trafficClass == AttentionClusterTrafficClass::QkScoreOut) {
+        } else if (trafficClass == AttentionClusterTrafficClass::QkScoreOut ||
+                   trafficClass ==
+                       AttentionClusterTrafficClass::SequentialQkScoreOut) {
             statAttentionClusterQkScoreOutRequests_->addData(1);
             statAttentionClusterQkScoreOutBytes_->addData(bytes);
         }
@@ -636,6 +740,63 @@ protected:
         statMatrixBroadcastSinkBytes_->addData(sinkBytes);
         statMatrixBroadcastTransferCycles_->addData(transferCycles);
         statMatrixBroadcastFanout_->addData(fanout);
+        return true;
+    }
+
+    bool enqueueInputScatterTransfer(
+            size_t bytes, size_t destinations, uint64_t tag,
+            std::function<void()> completion,
+            AttentionClusterTrafficClass trafficClass) {
+        const uint64_t transferCycles = arrayBufferBaseLatencyCycles_ +
+            (bytes + inputScatterBytesPerCycle_ - 1) /
+                inputScatterBytesPerCycle_;
+        if (!enqueueModeledBufferTransfer(
+                bytes, transferCycles, tag, std::move(completion), false, 0,
+                trafficClass)) {
+            ++inputScatterRejected_;
+            statInputScatterRejected_->addData(1);
+            return false;
+        }
+        ++inputScatterRequests_;
+        inputScatterBytes_ += bytes;
+        inputScatterTransferCycles_ += transferCycles;
+        inputScatterObservedMaxDestinations_ = std::max<uint64_t>(
+            inputScatterObservedMaxDestinations_, destinations);
+        statInputScatterRequests_->addData(1);
+        statInputScatterBytes_->addData(bytes);
+        statInputScatterTransferCycles_->addData(transferCycles);
+        statInputScatterDestinations_->addData(destinations);
+        return true;
+    }
+
+    bool enqueueOutputScatterGatherTransfer(
+            size_t bytes, size_t destinations, bool scatter, uint64_t tag,
+            std::function<void()> completion,
+            AttentionClusterTrafficClass trafficClass) {
+        const uint64_t transferCycles = arrayBufferBaseLatencyCycles_ +
+            (bytes + outputScatterGatherBytesPerCycle_ - 1) /
+                outputScatterGatherBytesPerCycle_;
+        if (!enqueueModeledBufferTransfer(
+                bytes, transferCycles, tag, std::move(completion), false, 0,
+                trafficClass)) {
+            ++outputScatterGatherRejected_;
+            statOutputScatterGatherRejected_->addData(1);
+            return false;
+        }
+        if (scatter) {
+            ++outputScatterRequests_;
+            statOutputScatterRequests_->addData(1);
+        } else {
+            ++outputGatherRequests_;
+            statOutputGatherRequests_->addData(1);
+        }
+        outputScatterGatherBytes_ += bytes;
+        outputScatterGatherTransferCycles_ += transferCycles;
+        outputScatterGatherObservedMaxDestinations_ = std::max<uint64_t>(
+            outputScatterGatherObservedMaxDestinations_, destinations);
+        statOutputScatterGatherBytes_->addData(bytes);
+        statOutputScatterGatherTransferCycles_->addData(transferCycles);
+        statOutputScatterGatherDestinations_->addData(destinations);
         return true;
     }
 
@@ -839,9 +1000,11 @@ private:
     uint64_t arrayBufferPorts_ = 1;
     uint64_t arrayBufferQueueDepth_ = 64;
     uint64_t matrixBroadcastMaxFanout_ = 16;
-    uint64_t matrixBroadcastBytesPerCycle_ = 64;
+    uint64_t matrixBroadcastBytesPerCycle_ = 256;
     uint64_t matrixBroadcastBaseLatencyCycles_ = 1;
     uint64_t matrixBroadcastStageLatencyCycles_ = 1;
+    uint64_t inputScatterBytesPerCycle_ = 256;
+    uint64_t outputScatterGatherBytesPerCycle_ = 256;
     bool attentionClusterEnable_ = false;
     BusyIntervalUnion attentionClusterBufferIntervals_;
     std::array<uint64_t,
@@ -876,6 +1039,17 @@ private:
     uint64_t matrixBroadcastSinkBytes_ = 0;
     uint64_t matrixBroadcastTransferCycles_ = 0;
     uint64_t matrixBroadcastObservedMaxFanout_ = 0;
+    uint64_t inputScatterRequests_ = 0;
+    uint64_t inputScatterRejected_ = 0;
+    uint64_t inputScatterBytes_ = 0;
+    uint64_t inputScatterTransferCycles_ = 0;
+    uint64_t inputScatterObservedMaxDestinations_ = 0;
+    uint64_t outputScatterRequests_ = 0;
+    uint64_t outputGatherRequests_ = 0;
+    uint64_t outputScatterGatherRejected_ = 0;
+    uint64_t outputScatterGatherBytes_ = 0;
+    uint64_t outputScatterGatherTransferCycles_ = 0;
+    uint64_t outputScatterGatherObservedMaxDestinations_ = 0;
     uint64_t activeKLaunches_ = 0;
     uint64_t activeKColumns_ = 0;
     uint64_t activeKComputeCycles_ = 0;
@@ -887,6 +1061,17 @@ private:
     Statistic<uint64_t>* statMatrixBroadcastSinkBytes_ = nullptr;
     Statistic<uint64_t>* statMatrixBroadcastTransferCycles_ = nullptr;
     Statistic<uint64_t>* statMatrixBroadcastFanout_ = nullptr;
+    Statistic<uint64_t>* statInputScatterRequests_ = nullptr;
+    Statistic<uint64_t>* statInputScatterRejected_ = nullptr;
+    Statistic<uint64_t>* statInputScatterBytes_ = nullptr;
+    Statistic<uint64_t>* statInputScatterTransferCycles_ = nullptr;
+    Statistic<uint64_t>* statInputScatterDestinations_ = nullptr;
+    Statistic<uint64_t>* statOutputScatterRequests_ = nullptr;
+    Statistic<uint64_t>* statOutputGatherRequests_ = nullptr;
+    Statistic<uint64_t>* statOutputScatterGatherRejected_ = nullptr;
+    Statistic<uint64_t>* statOutputScatterGatherBytes_ = nullptr;
+    Statistic<uint64_t>* statOutputScatterGatherTransferCycles_ = nullptr;
+    Statistic<uint64_t>* statOutputScatterGatherDestinations_ = nullptr;
     Statistic<uint64_t>* statActiveKLaunches_ = nullptr;
     Statistic<uint64_t>* statActiveKColumns_ = nullptr;
     Statistic<uint64_t>* statActiveKComputeCycles_ = nullptr;

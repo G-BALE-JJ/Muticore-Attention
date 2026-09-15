@@ -391,6 +391,14 @@ public:
             registerStatistic<uint64_t>("attention_cluster_qk_pv_overlap_cycles");
         statAttentionClusterThreeStageOverlapCycles_ =
             registerStatistic<uint64_t>("attention_cluster_three_stage_overlap_cycles");
+        statAttentionSequentialQkWaves_ =
+            registerStatistic<uint64_t>("attention_sequential_qk_waves");
+        statAttentionSequentialPvWaves_ =
+            registerStatistic<uint64_t>("attention_sequential_pv_waves");
+        statAttentionSequentialQkActiveArrays_ = registerStatistic<uint64_t>(
+            "attention_sequential_qk_active_arrays");
+        statAttentionSequentialPvActiveArrays_ = registerStatistic<uint64_t>(
+            "attention_sequential_pv_active_arrays");
 
         latency_mvm_ovec2gm = params.find<uint64_t>("latency_mvm_ovec2gm", 10);
         latency_mvm_gm2ivec = params.find<uint64_t>("latency_mvm_gm2ivec", 15);
@@ -508,10 +516,28 @@ public:
         attentionTileTrace_ = params.find<bool>("attention_tile_trace", false);
         attentionClusterEnable_ =
             params.find<bool>("attention_cluster_enable", false);
+        attentionSequential64Enable_ = params.find<bool>(
+            "attention_sequential_64_enable", false);
         attentionClusterConfig_.qkArrays = params.find<uint32_t>(
             "attention_cluster_qk_arrays", 16);
         attentionClusterConfig_.keyBlockRows = params.find<uint32_t>(
             "attention_key_block_rows", 32);
+
+        if (attentionSequential64Enable_) {
+            if (attentionClusterEnable_ || numArrays != 64 ||
+                arrayInputSize != 64 || arrayOutputSize != 64) {
+                output->fatal(CALL_INFO, -1,
+                    "attention_sequential_64_enable requires non-cluster 64x64 arrays\n");
+            }
+            if (attentionQkDataflowTranspose_ || attentionQkEarlyCompute_ ||
+                attentionQkInputPipeline_ || attentionQkReadoutOverlap_ ||
+                attentionQkPanelRowBurst_ || attentionPvInputPipeline_ ||
+                attentionPvEarlyCompute_ || attentionPvMatrixSoftmaxOverlap_ ||
+                attentionOAccumulatorCBuffer_) {
+                output->fatal(CALL_INFO, -1,
+                    "attention_sequential_64_enable requires phase-serial QK/PV options\n");
+            }
+        }
 
         vectorStrideBytes = params.find<uint64_t>(
             "vectorStrideBytes", static_cast<uint64_t>(arrayInputSize) * inputOperandSize);
@@ -1772,6 +1798,8 @@ public:
         uint64_t consumeTick = 0;
         bool kReady = false;
         bool ready = false;
+        bool consuming = false;
+        bool pairUseRecorded = false;
         bool crossQuery = false;
     };
 
@@ -1933,6 +1961,11 @@ public:
         uint32_t clusterOwnerLaunchNext = 0;
         uint32_t clusterOwnerLaunchEnd = 0;
         bool clusterOwnerLaunchQk = false;
+        uint32_t sequentialPvProgramPanel = 0;
+        uint32_t sequentialPvOutputArray = 0;
+        std::vector<double> sequentialKTilePayload;
+        std::vector<double> sequentialPPayload;
+        std::vector<double> sequentialOPayload;
         bool clusterQkTileStartValid = false;
         uint64_t clusterLastQkTileStartCycle = 0;
         uint32_t clusterLastQkTileStartGroup = UINT32_MAX;
@@ -1942,6 +1975,7 @@ public:
         uint32_t keyTile = 0;
         uint32_t keyTileOrdinal = 0;
         uint32_t panel = 0;
+        uint32_t qkReductionHalf = 0;
         uint32_t index = 0;
         uint32_t lane = 0;
         uint32_t arraysPending = 0;
@@ -1983,6 +2017,8 @@ public:
         uint64_t attentionKvSecondLookaheadEligibleTick = 0;
         bool attentionKvNextReadyAtRelease = false;
         bool attentionWaitingForPrefetch = false;
+        bool attentionWaitingForV = false;
+        uint64_t attentionVWaitTick = 0;
         bool attentionSoftmaxComplete = false;
         bool attentionPvMatrixComplete = false;
         bool attentionPvRestoreReadRetry = false;
@@ -2213,6 +2249,29 @@ public:
             LastTickCycle, std::move(callback));
     }
 
+    bool programAttentionSequentialInputGroupAsync(
+        const std::vector<uint32_t>& arrayIds,
+        const std::vector<double>& input, uint64_t tag,
+        Golem::ComputeArray::BufferCallback callback) {
+        if (!attentionWorker_ || !workerCommandProcessor) return false;
+        return workerCommandProcessor->programGemmInputGroupBankAsync(
+            arrayIds, attentionWorker_->activeOperandBank, input,
+            sizeof(float), AttentionClusterTrafficClass::SequentialPvInput, tag,
+            LastTickCycle, std::move(callback));
+    }
+
+    bool programAttentionSequentialInputScatterAsync(
+        const std::vector<uint32_t>& arrayIds,
+        const std::vector<double>& inputs,
+        AttentionClusterTrafficClass trafficClass, uint64_t tag,
+        Golem::ComputeArray::BufferCallback callback) {
+        if (!attentionWorker_ || !workerCommandProcessor) return false;
+        return workerCommandProcessor->programGemmInputScatterBankAsync(
+            arrayIds, attentionWorker_->activeOperandBank, inputs,
+            sizeof(float), trafficClass, tag, LastTickCycle,
+            std::move(callback));
+    }
+
     bool readAttentionClusterScoreAsync(
         uint32_t arrayId, uint64_t tag,
         Golem::ComputeArray::BufferReadCallback callback) {
@@ -2239,6 +2298,37 @@ public:
             workerCommandProcessor->readGemmOutputGroupClassAsync(
                 arrayIds, sizeof(float),
                 AttentionClusterTrafficClass::PvOFinalDrain, tag,
+                LastTickCycle, std::move(callback));
+    }
+
+    bool readAttentionSequentialQkGroupAsync(
+        const std::vector<uint32_t>& arrayIds, uint64_t tag,
+        Golem::ComputeArray::BufferReadCallback callback) {
+        return workerCommandProcessor &&
+            workerCommandProcessor->readGemmOutputGroupClassAsync(
+                arrayIds, sizeof(float),
+                AttentionClusterTrafficClass::SequentialQkScoreOut, tag,
+                LastTickCycle, std::move(callback));
+    }
+
+    bool writeAttentionSequentialPvOutputGroupAsync(
+        const std::vector<uint32_t>& arrayIds,
+        const std::vector<double>& outputs, uint64_t tag,
+        Golem::ComputeArray::BufferCallback callback) {
+        return workerCommandProcessor &&
+            workerCommandProcessor->writeGemmOutputGroupClassAsync(
+                arrayIds, outputs, sizeof(float),
+                AttentionClusterTrafficClass::SequentialPvORestore, tag,
+                LastTickCycle, std::move(callback));
+    }
+
+    bool readAttentionSequentialPvOutputGroupAsync(
+        const std::vector<uint32_t>& arrayIds, uint64_t tag,
+        Golem::ComputeArray::BufferReadCallback callback) {
+        return workerCommandProcessor &&
+            workerCommandProcessor->readGemmOutputGroupClassAsync(
+                arrayIds, sizeof(float),
+                AttentionClusterTrafficClass::SequentialPvOOutput, tag,
                 LastTickCycle, std::move(callback));
     }
 
@@ -2988,6 +3078,7 @@ public:
             attentionKvHostAddr(state, state.dispatch.vAddr), consumerProgress);
         recordAttentionInterTilePhase(AttentionInterTilePhase::KvLoad);
         invalidateAttentionPvInputResidency();
+        if (attentionSequential64Enable_) state.qkReductionHalf = 0;
         if (!attentionPvVTileGroupRetention_ ||
             !attentionVTileMatchesCurrentGroup(state)) {
             invalidateAttentionVTileStaging();
@@ -4269,7 +4360,33 @@ public:
     }
 
     uint32_t attentionKeyPanels(const AttentionWorkerState& state) const {
+        if (attentionSequential64Enable_) return 1;
         return (attentionKeyCols(state) + 15) / 16;
+    }
+
+    bool buildAttentionSequentialQkMatrix(AttentionWorkerState& state) {
+        if (!attentionSequential64Enable_ || state.qkReductionHalf >= 2 ||
+            state.dispatch.headDim != 2u * static_cast<uint32_t>(arrayInputSize)) {
+            return false;
+        }
+        state.arrayPayload.assign(
+            static_cast<size_t>(arrayOutputSize) * arrayInputSize, 0.0);
+        const size_t qOffset =
+            static_cast<size_t>(state.qkReductionHalf) * arrayInputSize;
+        const uint32_t rows = attentionQueryRows(state);
+        if (state.qPayload.size() <
+            static_cast<size_t>(rows) * state.dispatch.headDim) {
+            return false;
+        }
+        for (uint32_t row = 0; row < rows; ++row) {
+            for (uint32_t col = 0; col < static_cast<uint32_t>(arrayInputSize);
+                 ++col) {
+                state.arrayPayload[static_cast<size_t>(row) * arrayInputSize + col] =
+                    state.qPayload[static_cast<size_t>(row) * state.dispatch.headDim +
+                                   qOffset + col];
+            }
+        }
+        return true;
     }
 
     uint32_t attentionClusterQkLanes(const AttentionWorkerState& state) const {
@@ -4310,7 +4427,23 @@ public:
     }
 
     uint32_t attentionDimensionPanels(const AttentionWorkerState& state) const {
+        if (attentionSequential64Enable_)
+            return (state.dispatch.headDim + arrayOutputSize - 1) / arrayOutputSize;
         return (state.dispatch.headDim + 15) / 16;
+    }
+
+    uint32_t attentionSequentialPvPanels(
+            const AttentionWorkerState& state) const {
+        if (!attentionSequential64Enable_ || state.panel >=
+                attentionDimensionPanels(state)) return 0;
+        return 1;
+    }
+
+    uint32_t attentionSequentialPvArray(
+            const AttentionWorkerState& state, uint32_t localPanel,
+            uint32_t row) const {
+        (void)localPanel;
+        return row;
     }
 
     uint32_t attentionClusterHeadHalves(
@@ -4372,6 +4505,7 @@ public:
     }
 
     uint32_t attentionPanelKeys(const AttentionWorkerState& state) const {
+        if (attentionSequential64Enable_) return attentionKeyCols(state);
         return std::min<uint32_t>(16, attentionKeyCols(state) - state.panel * 16);
     }
 
@@ -4857,6 +4991,15 @@ public:
 
     void beginAttentionKeyTile() {
         if (!attentionWorker_) return;
+        // Every sequential D128 QK tile starts with the low K64 reduction.
+        // Some tile transitions bypass the ahead-operand promotion path, so
+        // resetting only during promotion can silently skip this first half.
+        if (attentionSequential64Enable_) {
+            attentionWorker_->qkReductionHalf = 0;
+            attentionWorker_->sequentialKTilePayload.clear();
+            attentionWorker_->sequentialPPayload.clear();
+            attentionWorker_->sequentialOPayload.clear();
+        }
         if (attentionClusterEnable_) {
             if (attentionClusterQkMatrixAheadMatchesCurrent()) {
                 if (attentionWorker_->clusterQkMatrixAhead.phase !=
@@ -4918,9 +5061,12 @@ public:
                     beginAttentionQkTransposedPanel();
                     return;
                 }
-                attentionWorker_->arrayPayload.assign(
-                    static_cast<size_t>(arrayOutputSize) * arrayInputSize, 0.0);
-                std::copy(q.begin(), q.end(), attentionWorker_->arrayPayload.begin());
+                attentionWorker_->qPayload = q;
+                if (attentionSequential64Enable_ &&
+                    !buildAttentionSequentialQkMatrix(*attentionWorker_)) {
+                    finishAttentionWorker(false);
+                    return;
+                }
                 attentionWorker_->phase = AttentionWorkerPhase::QkProgramMatrix;
                 attentionWorker_->panel = 0;
                 attentionWorker_->index = 0;
@@ -5278,20 +5424,24 @@ public:
                 return;
             }
             AttentionKvBufferState& descriptor = state.kvBuffers[buffer];
-            if (descriptor.ready) {
+            if (descriptor.kReady) {
                 descriptor.consumeTick = getCurrentSimCycle();
-                statAttentionKvPrefetchHits_->addData(1);
-                if (state.queryBlock != 0 && state.keyTileOrdinal == 0) {
-                    statAttentionKvCrossQueryHits_->addData(1);
+                if (descriptor.ready) {
+                    statAttentionKvPrefetchHits_->addData(1);
+                    descriptor.pairUseRecorded = true;
+                    if (state.queryBlock != 0 && state.keyTileOrdinal == 0) {
+                        statAttentionKvCrossQueryHits_->addData(1);
+                    }
+                    statAttentionKvPrefetchReadyLeadTicks_->addData(
+                        descriptor.consumeTick - descriptor.readyTick);
                 }
-                statAttentionKvPrefetchReadyLeadTicks_->addData(
-                    descriptor.consumeTick - descriptor.readyTick);
                 activateAttentionKvPrefetch(static_cast<uint32_t>(buffer));
                 return;
             }
             if (descriptor.loadsPending != 0) {
                 descriptor.consumeTick = getCurrentSimCycle();
                 statAttentionKvPrefetchWaits_->addData(1);
+                descriptor.pairUseRecorded = true;
                 if (state.queryBlock != 0 && state.keyTileOrdinal == 0) {
                     statAttentionKvCrossQueryWaits_->addData(1);
                 }
@@ -5353,6 +5503,14 @@ public:
         AttentionKvBufferState& descriptor = state.kvBuffers[buffer];
         if (descriptor.keyTileOrdinal != UINT32_MAX ||
             descriptor.loadsPending != 0 || descriptor.ready) {
+            output->output(
+                "Attention KV failure core=%" PRIu64
+                " reason=launch_busy current=%" PRIu32 " target=%" PRIu32
+                " buffer=%" PRIu32 " desc_tile=%" PRIu32
+                " pending=%" PRIu32 " ready=%u\n",
+                coreID, state.keyTileOrdinal, ordinal, buffer,
+                descriptor.keyTileOrdinal, descriptor.loadsPending,
+                descriptor.ready ? 1u : 0u);
             finishAttentionWorker(false);
             return;
         }
@@ -5384,12 +5542,33 @@ public:
             [this, generation = state.generation, buffer](bool ok) {
                 if (!attentionCallbackGenerationMatches(generation)) return;
                 if (!ok || buffer >= attentionWorker_->kvBuffers.size()) {
+                    output->output(
+                        "Attention KV failure core=%" PRIu64
+                        " reason=k_ready_callback current=%" PRIu32
+                        " buffer=%" PRIu32 " ok=%u\n",
+                        coreID, attentionWorker_->keyTileOrdinal, buffer,
+                        ok ? 1u : 0u);
                     finishAttentionWorker(false);
                     return;
                 }
-                attentionWorker_->kvBuffers[buffer].kReady = true;
+                AttentionWorkerState& callbackState = *attentionWorker_;
+                callbackState.kvBuffers[buffer].kReady = true;
                 maybeStartAttentionClusterQkMatrixLookahead(
                     static_cast<int32_t>(buffer));
+                if (callbackState.attentionWaitingForPrefetch &&
+                    callbackState.attentionWaitingKvBuffer == buffer &&
+                    callbackState.kvBuffers[buffer].keyTileOrdinal ==
+                        callbackState.keyTileOrdinal &&
+                    callbackState.kvBuffers[buffer].keyTile ==
+                        callbackState.keyTile) {
+                    const uint64_t waitTicks = getCurrentSimCycle() -
+                        callbackState.kvBuffers[buffer].consumeTick;
+                    statAttentionKvPrefetchWaitTicks_->addData(waitTicks);
+                    if (callbackState.kvBuffers[buffer].crossQuery) {
+                        statAttentionKvCrossQueryWaitTicks_->addData(waitTicks);
+                    }
+                    activateAttentionKvPrefetch(buffer);
+                }
             });
     }
 
@@ -5397,6 +5576,11 @@ public:
             uint64_t generation, uint32_t buffer, bool ok) {
         if (!attentionCallbackGenerationMatches(generation)) return;
         if (!ok) {
+            output->output(
+                "Attention KV failure core=%" PRIu64
+                " reason=pair_callback current=%" PRIu32
+                " buffer=%" PRIu32 "\n",
+                coreID, attentionWorker_->keyTileOrdinal, buffer);
             finishAttentionWorker(false);
             return;
         }
@@ -5407,6 +5591,12 @@ public:
         }
         AttentionKvBufferState& descriptor = state.kvBuffers[buffer];
         if (descriptor.loadsPending == 0) {
+            output->output(
+                "Attention KV failure core=%" PRIu64
+                " reason=completion_without_pending current=%" PRIu32
+                " buffer=%" PRIu32 " desc_tile=%" PRIu32 " ready=%u\n",
+                coreID, state.keyTileOrdinal, buffer,
+                descriptor.keyTileOrdinal, descriptor.ready ? 1u : 0u);
             finishAttentionWorker(false);
             return;
         }
@@ -5419,6 +5609,15 @@ public:
         maybeStartAttentionClusterQkMatrixLookahead();
         maybeStartAttentionClusterPvMatrixLookahead(
             static_cast<int32_t>(buffer));
+        if (descriptor.consuming && state.attentionWaitingForV &&
+            state.activeKvBuffer == buffer) {
+            statAttentionKvPrefetchWaitTicks_->addData(
+                descriptor.readyTick - state.attentionVWaitTick);
+            state.attentionWaitingForV = false;
+            state.attentionVWaitTick = 0;
+            continueAttentionAfterVReady();
+            return;
+        }
         if (state.attentionWaitingForPrefetch &&
             state.attentionWaitingKvBuffer == buffer) {
             const uint64_t waitTicks = descriptor.readyTick - descriptor.consumeTick;
@@ -5440,15 +5639,24 @@ public:
             return;
         }
         AttentionKvBufferState& descriptor = state.kvBuffers[buffer];
-        if (!descriptor.ready || descriptor.keyTileOrdinal != state.keyTileOrdinal ||
+        if (!descriptor.kReady || descriptor.keyTileOrdinal != state.keyTileOrdinal ||
             descriptor.keyTile != state.keyTile) {
+            output->output(
+                "Attention KV failure core=%" PRIu64
+                " reason=activate_mismatch current=%" PRIu32
+                " physical=%" PRIu32 " buffer=%" PRIu32
+                " desc_tile=%" PRIu32 " desc_physical=%" PRIu32
+                " pending=%" PRIu32 " ready=%u\n",
+                coreID, state.keyTileOrdinal, state.keyTile, buffer,
+                descriptor.keyTileOrdinal, descriptor.keyTile,
+                descriptor.loadsPending, descriptor.ready ? 1u : 0u);
             finishAttentionWorker(false);
             return;
         }
         state.activeKvBuffer = buffer;
         state.kLocal = state.kLocalBuffers[state.activeKvBuffer];
         state.vLocal = state.vLocalBuffers[state.activeKvBuffer];
-        descriptor = {};
+        descriptor.consuming = true;
         state.attentionWaitingForPrefetch = false;
         state.attentionWaitingKvBuffer = UINT32_MAX;
         const uint32_t nextOrdinal = state.keyTileOrdinal + 1;
@@ -5637,6 +5845,31 @@ public:
             if (attentionArrayPending_.size() < static_cast<size_t>(numArrays)) {
                 attentionArrayPending_.resize(numArrays, 0);
             }
+            if (attentionSequential64Enable_) {
+                std::vector<uint32_t> arrayIds(activeArrays);
+                std::iota(arrayIds.begin(), arrayIds.end(), 0);
+                const uint64_t generation = state.generation;
+                if (!workerCommandProcessor ||
+                    !workerCommandProcessor->launchGemmArrayGroupActiveBank(
+                    arrayIds, state.activeOperandBank,
+                    (state.qkReductionHalf == 0 ? 0 : 1), 0, LastTickCycle,
+                        [this, generation](uint32_t arrayId, uint64_t) {
+                            if (!attentionCallbackGenerationMatches(generation)) return;
+                            handleAttentionArrayDone(arrayId);
+                        })) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                for (uint32_t arrayId : arrayIds) {
+                    attentionArrayPending_[arrayId] = 1;
+                    arrayStates[arrayId] = 1;
+                    statAttentionQkArrayOps_->addData(1);
+                    statAttentionGenericGemmQkOps_->addData(1);
+                }
+                statAttentionSequentialQkWaves_->addData(1);
+                statAttentionSequentialQkActiveArrays_->addData(activeArrays);
+                return;
+            }
             for (uint32_t arrayId = 0; arrayId < activeArrays; ++arrayId) {
                 attentionArrayPending_[arrayId] = 1;
                 arrayStates[arrayId] = 1;
@@ -5752,8 +5985,69 @@ public:
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         const uint32_t activeArrays = attentionPanelKeys(state);
+        if (attentionSequential64Enable_ && state.index != activeArrays) {
+            const uint32_t rows = attentionKeyCols(state);
+            const size_t tileElements =
+                static_cast<size_t>(rows) * state.dispatch.headDim;
+            auto issueScatter = [this, rows]() {
+                if (!attentionWorker_) return;
+                AttentionWorkerState& current = *attentionWorker_;
+                std::vector<uint32_t> arrayIds(rows);
+                std::iota(arrayIds.begin(), arrayIds.end(), 0);
+                std::vector<double> inputs(
+                    static_cast<size_t>(rows) * arrayInputSize);
+                const size_t halfOffset =
+                    static_cast<size_t>(current.qkReductionHalf) * arrayInputSize;
+                for (uint32_t key = 0; key < rows; ++key) {
+                    std::copy_n(
+                        current.sequentialKTilePayload.begin() +
+                            static_cast<size_t>(key) * current.dispatch.headDim +
+                            halfOffset,
+                        arrayInputSize,
+                        inputs.begin() + static_cast<size_t>(key) * arrayInputSize);
+                }
+                const uint64_t generation = current.generation;
+                const uint64_t tag = attentionTransferTag();
+                if (!programAttentionSequentialInputScatterAsync(
+                        arrayIds, inputs,
+                        AttentionClusterTrafficClass::SequentialQkInputScatter,
+                        tag,
+                        [this, generation, tag](bool ok, uint64_t callbackTag) {
+                            if (!attentionCallbackGenerationMatches(generation)) return;
+                            if (!ok || callbackTag != tag) {
+                                finishAttentionWorker(false);
+                                return;
+                            }
+                            AttentionWorkerState& completed = *attentionWorker_;
+                            completed.index = attentionPanelKeys(completed);
+                            programAttentionQkInput();
+                        })) finishAttentionWorker(false);
+            };
+            if (state.sequentialKTilePayload.size() == tileElements) {
+                issueScatter();
+                return;
+            }
+            const uint64_t generation = state.generation;
+            attentionLocalRead(
+                state.kLocal, tileElements * sizeof(float),
+                [this, generation, tileElements, issueScatter](
+                    bool ok, const std::vector<uint8_t>& bytes) mutable {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok) { finishAttentionWorker(false); return; }
+                    attentionWorker_->sequentialKTilePayload =
+                        attentionBytesToDoubles(bytes);
+                    if (attentionWorker_->sequentialKTilePayload.size() !=
+                            tileElements) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    issueScatter();
+                });
+            return;
+        }
         if (state.index == activeArrays) {
-            if (state.panel + 1 == attentionKeyPanels(state)) {
+            if (state.panel + 1 == attentionKeyPanels(state) &&
+                (!attentionSequential64Enable_ || state.qkReductionHalf == 1)) {
                 recordAttentionKvOperandRelease(true);
             }
             recordAttentionInterTilePhase(AttentionInterTilePhase::QkInputProgram);
@@ -5772,10 +6066,11 @@ public:
             return;
         }
         const uint32_t arrayId = state.index;
-        const uint32_t key = attentionKvLocalKey(state, state.panel * 16 + arrayId);
+        const uint32_t key = attentionKvLocalKey(state, arrayId);
         attentionLocalRead(state.kLocal + static_cast<uint64_t>(key) *
-                state.dispatch.headDim * sizeof(float),
-            state.dispatch.headDim * sizeof(float),
+                state.dispatch.headDim * sizeof(float) +
+                static_cast<uint64_t>(state.qkReductionHalf) * arrayInputSize * sizeof(float),
+            arrayInputSize * sizeof(float),
             [this, arrayId](bool ok, const std::vector<uint8_t>& bytes) {
                 if (!attentionWorker_ || !ok) { finishAttentionWorker(false); return; }
                 const std::vector<double> input = attentionBytesToDoubles(bytes);
@@ -6097,6 +6392,92 @@ public:
         }
     }
 
+    void completeAttentionSequentialQkWave() {
+        if (!attentionWorker_ || !attentionSequential64Enable_) {
+            finishAttentionWorker(false);
+            return;
+        }
+        AttentionWorkerState& state = *attentionWorker_;
+        if (state.qkReductionHalf == 0) {
+            state.qkReductionHalf = 1;
+            state.index = 0;
+            state.panel = 0;
+            if (!buildAttentionSequentialQkMatrix(state)) {
+                finishAttentionWorker(false);
+                return;
+            }
+            state.phase = AttentionWorkerPhase::QkProgramMatrix;
+            beginAttentionQkPanel();
+            return;
+        }
+        state.phase = AttentionWorkerPhase::QkReadOutputs;
+        readAttentionSequentialQkTile();
+    }
+
+    void readAttentionSequentialQkTile() {
+        if (!attentionWorker_ || !attentionSequential64Enable_ ||
+            attentionWorker_->qkReductionHalf != 1) {
+            finishAttentionWorker(false);
+            return;
+        }
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t rows = attentionQueryRows(state);
+        const uint32_t keys = attentionPanelKeys(state);
+        if (rows != 64 || keys != 64) {
+            finishAttentionWorker(false);
+            return;
+        }
+        std::vector<uint32_t> arrayIds(keys);
+        std::iota(arrayIds.begin(), arrayIds.end(), 0);
+        const uint64_t generation = state.generation;
+        const uint64_t tag = attentionTransferTag();
+        if (!readAttentionSequentialQkGroupAsync(
+                arrayIds, tag,
+                [this, generation, tag, rows, keys](
+                    bool ok, uint64_t callbackTag,
+                    const std::vector<double>& values) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok || callbackTag != tag ||
+                        values.size() != static_cast<size_t>(rows) * keys) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    std::vector<float> scores(
+                        static_cast<size_t>(rows) * keys, 0.0f);
+                    for (uint32_t key = 0; key < keys; ++key) {
+                        for (uint32_t query = 0; query < rows; ++query) {
+                            scores[static_cast<size_t>(query) * keys + key] =
+                                static_cast<float>(
+                                    values[static_cast<size_t>(key) * rows + query]);
+                        }
+                    }
+                    const std::vector<uint8_t> bytes =
+                        attentionFloatsToBytes(scores);
+                    attentionLocalWrite(
+                        attentionWorker_->spLocal, bytes,
+                        [this, generation](bool writeOk) {
+                            if (!attentionCallbackGenerationMatches(generation)) return;
+                            if (!writeOk) {
+                                finishAttentionWorker(false);
+                                return;
+                            }
+                            recordAttentionInterTilePhase(
+                                AttentionInterTilePhase::QkComputeReadout);
+                            transitionAttentionTilePipeline(
+                                AttentionTilePipelinePhase::Softmax);
+                            statAttentionWorkerQkTileCompleteTick_->addData(
+                                getCurrentSimCycle());
+                            traceAttentionTileCompletion(
+                                "qk_tile_complete", "final_qk_tile_complete",
+                                *attentionWorker_);
+                            finishAttentionInterTile();
+                            beginAttentionSoftmax();
+                        });
+                })) {
+            finishAttentionWorker(false);
+        }
+    }
+
     void readAttentionQkOutput() {
         if (!attentionWorker_) return;
         if (attentionClusterEnable_) {
@@ -6119,7 +6500,17 @@ public:
         if (state.index == attentionPanelKeys(state)) {
             recordAttentionInterTilePhase(
                 AttentionInterTilePhase::QkComputeReadout);
-            if (++state.panel < attentionKeyPanels(state)) {
+            if (attentionSequential64Enable_ && state.qkReductionHalf == 0) {
+                state.qkReductionHalf = 1;
+                state.index = 0;
+                state.panel = 0;
+                if (!buildAttentionSequentialQkMatrix(state)) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                state.phase = AttentionWorkerPhase::QkProgramMatrix;
+                beginAttentionQkPanel();
+            } else if (++state.panel < attentionKeyPanels(state)) {
                 transitionAttentionTilePipeline(
                     AttentionTilePipelinePhase::QkInputProgram);
                 state.phase = AttentionWorkerPhase::QkProgramInputs;
@@ -6145,7 +6536,7 @@ public:
         if (!readAttentionGemmOutputAsync(arrayId, sizeof(float), tag,
                 [this, tag, arrayId](bool ok, uint64_t callbackTag,
                                      const std::vector<double>& values) {
-                    if (!attentionWorker_ || !ok || callbackTag != tag || values.size() != 16) {
+                    if (!attentionWorker_ || !ok || callbackTag != tag || values.size() != arrayOutputSize) {
                         finishAttentionWorker(false); return;
                     }
                     attentionWorker_->readOutputBytes = attentionDoublesToBytes(values);
@@ -6159,7 +6550,7 @@ public:
                             return;
                         }
                         const uint32_t query = laneState.lane;
-                        const uint32_t key = laneState.panel * 16 + arrayId;
+                        const uint32_t key = arrayId;
                         std::vector<uint8_t> scalar(
                             laneState.readOutputBytes.begin() + query * sizeof(float),
                             laneState.readOutputBytes.begin() + (query + 1) * sizeof(float));
@@ -6370,6 +6761,47 @@ public:
                 })) finishAttentionWorker(false);
     }
 
+    void continueAttentionAfterVReady() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        if (attentionSequential64Enable_ && attentionKvDoubleBuffer_ &&
+            state.activeKvBuffer < state.kvBuffers.size()) {
+            AttentionKvBufferState& descriptor =
+                state.kvBuffers[state.activeKvBuffer];
+            if (descriptor.consuming &&
+                descriptor.keyTileOrdinal == state.keyTileOrdinal &&
+                descriptor.keyTile == state.keyTile) {
+                if (!descriptor.pairUseRecorded) {
+                    descriptor.pairUseRecorded = true;
+                    if (descriptor.ready) {
+                        statAttentionKvPrefetchHits_->addData(1);
+                        statAttentionKvPrefetchReadyLeadTicks_->addData(
+                            getCurrentSimCycle() - descriptor.readyTick);
+                    } else {
+                        statAttentionKvPrefetchWaits_->addData(1);
+                    }
+                }
+                if (!descriptor.ready) {
+                    state.attentionWaitingForV = true;
+                    state.attentionVWaitTick = getCurrentSimCycle();
+                    return;
+                }
+            }
+        }
+        if (attentionClusterEnable_ && !reserveAttentionClusterPv()) {
+            if (state.clusterPvMatrixAheadPromotionWaiting) return;
+            finishAttentionWorker(false);
+            return;
+        }
+        if (attentionPvMatrixSoftmaxOverlap_) {
+            continueAttentionAfterSoftmaxAndPvMatrix();
+            return;
+        }
+        transitionAttentionTilePipeline(
+            AttentionTilePipelinePhase::PvMatrixProgram);
+        beginAttentionPvPanel();
+    }
+
     void beginAttentionSoftmax() {
         if (!attentionWorker_ || sfu == nullptr) { finishAttentionWorker(false); return; }
         AttentionWorkerState& state = *attentionWorker_;
@@ -6478,19 +6910,7 @@ public:
                     attentionWorker_->panel = 0;
                     attentionWorker_->clusterPvWave = 0;
                     attentionWorker_->attentionSoftmaxComplete = true;
-                    if (attentionClusterEnable_ && !reserveAttentionClusterPv()) {
-                        if (attentionWorker_->clusterPvMatrixAheadPromotionWaiting)
-                            return;
-                        finishAttentionWorker(false);
-                        return;
-                    }
-                    if (attentionPvMatrixSoftmaxOverlap_) {
-                        continueAttentionAfterSoftmaxAndPvMatrix();
-                        return;
-                    }
-                    transitionAttentionTilePipeline(
-                        AttentionTilePipelinePhase::PvMatrixProgram);
-                    beginAttentionPvPanel();
+                    continueAttentionAfterVReady();
                 };
                 if (attentionClusterEnable_) {
                     if (!releaseAttentionClusterScore()) {
@@ -6502,6 +6922,10 @@ public:
                 }
                 continueToPv();
             })) {
+            output->output(
+                "Attention SFU issue rejected core=%" PRIu64
+                " key_tile=%" PRIu32 " rows=%" PRIu32 " cols=%" PRIu32 "\n",
+                coreID, request.keyTile, request.rows, request.cols);
             if (attentionClusterEnable_) {
                 finishAttentionWorker(false);
             } else {
@@ -6523,6 +6947,10 @@ public:
             beginAttentionClusterPvPanel();
             return;
         }
+        if (attentionSequential64Enable_) {
+            beginAttentionSequentialPvWave();
+            return;
+        }
         AttentionWorkerState& state = *attentionWorker_;
         state.attentionPvMatrixComplete = false;
         if (!attentionPvMatrixSoftmaxOverlap_ || state.panel != 0 ||
@@ -6539,11 +6967,11 @@ public:
                     pvActiveColumns : arrayInputSize;
                 callbackState.arrayPayload.assign(
                     static_cast<size_t>(arrayOutputSize) * matrixColumns, 0.0);
-                for (uint32_t dim = 0; dim < 16; ++dim) {
+                for (uint32_t dim = 0; dim < arrayOutputSize; ++dim) {
                     for (uint32_t key = 0; key < keyCols; ++key) {
                         callbackState.arrayPayload[dim * matrixColumns + key] =
                             v[key * callbackState.dispatch.headDim +
-                              callbackState.panel * 16 + dim];
+                              callbackState.panel * arrayOutputSize + dim];
                     }
                 }
                 if (attentionPvMatrixBroadcast_) {
@@ -6707,6 +7135,333 @@ public:
                 }
                 programMatrix(attentionWorker_->vPayload);
             });
+    }
+
+    void beginAttentionSequentialPvWave() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        state.phase = AttentionWorkerPhase::PvProgramMatrix;
+        state.sequentialPvProgramPanel = 0;
+        const uint32_t keyCols = attentionKeyCols(state);
+        const size_t tileValues = static_cast<size_t>(keyCols) *
+            state.dispatch.headDim;
+        if (state.panel != 0 && state.vPayload.size() == tileValues) {
+            programAttentionSequentialPvMatrices();
+            return;
+        }
+        const uint64_t generation = state.generation;
+        attentionLocalRead(
+            state.vLocal + (attentionStreamKv(state) ? 0 :
+                static_cast<uint64_t>(state.keyTile) *
+                    state.dispatch.keyBlockRows * state.dispatch.headDim * sizeof(float)),
+            static_cast<uint64_t>(keyCols) * state.dispatch.headDim * sizeof(float),
+            [this, generation](bool ok, const std::vector<uint8_t>& bytes) {
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok) { finishAttentionWorker(false); return; }
+                attentionWorker_->vPayload = attentionBytesToDoubles(bytes);
+                if (attentionWorker_->vPayload.size() !=
+                    static_cast<size_t>(attentionKeyCols(*attentionWorker_)) *
+                        attentionWorker_->dispatch.headDim) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                recordAttentionKvOperandRelease(false);
+                programAttentionSequentialPvMatrices();
+            });
+    }
+
+    void programAttentionSequentialPvMatrices() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t wavePanels = attentionSequentialPvPanels(state);
+        if (state.sequentialPvProgramPanel == wavePanels) {
+            transitionAttentionTilePipeline(
+                AttentionTilePipelinePhase::PvInputProgram);
+            state.phase = AttentionWorkerPhase::PvProgramInputs;
+            programAttentionSequentialPvInputs();
+            return;
+        }
+        const uint32_t localPanel = state.sequentialPvProgramPanel;
+        const uint32_t globalPanel = state.panel + localPanel;
+        const uint32_t keyCols = attentionKeyCols(state);
+        std::vector<double> matrix(
+            static_cast<size_t>(arrayOutputSize) * keyCols, 0.0);
+        for (uint32_t dim = 0; dim < arrayOutputSize; ++dim) {
+            for (uint32_t key = 0; key < keyCols; ++key) {
+                matrix[static_cast<size_t>(dim) * keyCols + key] =
+                    state.vPayload[static_cast<size_t>(key) *
+                        state.dispatch.headDim + globalPanel * arrayOutputSize + dim];
+            }
+        }
+        std::vector<uint32_t> arrays(attentionQueryRows(state));
+        for (uint32_t row = 0; row < arrays.size(); ++row) arrays[row] = row;
+        const uint64_t generation = state.generation;
+        const uint64_t tag = attentionTransferTag();
+        const uint32_t activeColumns = attentionPvActiveColumns(state);
+        const bool accepted = activeColumns != 0 ?
+            programAttentionGemmMatrixGroupActiveAsync(
+                arrays, matrix, activeColumns, sizeof(float), tag,
+                [this, generation, tag](bool ok, uint64_t callbackTag) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok || callbackTag != tag) {
+                        finishAttentionWorker(false); return;
+                    }
+                    ++attentionWorker_->sequentialPvProgramPanel;
+                    programAttentionSequentialPvMatrices();
+                }) :
+            programAttentionGemmMatrixGroupAsync(
+                arrays, matrix, sizeof(float), tag,
+                [this, generation, tag](bool ok, uint64_t callbackTag) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok || callbackTag != tag) {
+                        finishAttentionWorker(false); return;
+                    }
+                    ++attentionWorker_->sequentialPvProgramPanel;
+                    programAttentionSequentialPvMatrices();
+                });
+        if (!accepted) finishAttentionWorker(false);
+        else {
+            statAttentionPvMatrixBroadcasts_->addData(1);
+            if (activeColumns != 0) {
+                statAttentionPvActiveKMatrixElements_->addData(
+                    matrix.size() * arrays.size());
+            }
+        }
+    }
+
+    void programAttentionSequentialPvInputs() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t rows = attentionQueryRows(state);
+        const uint32_t keyCols = attentionKeyCols(state);
+        const size_t tileElements = static_cast<size_t>(rows) * keyCols;
+        auto completeInputProgramming = [this]() {
+            if (!attentionWorker_) return;
+            attentionWorker_->index = 0;
+            if (attentionWorker_->keyTileOrdinal != 0) {
+                transitionAttentionTilePipeline(
+                    AttentionTilePipelinePhase::PvRestoreOutput);
+            }
+            prepareAttentionSequentialPvOutputs();
+        };
+        if (state.panel != 0 &&
+            state.sequentialPPayload.size() == tileElements) {
+            completeInputProgramming();
+            return;
+        }
+        auto issueScatter = [this, rows, completeInputProgramming]() {
+            if (!attentionWorker_) return;
+            AttentionWorkerState& current = *attentionWorker_;
+            std::vector<uint32_t> arrayIds(rows);
+            std::iota(arrayIds.begin(), arrayIds.end(), 0);
+            const uint64_t generation = current.generation;
+            const uint64_t tag = attentionTransferTag();
+            if (!programAttentionSequentialInputScatterAsync(
+                    arrayIds, current.sequentialPPayload,
+                    AttentionClusterTrafficClass::SequentialPvInputScatter,
+                    tag,
+                    [this, generation, tag, completeInputProgramming](
+                        bool ok, uint64_t callbackTag) {
+                        if (!attentionCallbackGenerationMatches(generation)) return;
+                        if (!ok || callbackTag != tag) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        completeInputProgramming();
+                    })) finishAttentionWorker(false);
+        };
+        if (state.sequentialPPayload.size() == tileElements) {
+            issueScatter();
+            return;
+        }
+        const uint64_t generation = state.generation;
+        attentionLocalRead(
+            state.spLocal, tileElements * sizeof(float),
+            [this, generation, tileElements, issueScatter](
+                bool ok, const std::vector<uint8_t>& bytes) mutable {
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok) { finishAttentionWorker(false); return; }
+                attentionWorker_->sequentialPPayload =
+                    attentionBytesToDoubles(bytes);
+                if (attentionWorker_->sequentialPPayload.size() != tileElements) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                issueScatter();
+            });
+    }
+
+    void prepareAttentionSequentialPvOutputs() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t activeArrays = attentionQueryRows(state);
+        if (state.keyTileOrdinal == 0) {
+            launchAttentionSequentialPvComputation();
+            return;
+        }
+        const uint32_t rows = attentionQueryRows(state);
+        const size_t oElements =
+            static_cast<size_t>(rows) * state.dispatch.headDim;
+        const uint64_t generation = state.generation;
+        if (state.sequentialOPayload.size() != oElements) {
+            const size_t halfBytes = oElements * sizeof(float) / 2;
+            attentionLocalRead(state.oLocal, halfBytes,
+                [this, generation, halfBytes, oElements](
+                    bool ok, const std::vector<uint8_t>& lowBytes) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok) { finishAttentionWorker(false); return; }
+                    attentionLocalRead(attentionWorker_->oLocal + halfBytes,
+                        halfBytes,
+                        [this, generation, lowBytes, oElements](
+                            bool highOk,
+                            const std::vector<uint8_t>& highBytes) {
+                            if (!attentionCallbackGenerationMatches(generation)) return;
+                            if (!highOk) { finishAttentionWorker(false); return; }
+                            std::vector<uint8_t> bytes = lowBytes;
+                            bytes.insert(bytes.end(), highBytes.begin(), highBytes.end());
+                            attentionWorker_->sequentialOPayload =
+                                attentionBytesToDoubles(bytes);
+                            if (attentionWorker_->sequentialOPayload.size() !=
+                                oElements) {
+                                finishAttentionWorker(false);
+                                return;
+                            }
+                            prepareAttentionSequentialPvOutputs();
+                        });
+                });
+            return;
+        }
+
+        std::vector<uint32_t> arrayIds(activeArrays);
+        std::iota(arrayIds.begin(), arrayIds.end(), 0);
+        std::vector<double> outputs(
+            static_cast<size_t>(activeArrays) * arrayOutputSize, 0.0);
+        for (uint32_t row = 0; row < rows; ++row) {
+            if (row >= state.outputScales.size()) {
+                finishAttentionWorker(false);
+                return;
+            }
+            const double scale = state.outputScales[row];
+            for (uint32_t dim = 0; dim < arrayOutputSize; ++dim) {
+                outputs[static_cast<size_t>(row) * arrayOutputSize + dim] =
+                    state.sequentialOPayload[
+                        static_cast<size_t>(row) * state.dispatch.headDim +
+                        state.panel * arrayOutputSize + dim] * scale;
+            }
+        }
+        const uint64_t tag = attentionTransferTag();
+        if (!writeAttentionSequentialPvOutputGroupAsync(
+                arrayIds, outputs, tag,
+                [this, generation, tag](bool ok, uint64_t callbackTag) {
+                if (!attentionCallbackGenerationMatches(generation)) return;
+                if (!ok || callbackTag != tag) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                launchAttentionSequentialPvComputation();
+            })) finishAttentionWorker(false);
+    }
+
+    void launchAttentionSequentialPvComputation() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        transitionAttentionTilePipeline(AttentionTilePipelinePhase::PvCompute);
+        state.phase = AttentionWorkerPhase::PvCompute;
+        const uint32_t activeArrays = attentionQueryRows(state);
+        state.arraysPending = activeArrays;
+        state.index = 0;
+        std::vector<uint32_t> arrayIds(activeArrays);
+        std::iota(arrayIds.begin(), arrayIds.end(), 0);
+        const uint64_t generation = state.generation;
+        const uint32_t activeColumns = attentionPvActiveColumns(state);
+        const bool accepted = workerCommandProcessor &&
+            workerCommandProcessor->launchGemmArrayGroupActiveBank(
+                arrayIds, state.activeOperandBank,
+                state.keyTileOrdinal == 0 ? 0 : 1, activeColumns,
+                LastTickCycle,
+                [this, generation](uint32_t arrayId, uint64_t) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    handleAttentionArrayDone(arrayId);
+                });
+        if (!accepted) {
+            finishAttentionWorker(false);
+            return;
+        }
+        for (uint32_t arrayId : arrayIds) {
+            attentionArrayPending_[arrayId] = 1;
+            arrayStates[arrayId] = 1;
+            statAttentionPvArrayOps_->addData(1);
+            statAttentionGenericGemmPvOps_->addData(1);
+            if (activeColumns != 0) {
+                statAttentionPvActiveKLaunches_->addData(1);
+                statAttentionPvActiveKColumns_->addData(activeColumns);
+            }
+        }
+        statAttentionSequentialPvWaves_->addData(1);
+        statAttentionSequentialPvActiveArrays_->addData(activeArrays);
+    }
+
+    void readAttentionSequentialPvOutputs() {
+        if (!attentionWorker_) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        const uint32_t rows = attentionQueryRows(state);
+        std::vector<uint32_t> arrayIds(rows);
+        std::iota(arrayIds.begin(), arrayIds.end(), 0);
+        const uint64_t generation = state.generation;
+        const uint64_t tag = attentionTransferTag();
+        if (!readAttentionSequentialPvOutputGroupAsync(
+                arrayIds, tag,
+                [this, generation, tag, rows](
+                    bool ok, uint64_t callbackTag,
+                    const std::vector<double>& values) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    const size_t panelElements =
+                        static_cast<size_t>(rows) * arrayOutputSize;
+                    if (!ok || callbackTag != tag ||
+                        values.size() != panelElements) {
+                        finishAttentionWorker(false); return;
+                    }
+                    const size_t oElements = static_cast<size_t>(rows) *
+                        attentionWorker_->dispatch.headDim;
+                    if (attentionWorker_->sequentialOPayload.size() != oElements) {
+                        attentionWorker_->sequentialOPayload.assign(oElements, 0.0);
+                    }
+                    for (uint32_t row = 0; row < rows; ++row) {
+                        for (uint32_t dim = 0; dim < arrayOutputSize; ++dim) {
+                            attentionWorker_->sequentialOPayload[
+                                static_cast<size_t>(row) *
+                                    attentionWorker_->dispatch.headDim +
+                                attentionWorker_->panel * arrayOutputSize + dim] =
+                                values[static_cast<size_t>(row) *
+                                    arrayOutputSize + dim];
+                        }
+                    }
+                    if (attentionWorker_->panel + 1 <
+                        attentionDimensionPanels(*attentionWorker_)) {
+                        completeAttentionPvOutputPanel();
+                        return;
+                    }
+                    const std::vector<uint8_t> bytes = attentionDoublesToBytes(
+                        attentionWorker_->sequentialOPayload);
+                    const size_t halfBytes = bytes.size() / 2;
+                    std::vector<uint8_t> low(bytes.begin(), bytes.begin() + halfBytes);
+                    std::vector<uint8_t> high(bytes.begin() + halfBytes, bytes.end());
+                    attentionLocalWrite(attentionWorker_->oLocal, low,
+                        [this, generation, halfBytes, high](bool lowOk) {
+                            if (!attentionCallbackGenerationMatches(generation)) return;
+                            if (!lowOk) { finishAttentionWorker(false); return; }
+                            attentionLocalWrite(
+                                attentionWorker_->oLocal + halfBytes, high,
+                                [this, generation](bool highOk) {
+                                    if (!attentionCallbackGenerationMatches(generation)) return;
+                                    if (!highOk) {
+                                        finishAttentionWorker(false);
+                                        return;
+                                    }
+                                    completeAttentionPvOutputPanel();
+                                });
+                        });
+                })) finishAttentionWorker(false);
     }
 
     bool attentionClusterPvMatrixMatches(
@@ -7813,6 +8568,8 @@ public:
         if (attentionClusterEnable_) {
             state.clusterPvWave = 0;
             state.panel = attentionDimensionPanels(state);
+        } else if (attentionSequential64Enable_) {
+            state.panel += attentionSequentialPvPanels(state);
         } else {
             ++state.panel;
         }
@@ -7827,6 +8584,16 @@ public:
                     return;
                 }
                 finishAttentionTilePipeline();
+                if (attentionKvDoubleBuffer_ &&
+                    state.activeKvBuffer < state.kvBuffers.size()) {
+                    AttentionKvBufferState& completed =
+                        state.kvBuffers[state.activeKvBuffer];
+                    if (completed.consuming &&
+                        completed.keyTileOrdinal == state.keyTileOrdinal &&
+                        completed.keyTile == state.keyTile) {
+                        completed = {};
+                    }
+                }
                 statAttentionWorkerPvTileCompleteTick_->addData(getCurrentSimCycle());
                 traceAttentionTileCompletion(
                     "pv_tile_complete", "final_pv_tile_complete", state);
@@ -7947,6 +8714,10 @@ public:
         if (!attentionWorker_) return;
         if (attentionClusterEnable_) {
             readAttentionClusterPvOutput();
+            return;
+        }
+        if (attentionSequential64Enable_) {
+            readAttentionSequentialPvOutputs();
             return;
         }
         AttentionWorkerState& state = *attentionWorker_;
@@ -8072,12 +8843,16 @@ public:
             if (state.phase == AttentionWorkerPhase::QkCompute &&
                 (!attentionQkEarlyCompute_ ||
                  state.attentionQkInputProgrammingComplete)) {
+                if (attentionSequential64Enable_) {
+                    completeAttentionSequentialQkWave();
+                    return true;
+                }
                 state.index = attentionClusterEnable_
                     ? attentionClusterWaveRowBegin(
                         state.clusterQkWave, attentionClusterQkLanes(state))
                     : 0;
                 state.phase = AttentionWorkerPhase::QkReadOutputs;
-                readAttentionQkOutput();
+                            readAttentionQkOutput();
             } else if (state.phase == AttentionWorkerPhase::PvCompute) {
                 transitionAttentionTilePipeline(
                     AttentionTilePipelinePhase::PvOutputReadwrite);
@@ -8145,7 +8920,8 @@ public:
             message.workerCore != coreID ||
             (!c1Shape && !d1Shape && !d3Shape && !streamingShape) ||
             ((!streamingShape && message.headDim != 64)) ||
-            message.queryBlockRows != 16 ||
+            (attentionSequential64Enable_ ? message.queryBlockRows != 64 :
+             message.queryBlockRows != 16) ||
             (attentionClusterEnable_ ?
                 message.keyBlockRows != attentionClusterConfig_.keyBlockRows :
                 (message.keyBlockRows != 32u && message.keyBlockRows != 64u)) ||
@@ -8167,9 +8943,12 @@ public:
                    arrayInputSize * 2 != static_cast<int>(message.headDim) ||
                    arrayOutputSize !=
                        static_cast<int>(attentionClusterConfig_.arrayOutputs))
-                : (numArrays < 16 ||
+                : (attentionSequential64Enable_ ?
+                   (numArrays < 64 || arrayInputSize != 64 ||
+                    arrayOutputSize != 64) :
+                  (numArrays < 16 ||
                    arrayInputSize != static_cast<int>(message.headDim) ||
-                   arrayOutputSize != 16)) ||
+                   arrayOutputSize != 16))) ||
             attentionWindowBytes_ < requiredWindowWithVTileBuffer ||
                 attentionWindowOffset_ + requiredWindowWithVTileBuffer > globalMem->getSize()) {
             ReductionTransportMessage rejected = message;
@@ -8490,7 +9269,8 @@ public:
             desc.size_bytes == sizeof(GolemAttentionDescV1) &&
             (c1Shape || d1Shape || d3Shape || streamingShape) &&
             ((!streamingShape && desc.head_dim == 64) || streamingShape) &&
-            desc.query_block_rows == 16 &&
+            (attentionSequential64Enable_ ? desc.query_block_rows == 64 :
+             desc.query_block_rows == 16) &&
             (attentionClusterEnable_ ?
                 desc.key_block_rows == attentionClusterConfig_.keyBlockRows :
                 (desc.key_block_rows == 32u || desc.key_block_rows == 64u)) &&
@@ -10324,6 +11104,7 @@ private:
     bool attentionMilestoneTrace_;
     bool attentionTileTrace_;
     bool attentionClusterEnable_ = false;
+    bool attentionSequential64Enable_ = false;
     AttentionClusterConfig attentionClusterConfig_ = {};
     std::unique_ptr<AttentionClusterState> attentionCluster_;
     BusyActivityTracker attentionClusterQkArrayActivity_;
@@ -10596,6 +11377,10 @@ private:
     Statistics::Statistic<uint64_t>* statAttentionClusterSfuPvOverlapCycles_;
     Statistics::Statistic<uint64_t>* statAttentionClusterQkPvOverlapCycles_;
     Statistics::Statistic<uint64_t>* statAttentionClusterThreeStageOverlapCycles_;
+    Statistics::Statistic<uint64_t>* statAttentionSequentialQkWaves_;
+    Statistics::Statistic<uint64_t>* statAttentionSequentialPvWaves_;
+    Statistics::Statistic<uint64_t>* statAttentionSequentialQkActiveArrays_;
+    Statistics::Statistic<uint64_t>* statAttentionSequentialPvActiveArrays_;
 
     AttentionOAccumulator attentionOAccumulator_;
 

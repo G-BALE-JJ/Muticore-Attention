@@ -115,6 +115,18 @@ DRAMSIM3_CONFIG = os.getenv(
     "GOLEM_DRAMSIM3_CONFIG",
     os.path.join(TESTS_DIR, "architecture", "dram", "HBM_4Gb_x128.ini"),
 )
+MEMORY_BACKEND = os.getenv("GOLEM_MEMORY_BACKEND", "ramulator2").strip().lower()
+if MEMORY_BACKEND not in {"dramsim3", "ramulator2"}:
+    raise ValueError(
+        f"Unsupported GOLEM_MEMORY_BACKEND={MEMORY_BACKEND}; "
+        "expected dramsim3 or ramulator2"
+    )
+RAMULATOR2_CONFIG = os.getenv(
+    "GOLEM_RAMULATOR2_CONFIG",
+    os.path.join(TESTS_DIR, "architecture", "ramulator", "hbm2e_2500.yaml"),
+)
+if MEMORY_BACKEND == "ramulator2" and not os.path.isfile(RAMULATOR2_CONFIG):
+    raise ValueError(f"Ramulator2 configuration does not exist: {RAMULATOR2_CONFIG}")
 ARTIFACT_ROOT = os.getenv("GOLEM_ARTIFACT_ROOT", os.path.join(TESTS_DIR, "artifacts"))
 HBM_DIR = os.getenv("GOLEM_HBM_DIR", os.path.join(ARTIFACT_ROOT, "hbm"))
 HBM_DUMP_OUTPUT = _env_flag("GOLEM_HBM_DUMP_OUTPUT", True)
@@ -241,9 +253,10 @@ print(f"[PTHREAD] 模式: 多进程单线程（共享地址空间）")
 print(f"[PTHREAD] HBM目录: {HBM_DIR}")
 print(f"[PTHREAD] 统计文件: {STATS_FILE}")
 print(
-    f"[MPI] partitioning={int(MPI_PARTITIONING)} "
-    f"dramsim3_out_dir={DRAMSIM3_OUT_DIR}"
+    f"[MEMORY] backend={MEMORY_BACKEND} "
+    f"config={RAMULATOR2_CONFIG if MEMORY_BACKEND == 'ramulator2' else DRAMSIM3_CONFIG}"
 )
+print(f"[MPI] partitioning={int(MPI_PARTITIONING)}")
 
 # MMU 类型
 mmuType = "simpleMMU"
@@ -298,6 +311,7 @@ process_env_keys = [
     "GOLEM_STAGE_PROGRESS",
     "GOLEM_RUNTIME_SILENT",
     "GOLEM_SILENT",
+    "GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE",
 ]
 
 process_env_entries = []
@@ -593,7 +607,7 @@ for idx, router_id in enumerate(MEMORY_ROUTERS):
         {
             "group": 100 + idx,
             "sources": "1",
-            "network_bw": "25GB/s",
+            "network_bw": os.getenv("GOLEM_DIRCTRL_HIGHLINK_BW", "320GB/s"),
             "num_vns": 3,
             "network_input_buffer_size": os.getenv(
                 "GOLEM_DIRCTRL_HIGHLINK_INPUT_BUF_SIZE", "64KB"
@@ -602,6 +616,15 @@ for idx, router_id in enumerate(MEMORY_ROUTERS):
                 "GOLEM_DIRCTRL_HIGHLINK_OUTPUT_BUF_SIZE", "64KB"
             ),
             "golem_dma_response_chunk_bytes": os.getenv("GOLEM_DMA_RESPONSE_CHUNK_BYTES", "0"),
+            "golem_dma_kv_coalesce_enable": os.getenv(
+                "GOLEM_ATTENTION_KV_SHARED_STREAM_ENABLE", "0"
+            ),
+            "golem_dma_kv_multicast_bytes_per_cycle": os.getenv(
+                "GOLEM_ATTENTION_KV_STREAM_BYTES_PER_CYCLE", "256"
+            ),
+            "golem_dma_kv_expected_consumers": os.getenv(
+                "GOLEM_ATTENTION_KV_CONSUMERS_PER_NODE", "16"
+            ),
             "golem_dma_response_vn": os.getenv("GOLEM_DMA_RESPONSE_VN", "1"),
             "golem_dma_response_drain_limit": os.getenv(
                 "GOLEM_DMA_RESPONSE_DRAIN_LIMIT", "0"
@@ -682,15 +705,26 @@ for idx, router_id in enumerate(MEMORY_ROUTERS):
 
     memctrl.addParams(mem_params)
     mem_hi = memctrl.setSubComponent("highlink", "memHierarchy.MemLink")
-    mem_backend = memctrl.setSubComponent("backend", "memHierarchy.dramsim3")
-    backend_params = {
-        "mem_size": memSizePerNode,
-        "config_ini": DRAMSIM3_CONFIG,
-    }
-    if MPI_PARTITIONING:
-        node_output_dir = os.path.join(DRAMSIM3_OUT_DIR, f"node{idx}")
-        os.makedirs(node_output_dir, exist_ok=True)
-        backend_params["output_dir"] = node_output_dir
+    mem_backend = memctrl.setSubComponent(
+        "backend", f"memHierarchy.{MEMORY_BACKEND}"
+    )
+    if MEMORY_BACKEND == "dramsim3":
+        backend_params = {
+            "mem_size": memSizePerNode,
+            "config_ini": DRAMSIM3_CONFIG,
+        }
+        if MPI_PARTITIONING:
+            node_output_dir = os.path.join(DRAMSIM3_OUT_DIR, f"node{idx}")
+            os.makedirs(node_output_dir, exist_ok=True)
+            backend_params["output_dir"] = node_output_dir
+    else:
+        backend_params = {
+            "mem_size": memSizePerNode,
+            "configFile": RAMULATOR2_CONFIG,
+            "request_width": 32,
+            "address_offset": 0,
+            "backend_id": idx,
+        }
     mem_backend.addParams(backend_params)
     mem_backend.enableAllStatistics()
 
