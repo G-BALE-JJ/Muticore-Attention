@@ -125,8 +125,13 @@ def _write_f32(path, values):
 
 def generate_case(
     queries: int, keys: int, head_dim: int, q_path, k_path, storage_keys=None,
-    v_path=None, extreme_logits=False,
+    v_path=None, extreme_logits=False, heads: int = 1, kv_heads=None,
 ):
+    if heads <= 0:
+        raise ValueError("heads must be positive")
+    kv_heads = heads if kv_heads is None else kv_heads
+    if kv_heads <= 0 or heads % kv_heads != 0:
+        raise ValueError("query heads must be divisible by K/V heads")
     storage_keys = keys if storage_keys is None else storage_keys
     if storage_keys < keys:
         raise ValueError("storage_keys cannot be smaller than logical keys")
@@ -134,26 +139,40 @@ def generate_case(
         if (queries, keys, head_dim) != (64, 64, 64):
             raise ValueError("extreme_logits requires queries=keys=head_dim=64")
         q = [1.0 if dim == 0 else 0.0
+             for _head in range(heads)
              for _query in range(queries) for dim in range(head_dim)]
         logical_k = [(-800.0 if key < 32 else 800.0) if dim == 0 else 0.0
+                     for _head in range(kv_heads)
                      for key in range(keys) for dim in range(head_dim)]
     else:
         q = [
-            (((query * 17 + dim * 5) % 29) - 14) / 32.0
+            (((head * 19 + query * 17 + dim * 5) % 29) - 14) / 32.0
+            for head in range(heads)
             for query in range(queries)
             for dim in range(head_dim)
         ]
         logical_k = [
-            (((key * 11 + dim * 7 + 3) % 31) - 15) / 32.0
+            (((head * 23 + key * 11 + dim * 7 + 3) % 31) - 15) / 32.0
+            for head in range(kv_heads)
             for key in range(keys)
             for dim in range(head_dim)
         ]
-    k = logical_k + [0.0] * ((storage_keys - keys) * head_dim)
+    if storage_keys == keys:
+        k = logical_k
+    else:
+        head_values = keys * head_dim
+        head_padding = (storage_keys - keys) * head_dim
+        k = []
+        for head in range(kv_heads):
+            begin = head * head_values
+            k.extend(logical_k[begin:begin + head_values])
+            k.extend([0.0] * head_padding)
     _write_f32(q_path, q)
     _write_f32(k_path, k)
     if v_path is not None:
         v = [
-            (((key * 13 + dim * 3 + 5) % 37) - 18) / 32.0
+            (((head * 29 + key * 13 + dim * 3 + 5) % 37) - 18) / 32.0
+            for head in range(kv_heads)
             for key in range(keys)
             for dim in range(head_dim)
         ]
@@ -272,8 +291,15 @@ def _build_parser():
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--queries", type=_positive_int, required=True)
-    common.add_argument("--keys", type=_positive_int, required=True)
+    common.add_argument("--query-length", "--queries", dest="query_length",
+                        type=_positive_int, required=True)
+    common.add_argument("--kv-length", "--keys", dest="kv_length",
+                        type=_positive_int, required=True)
+    common.add_argument("--heads", type=_positive_int)
+    common.add_argument("--num-query-heads", "--query-heads",
+                        dest="num_query_heads", type=_positive_int)
+    common.add_argument("--num-kv-heads", "--kv-heads",
+                        dest="num_kv_heads", type=_positive_int)
     common.add_argument("--head-dim", type=_positive_int, required=True)
     common.add_argument("--q-file", required=True)
     common.add_argument("--k-file", required=True)
@@ -308,25 +334,35 @@ def main():
     if args.head_dim not in (64, 128):
         raise SystemExit("head_dim must be 64 or 128 for the Phase A Attention path")
 
+    query_heads = args.num_query_heads or args.heads or 1
+    kv_heads = args.num_kv_heads or (args.heads if args.heads is not None else query_heads)
+    if query_heads % kv_heads != 0:
+        raise SystemExit("query heads must be divisible by K/V heads")
+
     if args.command == "generate":
-        storage_keys = args.storage_keys or args.keys
+        storage_keys = args.storage_keys or args.kv_length
         generate_case(
-            args.queries,
-            args.keys,
+            args.query_length,
+            args.kv_length,
             args.head_dim,
             args.q_file,
             args.k_file,
             storage_keys,
             args.v_file,
             args.extreme_logits,
+            query_heads,
+            kv_heads,
         )
         result = {
-            "queries": args.queries,
-            "keys": args.keys,
+            "queries": args.query_length,
+            "keys": args.kv_length,
+            "query_heads": query_heads,
+            "kv_heads": kv_heads,
+            "gqa_group_size": query_heads // kv_heads,
             "storage_keys": storage_keys,
             "head_dim": args.head_dim,
-            "q_layout": "row_major_[queries,head_dim]",
-            "k_layout": "native_key_major_[keys,head_dim]",
+            "q_layout": "head_major_[query_heads,queries,head_dim]",
+            "k_layout": "head_major_[kv_heads,keys,head_dim]",
             "transpose_b": 1,
             "input_profile": "extreme_tile_jump" if args.extreme_logits else "default",
             "q_file": str(Path(args.q_file).resolve()),
@@ -343,8 +379,8 @@ def main():
             args.q_file,
             args.k_file,
             args.output_file,
-            args.queries,
-            args.keys,
+            args.query_length,
+            args.kv_length,
             args.head_dim,
             args.atol,
             args.rtol,
@@ -355,11 +391,11 @@ def main():
             result_path.parent.mkdir(parents=True, exist_ok=True)
             result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="ascii")
     else:
-        if args.storage_keys not in (None, args.keys):
+        if args.storage_keys not in (None, args.kv_length):
             raise SystemExit("verify-attention requires unpadded native K storage")
         result = verify_attention(
             args.q_file, args.k_file, args.v_file, args.output_file,
-            args.queries, args.keys, args.head_dim, bool(args.causal),
+            args.query_length, args.kv_length, args.head_dim, bool(args.causal),
             args.atol, args.rtol, args.output_offset, args.fused, args.extreme_logits,
         )
         if args.result_json:

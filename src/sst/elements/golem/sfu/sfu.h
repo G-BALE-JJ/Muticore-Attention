@@ -2,7 +2,9 @@
 #define _H_GOLEM_SFU
 
 #include <cstdint>
+#include <algorithm>
 #include <array>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <map>
@@ -32,13 +34,79 @@ enum class TensorRowEngineStage : uint8_t {
 
 enum class TensorRowEngineEventKind : uint8_t {
     ResourceDone,
+    ScaleDone,
+    MaxCompareDone,
+    MaxReductionDone,
+    SumReductionDone,
+    OnlineMaxDone,
+    OnlineExpDone,
+    OnlineMulDone,
+    OnlineAddDone,
+    ReciprocalDone,
+    HardwareRetry,
     LocalReadRetry,
     LocalWriteRetry,
+    TileStreamReadRetry,
+    TileStreamReadDone,
+    TileStreamWriteRetry,
+    TileStreamWriteDone,
+    RowDispatch,
     AttentionStart,
     DirectReadDone,
     DirectWriteDone,
     ScoreFifoWriteDone,
     PFifoReadDone,
+};
+
+// Architectural pipeline model, at the same abstraction level as an MVM array:
+// accepted tokens occupy finite hardware state and become visible only when the
+// completion event fires. Functional arithmetic is evaluated by the host then.
+struct TensorHardwarePipeline {
+    uint64_t latency = 1;
+    uint64_t initiationInterval = 1;
+    uint32_t queueDepth = 1;
+    uint64_t nextIssueCycle = 0;
+    std::deque<uint64_t> completionCycles;
+    uint64_t acceptedTokens = 0;
+    uint64_t issueWaitCycles = 0;
+    uint64_t backpressureEvents = 0;
+    uint64_t maxOccupancy = 0;
+
+    void configure(uint64_t configuredLatency, uint64_t configuredII,
+                   uint32_t configuredQueueDepth) {
+        latency = std::max<uint64_t>(1, configuredLatency);
+        initiationInterval = std::max<uint64_t>(1, configuredII);
+        queueDepth = std::max<uint32_t>(1, configuredQueueDepth);
+    }
+
+    void retire(uint64_t now) {
+        while (!completionCycles.empty() && completionCycles.front() <= now) {
+            completionCycles.pop_front();
+        }
+    }
+
+    bool reserve(uint64_t now, uint64_t* completionCycle) {
+        retire(now);
+        if (completionCycle == nullptr || completionCycles.size() >= queueDepth) {
+            ++backpressureEvents;
+            return false;
+        }
+        const uint64_t issue = std::max(now, nextIssueCycle);
+        *completionCycle = issue + latency;
+        nextIssueCycle = issue + initiationInterval;
+        completionCycles.push_back(*completionCycle);
+        ++acceptedTokens;
+        issueWaitCycles += issue - now;
+        maxOccupancy = std::max<uint64_t>(
+            maxOccupancy, completionCycles.size());
+        return true;
+    }
+
+    uint64_t retryDelay(uint64_t now) {
+        retire(now);
+        if (completionCycles.size() < queueDepth) return 1;
+        return std::max<uint64_t>(1, completionCycles.front() - now + 1);
+    }
 };
 
 class TensorRowEngineEvent : public SST::Event {
@@ -271,8 +339,8 @@ struct AttentionTileRequest {
     uint32_t rows = 0;
     uint32_t cols = 0;
     uint32_t headDim = 0;
-    uint32_t keyTile = 0;
-    uint32_t keyTiles = 1;
+    uint32_t kvTileIndex = 0;
+    uint32_t numKvTiles = 1;
     bool causal = false;
     bool firstTileForJob = false;
     bool directScoreMode = false;
@@ -336,7 +404,7 @@ public:
     virtual bool wait(uint64_t tag, uint64_t* status) = 0;
     virtual void bindGlobalMemory(GlobalMemoryAPI* globalMem) = 0;
     virtual void setCoreInfo(uint32_t coreId, uint32_t activeWorkerCores) = 0;
-    virtual void receiveReductionMessage(const ReductionTransportMessage& message) = 0;
+    virtual void receiveControlMessage(const ControlTransportMessage& message) = 0;
 };
 
 class SFU : public SFUAPI {
@@ -359,14 +427,36 @@ public:
         {"accelerator_clock_hz", "Row Engine accelerator clock frequency", "2300000000"},
         {"vector_lanes", "FP32 vector lanes per physical Row Engine", "16"},
         {"exp_lanes", "FP32 EXP issue lanes per physical Row Engine", "4"},
-        {"reduction_tree_latency", "Row Engine reduction tree latency in accelerator cycles", "4"},
         {"exp_latency", "Row Engine EXP pipeline latency in accelerator cycles", "8"},
-        {"reciprocal_latency", "Row Engine reciprocal latency in accelerator cycles", "1"},
-        {"rsqrt_latency", "Attention scale RSQRT latency in accelerator cycles", "8"},
+        {"scale_latency", "Scale/mask FP32 multiply pipeline latency", "3"},
+        {"scale_ii", "Scale/mask FP32 multiply pipeline initiation interval", "1"},
+        {"max_compare_latency", "MAX compare pipeline latency", "1"},
+        {"max_compare_ii", "MAX compare pipeline initiation interval", "1"},
+        {"max_reduction_latency", "16-input MAX reduction latency", "4"},
+        {"max_reduction_ii", "MAX reduction pipeline initiation interval", "1"},
+        {"sum_reduction_latency", "16-input FP32 SUM reduction latency", "8"},
+        {"sum_reduction_ii", "SUM reduction pipeline initiation interval", "1"},
+        {"exp_ii", "EXP vector pipeline initiation interval", "1"},
+        {"online_max_latency", "Online scalar MAX latency", "1"},
+        {"online_max_ii", "Online scalar MAX initiation interval", "1"},
+        {"online_exp_latency", "Online scalar EXP latency", "8"},
+        {"online_exp_ii", "Online scalar EXP initiation interval", "1"},
+        {"online_mul_latency", "Two-lane online FP32 multiply latency", "3"},
+        {"online_mul_ii", "Online multiply initiation interval", "1"},
+        {"online_add_latency", "Online FP32 add latency", "3"},
+        {"online_add_ii", "Online add initiation interval", "1"},
+        {"reciprocal_latency", "Row Engine reciprocal pipeline latency in accelerator cycles", "8"},
+        {"reciprocal_ii", "Reciprocal pipeline initiation interval", "1"},
+        {"normalize_vector_latency", "Normalize multiply pipeline latency", "3"},
+        {"normalize_vector_ii", "Normalize multiply pipeline initiation interval", "1"},
+        {"pipeline_queue_depth", "Accepted tokens retained by each physical SFU pipeline", "16"},
+        {"tile_stream_enable", "Coalesce sequential Attention score/P LocalGM traffic per tile", "1"},
+        {"tile_stream_bytes_per_cycle", "Sequential Attention tile-stream bandwidth", "256"},
+        {"tile_stream_base_latency_cycles", "Sequential Attention tile-stream startup latency", "1"},
+        {"row_dispatch_interval_cycles", "Cycles between sequential Attention row launches", "4"},
         {"row_contexts", "Row contexts per physical Row Engine", "4"},
         {"attention_kv_pair_reuse", "Retain online Softmax state for grouped Attention query blocks", "0"},
         {"attention_kv_query_group_size", "Interleaved Attention query blocks: 2 or 4", "2"},
-        {"attention_cluster_enable", "Enable Attention cluster SFU lifecycle statistics", "0"},
         {"attention_score_fifo_bytes_per_cycle", "Shared score FIFO read/write port bandwidth", "64"},
         {"attention_score_fifo_latency_cycles", "Score FIFO access latency", "1"},
         {"attention_score_fifo_queue_depth", "Maximum pending producer writes", "64"},
@@ -448,10 +538,10 @@ public:
         {"sfu_reduction_max_responses", "Distributed softmax max reduction responses", "messages", 1},
         {"sfu_reduction_sum_requests", "Distributed softmax sum reduction requests", "messages", 1},
         {"sfu_reduction_sum_responses", "Distributed softmax sum reduction responses", "messages", 1},
-        {"sfu_reduction_transport_received", "Explicit-NoC reduction messages delivered to SFU", "messages", 1},
-        {"sfu_reduction_transport_stale_dropped", "Explicit-NoC stale or duplicate reduction messages dropped", "messages", 1},
-        {"sfu_reduction_transport_inbox_high_water", "Explicit-NoC reduction response inbox high-water mark", "messages", 1},
-        {"sfu_reduction_transport_latency_cycles", "Explicit-NoC reduction message transport latency", "cycles", 1},
+        {"sfu_control_transport_received", "Explicit-NoC control messages delivered to SFU", "messages", 1},
+        {"sfu_control_transport_stale_dropped", "Explicit-NoC stale or duplicate control messages dropped", "messages", 1},
+        {"sfu_control_transport_inbox_high_water", "Explicit-NoC collective-response inbox high-water mark", "messages", 1},
+        {"sfu_control_transport_latency_cycles", "Explicit-NoC control-message transport latency", "cycles", 1},
         {"sfu_credit_stalls", "SFU credit stalls", "stalls", 1},
         {"sfu_cross_tile_wait_cycles", "SFU cross-tile wait cycles", "cycles", 1},
         {"sfu_retry_events", "SFU retry events", "events", 1})
@@ -493,7 +583,7 @@ public:
     bool wait(uint64_t tag, uint64_t* status) override;
     void bindGlobalMemory(GlobalMemoryAPI* globalMem) override;
     void setCoreInfo(uint32_t coreId, uint32_t activeWorkerCores) override;
-    void receiveReductionMessage(const ReductionTransportMessage& message) override;
+    void receiveControlMessage(const ControlTransportMessage& message) override;
 
 private:
     enum class SoftmaxJobStage : uint8_t {
@@ -515,7 +605,7 @@ private:
                    uint32_t,
                    uint32_t,
                    uint32_t,
-                   ReductionTransportMessageKind>;
+                   ControlTransportMessageKind>;
 
     struct SoftmaxOpState {
         SFUSoftmaxTileDesc desc;
@@ -587,18 +677,26 @@ private:
             float invSum = 0.0f;
             float oldOutputScale = 0.0f;
             float tileWeightScale = 1.0f;
+            double pendingAlpha = 1.0;
+            double pendingBeta = 1.0;
+            double pendingMNew = -std::numeric_limits<double>::infinity();
+            double pendingOldTerm = 0.0;
+            double pendingTileTerm = 0.0;
+            double pendingLNew = 0.0;
+            TensorRowEngineEventKind pendingHardwareCompletionKind =
+                TensorRowEngineEventKind::ResourceDone;
             std::vector<float> laneValues;
             std::vector<float> residentValues;
         };
 
-        ReductionTransportMessage dispatch;
+        ControlTransportMessage dispatch;
         uint64_t scratchAddr;
         uint32_t nextRow;
         uint32_t rowsCompleted;
         bool localTileMode = false;
         uint64_t attentionJobId = 0;
-        uint32_t attentionKeyTile = 0;
-        uint32_t attentionKeyTiles = 1;
+        uint32_t attentionKvTileIndex = 0;
+        uint32_t attentionNumKvTiles = 1;
         uint32_t attentionKeyBegin = 0;
         bool attentionFirstTileForJob = false;
         bool directScoreMode = false;
@@ -608,6 +706,11 @@ private:
         bool directPMode = false;
         uint32_t pSlot = UINT32_MAX;
         AttentionClusterTag pTag = {};
+        bool tileStreamActive = false;
+        uint64_t pendingTileStreamTag = 0;
+        uint64_t tileStreamReadyCycle = 0;
+        std::vector<float> tileScoreValues;
+        std::vector<float> tilePValues;
         AttentionTileResult attentionResult;
         std::function<void(bool, const AttentionTileResult&)> localTileCallback;
         std::vector<Context> contexts;
@@ -676,15 +779,21 @@ private:
                                     uint64_t* normalizeEndCycles) const;
     bool startTensorRowEngineJob(uint64_t tag);
     bool finishTensorJobIfReady(JobOpState* state);
-    void handleTensorRowDispatch(const ReductionTransportMessage& message);
-    void rejectTensorRowDispatch(const ReductionTransportMessage& message);
-    void handleTensorRowComplete(const ReductionTransportMessage& message);
+    void handleTensorRowDispatch(const ControlTransportMessage& message);
+    void rejectTensorRowDispatch(const ControlTransportMessage& message);
+    void handleTensorRowComplete(const ControlTransportMessage& message);
     void issueTensorInputDma(const TensorWorkerKey& key, uint32_t contextIndex);
     void beginTensorRowStage(const TensorWorkerKey& key,
                              uint32_t contextIndex,
                              TensorRowEngineStage stage);
     void issueTensorLocalRead(const TensorWorkerKey& key, uint32_t contextIndex);
     void issueTensorLocalWrite(const TensorWorkerKey& key, uint32_t contextIndex);
+    void issueAttentionTileStreamRead(const TensorWorkerKey& key);
+    void issueAttentionTileStreamWrite(const TensorWorkerKey& key);
+    void scheduleAttentionTileStreamEvent(
+        const TensorWorkerKey& key, TensorRowEngineEventKind kind,
+        uint64_t localTag, uint64_t readyCycle);
+    void scheduleAttentionRowDispatch(const TensorWorkerKey& key);
     void advanceTensorRowChunk(const TensorWorkerKey& key, uint32_t contextIndex);
     void completeTensorRow(const TensorWorkerKey& key, uint32_t contextIndex);
     void scheduleTensorLocalRetry(const TensorWorkerKey& key,
@@ -693,6 +802,11 @@ private:
     void scheduleTensorRowStage(const TensorWorkerKey& key,
                                 uint32_t contextIndex,
                                 TensorRowEngineStage stage);
+    void scheduleTensorHardwareOperation(
+        const TensorWorkerKey& key, uint32_t contextIndex,
+        TensorRowEngineEventKind completionKind);
+    TensorHardwarePipeline* tensorHardwarePipeline(
+        TensorRowEngineStage stage, TensorRowEngineEventKind completionKind);
     void handleTensorRowEngineEvent(SST::Event* event);
     void finishTensorWorker(const TensorWorkerKey& key, bool ok);
     uint64_t scheduleScoreFifoPort(uint64_t bytes, bool write);
@@ -700,7 +814,7 @@ private:
     void completeAttentionPRead(uint64_t pendingId);
     uint64_t schedulePFifoPort(uint64_t bytes, bool write);
     uint64_t rowEngineCurrentCycle() const;
-    uint64_t tensorWorkerHostAddress(const ReductionTransportMessage& message,
+    uint64_t tensorWorkerHostAddress(const ControlTransportMessage& message,
                                      uint32_t row,
                                      bool output) const;
     bool executeDistributedSoftmaxRowJob(JobOpState* state);
@@ -711,7 +825,7 @@ private:
     bool explicitDistributedReductionEnabled() const;
     void recordDistributedReductionRequest(bool maxStage);
     void recordDistributedReductionResponse(bool maxStage);
-    void handleReductionTransportMessage(const ReductionTransportMessage& message);
+    void handleControlTransportMessage(const ControlTransportMessage& message);
     void clearDistributedReductionResponseInbox(const JobOpState& state);
 
     uint32_t coreId_;
@@ -723,16 +837,28 @@ private:
     uint64_t rowEngineAcceleratorClockHz_;
     uint32_t rowEngineVectorLanes_;
     uint32_t rowEngineExpLanes_;
-    uint32_t rowEngineReductionTreeLatency_;
     uint32_t rowEngineExpLatency_;
     uint32_t rowEngineReciprocalLatency_;
-    uint32_t rowEngineRsqrtLatency_;
     uint32_t rowEngineContexts_;
     uint64_t rowEngineScratchpadBytes_;
     uint64_t rowEngineTimebaseTicksPerSecond_;
     uint64_t rowEngineFreeTick_;
-    uint64_t rowEngineVectorFreeCycle_;
-    uint64_t rowEngineExpFreeCycle_;
+    TensorHardwarePipeline scalePipeline_;
+    TensorHardwarePipeline maxComparePipeline_;
+    TensorHardwarePipeline maxReductionPipeline_;
+    TensorHardwarePipeline expPipeline_;
+    TensorHardwarePipeline sumReductionPipeline_;
+    TensorHardwarePipeline onlineMaxPipeline_;
+    TensorHardwarePipeline onlineExpPipeline_;
+    TensorHardwarePipeline onlineMulPipeline_;
+    TensorHardwarePipeline onlineAddPipeline_;
+    TensorHardwarePipeline reciprocalPipeline_;
+    TensorHardwarePipeline normalizePipeline_;
+    bool tileStreamEnable_ = true;
+    uint64_t tileStreamBytesPerCycle_ = 256;
+    uint64_t tileStreamBaseLatencyCycles_ = 1;
+    uint64_t rowDispatchIntervalCycles_ = 4;
+    uint64_t tensorHardwareBackpressureEvents_ = 0;
     uint64_t nextTensorLocalTag_ = 1;
     uint64_t tensorLaneBufferHighWater_ = 0;
     uint64_t tensorMaxLocalReadBytes_ = 0;
@@ -742,10 +868,13 @@ private:
     uint64_t tensorNormalizeLocalReadBytes_ = 0;
     uint64_t tensorNormalizeLocalWriteBytes_ = 0;
     uint64_t tensorLocalRetryEvents_ = 0;
+    uint64_t tensorTileStreamReadRequests_ = 0;
+    uint64_t tensorTileStreamWriteRequests_ = 0;
+    uint64_t tensorRowDispatches_ = 0;
     uint32_t inflight_;
     int verbose_;
     DistributedReductionTransport distributedReductionTransport_;
-    std::map<DistributedReductionResponseInboxKey, ReductionTransportMessage>
+    std::map<DistributedReductionResponseInboxKey, ControlTransportMessage>
         distributedReductionResponseInbox_;
     uint64_t distributedReductionResponseInboxHighWater_ = 0;
     bool attentionClusterEnable_ = false;
@@ -844,14 +973,14 @@ private:
     Statistic<uint64_t>* statPrimitiveElems_;
     Statistic<uint64_t>* statPartialSubmits_;
     Statistic<uint64_t>* statPartialDone_;
-    Statistic<uint64_t>* statReductionMaxRequests_;
-    Statistic<uint64_t>* statReductionMaxResponses_;
-    Statistic<uint64_t>* statReductionSumRequests_;
-    Statistic<uint64_t>* statReductionSumResponses_;
-    Statistic<uint64_t>* statReductionTransportReceived_;
-    Statistic<uint64_t>* statReductionTransportStaleDropped_;
-    Statistic<uint64_t>* statReductionTransportInboxHighWater_;
-    Statistic<uint64_t>* statReductionTransportLatencyCycles_;
+    Statistic<uint64_t>* statControlMaxRequests_;
+    Statistic<uint64_t>* statControlMaxResponses_;
+    Statistic<uint64_t>* statControlSumRequests_;
+    Statistic<uint64_t>* statControlSumResponses_;
+    Statistic<uint64_t>* statControlTransportReceived_;
+    Statistic<uint64_t>* statControlTransportStaleDropped_;
+    Statistic<uint64_t>* statControlTransportInboxHighWater_;
+    Statistic<uint64_t>* statControlTransportLatencyCycles_;
     Statistic<uint64_t>* statCreditStalls_;
     Statistic<uint64_t>* statCrossTileWaitCycles_;
     Statistic<uint64_t>* statRetryEvents_;

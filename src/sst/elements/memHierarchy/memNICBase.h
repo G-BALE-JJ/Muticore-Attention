@@ -574,20 +574,26 @@ class MemNICBase : public MemLinkBase {
             uint64_t hostAddr = 0;
             uint32_t size = 0;
             uint64_t jobId = 0;
-            uint32_t targetTile = 0;
+            uint32_t targetKvTileIndex = 0;
             uint8_t operand = 0;
 
             bool operator<(const GolemDmaKvCacheKey& other) const {
-                return std::tie(hostAddr, size, jobId, targetTile, operand) <
+                return std::tie(hostAddr, size, jobId, targetKvTileIndex, operand) <
                     std::tie(other.hostAddr, other.size, other.jobId,
-                             other.targetTile, other.operand);
+                             other.targetKvTileIndex, other.operand);
             }
         };
 
         struct GolemDmaKvCacheEntry {
             std::vector<uint8_t> data;
-            std::vector<uint32_t> servedWorkers;
+            std::vector<uint64_t> servedConsumers;
         };
+
+        static uint64_t golemDmaKvConsumerId(
+                const SST::Golem::DmaConsumerMetadata& consumer) {
+            return (static_cast<uint64_t>(consumer.worker) << 32) |
+                consumer.targetQueryTile;
+        }
 
         struct GolemDmaIngressRequest {
             uint64_t arrivalCycle = 0;
@@ -620,19 +626,19 @@ class MemNICBase : public MemLinkBase {
         };
 
         struct GolemDmaConsumerProgress {
-            uint32_t queryBlock = 0;
+            uint32_t queryTileIndex = 0;
             uint32_t tile = 0;
         };
 
         struct GolemDmaBundleKey {
             uint64_t jobId = 0;
             uint32_t worker = 0;
-            uint32_t queryBlock = 0;
+            uint32_t queryTileIndex = 0;
             uint32_t tile = 0;
 
             bool operator==(const GolemDmaBundleKey& other) const {
                 return jobId == other.jobId && worker == other.worker &&
-                    queryBlock == other.queryBlock && tile == other.tile;
+                    queryTileIndex == other.queryTileIndex && tile == other.tile;
             }
         };
 
@@ -644,7 +650,7 @@ class MemNICBase : public MemLinkBase {
                         static_cast<size_t>(0x9e3779b9U) + (value << 6) + (value >> 2);
                 };
                 combine(key.worker);
-                combine(key.queryBlock);
+                combine(key.queryTileIndex);
                 combine(key.tile);
                 return value;
             }
@@ -660,8 +666,8 @@ class MemNICBase : public MemLinkBase {
                 uint64_t requestId, const SST::Golem::DmaConsumerMetadata& consumer) {
             if (consumer.valid == 0) return golemDmaBundleKey(requestId);
             return GolemDmaBundleKey{
-                consumer.jobId, consumer.worker, consumer.targetQueryBlock,
-                consumer.targetTile};
+                consumer.jobId, consumer.worker, consumer.targetQueryTile,
+                consumer.targetKvTileIndex};
         }
 
         void updateGolemDmaConsumerProgress(
@@ -669,28 +675,29 @@ class MemNICBase : public MemLinkBase {
             if (consumer.valid == 0) return;
             auto& current = golem_dma_consumer_progress_[
                 std::make_pair(consumer.jobId, consumer.worker)];
-            if (std::tie(current.queryBlock, current.tile) <
-                std::tie(consumer.consumerQueryBlock, consumer.consumerTile)) {
-                current.queryBlock = consumer.consumerQueryBlock;
-                current.tile = consumer.consumerTile;
+            if (std::tie(current.queryTileIndex, current.tile) <
+                std::tie(consumer.consumerQueryTile, consumer.consumerKvTileIndex)) {
+                current.queryTileIndex = consumer.consumerQueryTile;
+                current.tile = consumer.consumerKvTileIndex;
             }
         }
 
         uint8_t golemDmaConsumerDistance(
                 const SST::Golem::DmaConsumerMetadata& consumer) const {
             if (consumer.valid == 0) return 3;
-            uint32_t queryBlock = consumer.consumerQueryBlock;
-            uint32_t tile = consumer.consumerTile;
+            uint32_t queryTileIndex = consumer.consumerQueryTile;
+            uint32_t tile = consumer.consumerKvTileIndex;
             auto progress = golem_dma_consumer_progress_.find(
                 std::make_pair(consumer.jobId, consumer.worker));
             if (progress != golem_dma_consumer_progress_.end()) {
-                queryBlock = progress->second.queryBlock;
+                queryTileIndex = progress->second.queryTileIndex;
                 tile = progress->second.tile;
             }
-            if (consumer.targetQueryBlock < queryBlock) return 0;
-            if (consumer.targetQueryBlock > queryBlock) return 3;
-            if (consumer.targetTile <= tile) return 0;
-            return static_cast<uint8_t>(std::min<uint32_t>(consumer.targetTile - tile, 3));
+            if (consumer.targetQueryTile < queryTileIndex) return 0;
+            if (consumer.targetQueryTile > queryTileIndex) return 3;
+            if (consumer.targetKvTileIndex <= tile) return 0;
+            return static_cast<uint8_t>(
+                std::min<uint32_t>(consumer.targetKvTileIndex - tile, 3));
         }
 
         void releaseGolemDmaCredits(uint32_t creditUnits, uint64_t requestId) {
@@ -740,7 +747,7 @@ class MemNICBase : public MemLinkBase {
                 uint64_t hostAddr, uint32_t size,
                 const SST::Golem::DmaConsumerMetadata& consumer) {
             return GolemDmaKvCacheKey{
-                hostAddr, size, consumer.jobId, consumer.targetTile,
+                hostAddr, size, consumer.jobId, consumer.targetKvTileIndex,
                 static_cast<uint8_t>(consumer.operand)};
         }
 
@@ -803,12 +810,14 @@ class MemNICBase : public MemLinkBase {
             golem_dma_kv_cache_hits_++;
             golem_dma_kv_multicast_receivers_++;
 
-            auto& workers = cached->second.servedWorkers;
-            if (std::find(workers.begin(), workers.end(),
-                          subscriber.dmaConsumer.worker) == workers.end()) {
-                workers.push_back(subscriber.dmaConsumer.worker);
+            auto& consumers = cached->second.servedConsumers;
+            const uint64_t consumerId =
+                golemDmaKvConsumerId(subscriber.dmaConsumer);
+            if (std::find(consumers.begin(), consumers.end(), consumerId) ==
+                consumers.end()) {
+                consumers.push_back(consumerId);
             }
-            if (workers.size() >= golem_dma_kv_expected_consumers_) {
+            if (consumers.size() >= golem_dma_kv_expected_consumers_) {
                 golem_dma_kv_cache_.erase(cached);
             }
             return true;
@@ -826,9 +835,10 @@ class MemNICBase : public MemLinkBase {
                 if (info.isWrite || info.hostAddr != ingress.addr ||
                     info.size != ingress.size || info.kvSubscribers.empty() ||
                     info.dmaConsumer.jobId != ingress.dmaConsumer.jobId ||
-                    info.dmaConsumer.targetQueryBlock !=
-                        ingress.dmaConsumer.targetQueryBlock ||
-                    info.dmaConsumer.targetTile != ingress.dmaConsumer.targetTile ||
+                    info.dmaConsumer.targetQueryTile !=
+                        ingress.dmaConsumer.targetQueryTile ||
+                    info.dmaConsumer.targetKvTileIndex !=
+                        ingress.dmaConsumer.targetKvTileIndex ||
                     info.dmaConsumer.operand != ingress.dmaConsumer.operand) {
                     continue;
                 }
@@ -1022,15 +1032,15 @@ class MemNICBase : public MemLinkBase {
                                 : std::numeric_limits<uint8_t>::max();
                             if (chosen == golem_dma_ingress_queue_.size() ||
                                 std::make_tuple(distance, workerDistance,
-                                                ingress.dmaConsumer.targetQueryBlock,
-                                                ingress.dmaConsumer.targetTile,
+                                                ingress.dmaConsumer.targetQueryTile,
+                                                ingress.dmaConsumer.targetKvTileIndex,
                                                 ingress.arrivalCycle, ingress.requestId) <
                                     std::make_tuple(
                                         golemDmaConsumerDistance(
                                             golem_dma_ingress_queue_[chosen].dmaConsumer),
                                         bestWorkerDistance,
-                                        golem_dma_ingress_queue_[chosen].dmaConsumer.targetQueryBlock,
-                                        golem_dma_ingress_queue_[chosen].dmaConsumer.targetTile,
+                                        golem_dma_ingress_queue_[chosen].dmaConsumer.targetQueryTile,
+                                        golem_dma_ingress_queue_[chosen].dmaConsumer.targetKvTileIndex,
                                         golem_dma_ingress_queue_[chosen].arrivalCycle,
                                         golem_dma_ingress_queue_[chosen].requestId)) {
                                 chosen = idx;
@@ -1274,6 +1284,13 @@ class MemNICBase : public MemLinkBase {
             if (golem_dma_credit_cap_ == 0) {
                 return;
             }
+            fprintf(stdout,
+                    "GOLEM_MEMNIC_DMA_CREDIT_CONSERVATION name=%s cap=%u available=%u"
+                    " admitted=%" PRIu64 " released=%" PRIu64 " pending=%zu\n",
+                    getName().c_str(), golem_dma_credit_cap_, golem_dma_credit_available_,
+                    golem_dma_credit_admitted_requests_,
+                    golem_dma_credit_released_requests_,
+                    golem_dma_ingress_queue_.size());
             fprintf(stdout,
                     "[memNICBase bridge] CREDIT_OWNER_SUMMARY name=%s group=%u cap=%u available=%u"
                     " chunk_bytes=%u admitted=%" PRIu64 " released=%" PRIu64
@@ -1854,14 +1871,15 @@ class MemNICBase : public MemLinkBase {
                     GolemDmaKvCacheEntry cacheEntry;
                     cacheEntry.data = data;
                     for (const auto& subscriber : info.kvSubscribers) {
-                        const uint32_t worker = subscriber.dmaConsumer.worker;
-                        if (std::find(cacheEntry.servedWorkers.begin(),
-                                      cacheEntry.servedWorkers.end(), worker) ==
-                            cacheEntry.servedWorkers.end()) {
-                            cacheEntry.servedWorkers.push_back(worker);
+                        const uint64_t consumerId =
+                            golemDmaKvConsumerId(subscriber.dmaConsumer);
+                        if (std::find(cacheEntry.servedConsumers.begin(),
+                                      cacheEntry.servedConsumers.end(), consumerId) ==
+                            cacheEntry.servedConsumers.end()) {
+                            cacheEntry.servedConsumers.push_back(consumerId);
                         }
                     }
-                    if (cacheEntry.servedWorkers.size() <
+                    if (cacheEntry.servedConsumers.size() <
                         golem_dma_kv_expected_consumers_) {
                         golem_dma_kv_cache_[cacheKey] = std::move(cacheEntry);
                     }
@@ -1972,6 +1990,21 @@ class MemNICBase : public MemLinkBase {
 
         void finishGolemDmaResponseStats() {
             if (golem_dma_read_response_attempted_ == 0) return;
+            std::printf(
+                "GOLEM_MEMNIC_DMA_RESPONSE_CONSERVATION component=%s"
+                " attempted=%" PRIu64 " immediate=%" PRIu64
+                " enqueued=%" PRIu64 " drained=%" PRIu64 " pending=%zu"
+                " responses_d0=%" PRIu64 " responses_d1=%" PRIu64
+                " responses_d2=%" PRIu64 " responses_far=%" PRIu64 "\n",
+                getName().c_str(), golem_dma_read_response_attempted_,
+                golem_dma_read_response_immediate_,
+                golem_dma_read_response_enqueued_,
+                golem_dma_read_response_drained_,
+                golem_dma_read_response_enqueue_ticks_.size(),
+                golem_dma_response_distance_responses_[0],
+                golem_dma_response_distance_responses_[1],
+                golem_dma_response_distance_responses_[2],
+                golem_dma_response_distance_responses_[3]);
             std::printf(
                 "GOLEM_MEMNIC_DMA_RESPONSE_STATS component=%s attempted=%" PRIu64
                 " immediate=%" PRIu64 " enqueued=%" PRIu64

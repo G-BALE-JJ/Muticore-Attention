@@ -28,11 +28,11 @@ SST::Golem::AttentionKvRequest attentionKvRequestFromMessage(
     request.generation = message.generation;
     request.jobTag = message.jobTag;
     request.queryGroup = message.queryGroup;
-    request.keyTileOrdinal = message.keyTileOrdinal;
-    request.keyTile = message.keyTile;
-    request.keyTiles = message.keyTiles;
-    request.totalKeys = message.totalKeys;
-    request.keyBlockRows = message.keyBlockRows;
+    request.kvTileIndex = message.kvTileIndex;
+    request.physicalKvTileIndex = message.physicalKvTileIndex;
+    request.numKvTiles = message.numKvTiles;
+    request.kvLength = message.kvLength;
+    request.kvTileRows = message.kvTileRows;
     request.tileRows = message.tileRows;
     request.rowsPerBand = message.rowsPerBand;
     request.headDim = message.headDim;
@@ -50,11 +50,11 @@ void fillAttentionKvMessage(
     message.generation = request.generation;
     message.jobTag = request.jobTag;
     message.queryGroup = request.queryGroup;
-    message.keyTileOrdinal = request.keyTileOrdinal;
-    message.keyTile = request.keyTile;
-    message.keyTiles = request.keyTiles;
-    message.totalKeys = request.totalKeys;
-    message.keyBlockRows = request.keyBlockRows;
+    message.kvTileIndex = request.kvTileIndex;
+    message.physicalKvTileIndex = request.physicalKvTileIndex;
+    message.numKvTiles = request.numKvTiles;
+    message.kvLength = request.kvLength;
+    message.kvTileRows = request.kvTileRows;
     message.tileRows = request.tileRows;
     message.rowsPerBand = request.rowsPerBand;
     message.headDim = request.headDim;
@@ -555,7 +555,7 @@ bool GroupCtrlEndpoint::requestAttentionKvPair(
     if (!attentionKvDistributionEnable_ || role_ != GroupCtrlRole::WORKER ||
         reqOut_ == nullptr || !callback || request.generation == 0 ||
         request.tileRows == 0 || request.rowsPerBand == 0 ||
-        request.headDim == 0 || request.tileRows > request.keyBlockRows ||
+        request.headDim == 0 || request.tileRows > request.kvTileRows ||
         workerSlot_ < 0 || workerSlot_ >= 4 ||
         workerKvCallbacks_.size() >= queueDepth_) {
         return false;
@@ -614,8 +614,8 @@ int GroupCtrlEndpoint::findAttentionKvSlot(const GroupCtrlMsg& message) const {
         const KvSlot& slot = kvSlots_[index];
         if (slot.occupied && slot.jobTag == message.jobTag &&
             slot.queryGroup == message.queryGroup &&
-            slot.keyTileOrdinal == message.keyTileOrdinal &&
-            slot.keyTile == message.keyTile) {
+            slot.kvTileIndex == message.kvTileIndex &&
+            slot.physicalKvTileIndex == message.physicalKvTileIndex) {
             return static_cast<int>(index);
         }
     }
@@ -633,8 +633,8 @@ void GroupCtrlEndpoint::handleAttentionKvRequest(
     const GroupCtrlMsg& message, int workerSlot) {
     if (!attentionKvDistributionEnable_ || role_ != GroupCtrlRole::MANAGER ||
         workerSlot < 0 || workerSlot >= 4 || message.generation == 0 ||
-        message.bytes == 0 || message.keyTiles == 0 ||
-        message.totalKeys == 0 || message.keyTileOrdinal >= message.keyTiles ||
+        message.bytes == 0 || message.numKvTiles == 0 ||
+        message.kvLength == 0 || message.kvTileIndex >= message.numKvTiles ||
         message.bytes > attentionKvDistributionTileBytes_) {
         auto* failure = new GroupCtrlMsg(GroupCtrlMsgType::ATTENTION_KV_DELIVERY);
         failure->reqSeq = message.reqSeq;
@@ -648,9 +648,9 @@ void GroupCtrlEndpoint::handleAttentionKvRequest(
     if (slotIndex >= 0) {
         KvSlot& slot = kvSlots_[static_cast<size_t>(slotIndex)];
         const bool compatible = slot.bytes == message.bytes &&
-            slot.keyBlockRows == message.keyBlockRows &&
-            slot.keyTiles == message.keyTiles &&
-            slot.totalKeys == message.totalKeys &&
+            slot.kvTileRows == message.kvTileRows &&
+            slot.numKvTiles == message.numKvTiles &&
+            slot.kvLength == message.kvLength &&
             slot.tileRows == message.tileRows &&
             slot.rowsPerBand == message.rowsPerBand &&
             slot.headDim == message.headDim &&
@@ -701,11 +701,11 @@ void GroupCtrlEndpoint::startAttentionKvSlot(
     slot.generation = message.generation;
     slot.jobTag = message.jobTag;
     slot.queryGroup = message.queryGroup;
-    slot.keyTileOrdinal = message.keyTileOrdinal;
-    slot.keyTile = message.keyTile;
-    slot.keyTiles = message.keyTiles;
-    slot.totalKeys = message.totalKeys;
-    slot.keyBlockRows = message.keyBlockRows;
+    slot.kvTileIndex = message.kvTileIndex;
+    slot.physicalKvTileIndex = message.physicalKvTileIndex;
+    slot.numKvTiles = message.numKvTiles;
+    slot.kvLength = message.kvLength;
+    slot.kvTileRows = message.kvTileRows;
     slot.tileRows = message.tileRows;
     slot.rowsPerBand = message.rowsPerBand;
     slot.headDim = message.headDim;
@@ -748,7 +748,7 @@ void GroupCtrlEndpoint::issueAttentionKvDma(
         attentionKvDistributionScratchOffset_ +
         slotIndex * static_cast<uint64_t>(2) * attentionKvDistributionTileBytes_ +
         (valueOperand ? attentionKvDistributionTileBytes_ : 0);
-    const uint32_t firstRow = slot.keyTile * slot.keyBlockRows;
+    const uint32_t firstRow = slot.physicalKvTileIndex * slot.kvTileRows;
     uint32_t rowsIssued = 0;
     while (rowsIssued < slot.tileRows) {
         const uint32_t globalRow = firstRow + rowsIssued;
@@ -1045,39 +1045,39 @@ void GroupCtrlEndpoint::maybeReleaseAttentionKvSlot(
 
 void GroupCtrlEndpoint::maybeStartAttentionKvLookahead(const KvSlot& released) {
     if (!attentionKvManagerLookahead_ || role_ != GroupCtrlRole::MANAGER ||
-        released.failed || released.keyTiles == 0 || released.totalKeys == 0 ||
+        released.failed || released.numKvTiles == 0 || released.kvLength == 0 ||
         !pendingKvRequests_.empty()) return;
     const int freeSlot = findFreeAttentionKvSlot();
     if (freeSlot < 0) return;
 
-    uint32_t farthestOrdinal = released.keyTileOrdinal;
+    uint32_t farthestOrdinal = released.kvTileIndex;
     for (const KvSlot& slot : kvSlots_) {
         if (slot.occupied && slot.jobTag == released.jobTag &&
             slot.queryGroup == released.queryGroup &&
-            slot.keyTiles == released.keyTiles) {
-            farthestOrdinal = std::max(farthestOrdinal, slot.keyTileOrdinal);
+            slot.numKvTiles == released.numKvTiles) {
+            farthestOrdinal = std::max(farthestOrdinal, slot.kvTileIndex);
         }
     }
     const uint32_t nextOrdinal = farthestOrdinal + 1;
-    if (nextOrdinal >= released.keyTiles) return;
-    const uint32_t ordinalDelta = nextOrdinal - released.keyTileOrdinal;
+    if (nextOrdinal >= released.numKvTiles) return;
+    const uint32_t ordinalDelta = nextOrdinal - released.kvTileIndex;
     const uint32_t nextTile =
-        (released.keyTile + ordinalDelta) % released.keyTiles;
+        (released.physicalKvTileIndex + ordinalDelta) % released.numKvTiles;
     const uint64_t firstRow =
-        static_cast<uint64_t>(nextTile) * released.keyBlockRows;
-    if (firstRow >= released.totalKeys) return;
+        static_cast<uint64_t>(nextTile) * released.kvTileRows;
+    if (firstRow >= released.kvLength) return;
     const uint32_t tileRows = static_cast<uint32_t>(std::min<uint64_t>(
-        released.keyBlockRows, released.totalKeys - firstRow));
+        released.kvTileRows, released.kvLength - firstRow));
 
     GroupCtrlMsg message(GroupCtrlMsgType::ATTENTION_KV_REQUEST);
     message.generation = released.generation;
     message.jobTag = released.jobTag;
     message.queryGroup = released.queryGroup;
-    message.keyTileOrdinal = nextOrdinal;
-    message.keyTile = nextTile;
-    message.keyTiles = released.keyTiles;
-    message.totalKeys = released.totalKeys;
-    message.keyBlockRows = released.keyBlockRows;
+    message.kvTileIndex = nextOrdinal;
+    message.physicalKvTileIndex = nextTile;
+    message.numKvTiles = released.numKvTiles;
+    message.kvLength = released.kvLength;
+    message.kvTileRows = released.kvTileRows;
     message.tileRows = tileRows;
     message.rowsPerBand = released.rowsPerBand;
     message.headDim = released.headDim;

@@ -222,8 +222,8 @@ struct AttentionClusterConfig {
     uint32_t pSlots = 4;
     uint32_t oContexts = 4;
     uint32_t headDim = 128;
-    uint32_t queryBlockRows = 16;
-    uint32_t keyBlockRows = 64;
+    uint32_t queryTileRows = 16;
+    uint32_t kvTileRows = 64;
     uint32_t groupSize = 4;
     uint32_t elemBytes = 4;
     uint32_t oFmaLanes = 16;
@@ -243,8 +243,8 @@ struct AttentionClusterConfig {
         if (operandBanks != 2) return "cluster requires two operand banks";
         if (scoreSlots != 4 || pSlots != 4 || oContexts != 4)
             return "cluster requires four score/P/O contexts";
-        if (headDim != 128 || queryBlockRows != 16 ||
-            (keyBlockRows != 32 && keyBlockRows != 64))
+        if (headDim != 128 || queryTileRows != 16 ||
+            (kvTileRows != 32 && kvTileRows != 64))
             return "cluster requires D128 Br16 and Bc32 or Bc64";
         if (groupSize != 4) return "cluster requires query group size four";
         if (elemBytes != 4) return "cluster requires FP32 operands";
@@ -258,7 +258,7 @@ struct AttentionClusterConfig {
         uint64_t hash = 1469598103934665603ULL;
         const std::array<uint64_t, 18> values = {{
             arrays, qkArrays, pvArrays, arrayInputs, arrayOutputs, operandBanks,
-            scoreSlots, pSlots, oContexts, headDim, queryBlockRows, keyBlockRows,
+            scoreSlots, pSlots, oContexts, headDim, queryTileRows, kvTileRows,
             groupSize, elemBytes, oFmaLanes, oFmaLatencyCycles,
             oFp32Fused ? 1ULL : 0ULL, causal ? 1ULL : 0ULL,
         }};
@@ -277,14 +277,14 @@ struct AttentionClusterTag {
     uint64_t jobId = 0;
     uint32_t group = 0;
     uint32_t queryContext = 0;
-    uint32_t queryBlock = 0;
-    uint32_t keyTile = 0;
+    uint32_t queryTileIndex = 0;
+    uint32_t kvTileIndex = 0;
     uint32_t sequence = 0;
 
     bool operator==(const AttentionClusterTag& other) const {
         return generation == other.generation && jobId == other.jobId &&
             group == other.group && queryContext == other.queryContext &&
-            queryBlock == other.queryBlock && keyTile == other.keyTile &&
+            queryTileIndex == other.queryTileIndex && kvTileIndex == other.kvTileIndex &&
             sequence == other.sequence;
     }
 };
@@ -487,7 +487,7 @@ public:
     }
 
     bool submitSegment(uint32_t slot, const AttentionClusterTag& tag,
-                       uint32_t keyTile, uint32_t row, uint32_t panel,
+                       uint32_t kvTileIndex, uint32_t row, uint32_t panel,
                        float alpha, const std::vector<float>& values,
                        uint64_t now, uint64_t* id, uint64_t* readyCycle) {
         if (!matches(slot, tag) || row >= kRows || panel >= kPanels ||
@@ -495,12 +495,12 @@ public:
             id == nullptr || readyCycle == nullptr) return false;
         Context& context = contexts_[slot];
         const size_t segment = static_cast<size_t>(row) * kPanels + panel;
-        if (context.draining || keyTile != context.expectedKeyTile ||
+        if (context.draining || kvTileIndex != context.expectedKeyTile ||
             context.segmentState[segment] != 0) return false;
 
         uint64_t cursor = std::max(now, bankReadyCycle_[row]);
         bankConflictCycles_ += cursor - now;
-        if (keyTile != 0) {
+        if (kvTileIndex != 0) {
             const uint64_t readStart = std::max(cursor, nextReadCycle_);
             readWaitCycles_ += readStart - cursor;
             nextReadCycle_ = readStart + 1;
@@ -535,7 +535,7 @@ public:
         pending.readyCycle = writeStart + 1;
         pending.slot = slot;
         pending.tag = tag;
-        pending.keyTile = keyTile;
+        pending.kvTileIndex = kvTileIndex;
         pending.row = row;
         pending.panel = panel;
         pending.alpha = alpha;
@@ -549,7 +549,7 @@ public:
     }
 
     bool submitRow(uint32_t slot, const AttentionClusterTag& tag,
-                   uint32_t keyTile, uint32_t row, float alpha,
+                   uint32_t kvTileIndex, uint32_t row, float alpha,
                    const std::vector<float>& values, uint64_t now,
                    uint64_t* id, uint64_t* readyCycle) {
         if (!matches(slot, tag) || row >= kRows ||
@@ -557,13 +557,13 @@ public:
             id == nullptr || readyCycle == nullptr) return false;
         Context& context = contexts_[slot];
         const size_t firstSegment = static_cast<size_t>(row) * kPanels;
-        if (context.draining || keyTile != context.expectedKeyTile ||
+        if (context.draining || kvTileIndex != context.expectedKeyTile ||
             std::any_of(context.segmentState.begin() + firstSegment,
                         context.segmentState.begin() + firstSegment + kPanels,
                         [](uint8_t state) { return state != 0; })) return false;
 
         uint64_t cursor = std::max(now, bankReadyCycle_[row]);
-        if (keyTile != 0) {
+        if (kvTileIndex != 0) {
             const uint64_t readStart = std::max(cursor, nextReadCycle_);
             readWaitCycles_ += readStart - cursor;
             nextReadCycle_ = readStart + 1;
@@ -597,7 +597,7 @@ public:
         pending.readyCycle = writeStart + 1;
         pending.slot = slot;
         pending.tag = tag;
-        pending.keyTile = keyTile;
+        pending.kvTileIndex = kvTileIndex;
         pending.row = row;
         pending.rowFused = true;
         pending.alpha = alpha;
@@ -674,7 +674,7 @@ public:
             }
             const size_t segment =
                 static_cast<size_t>(pending.row) * kPanels + pending.panel;
-            completion.ok = pending.keyTile == context.expectedKeyTile;
+            completion.ok = pending.kvTileIndex == context.expectedKeyTile;
             const uint32_t committed = pending.rowFused ? kPanels : 1;
             for (uint32_t panel = 0; completion.ok && panel < committed; ++panel) {
                 completion.ok = context.segmentState[segment + panel] == 1;
@@ -687,7 +687,7 @@ public:
                         const float value = pending.rowFused
                             ? pending.rowValues[panel * kValuesPerSegment + lane]
                             : pending.values[lane];
-                        context.values[offset + lane] = pending.keyTile == 0
+                        context.values[offset + lane] = pending.kvTileIndex == 0
                             ? value
                             : std::fma(pending.alpha,
                                        context.values[offset + lane], value);
@@ -777,7 +777,7 @@ private:
         uint64_t readyCycle = 0;
         uint32_t slot = 0;
         AttentionClusterTag tag = {};
-        uint32_t keyTile = 0;
+        uint32_t kvTileIndex = 0;
         uint32_t row = 0;
         uint32_t panel = 0;
         float alpha = 1.0f;

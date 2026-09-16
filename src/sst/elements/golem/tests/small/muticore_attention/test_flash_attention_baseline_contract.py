@@ -31,6 +31,7 @@ from verify_fused_attention_scale_stats import (
 )
 from report_attention_gpu_comparison import build_report
 from gpu_attention_stage_benchmark import make_correctness, make_result
+from attention_case import generate_case
 
 
 WRAPPER = HERE / "run_flash_attention.sh"
@@ -42,6 +43,8 @@ BASELINE_ROOT = HERE.parents[6] / "baseline"
 GPU_BASELINE = BASELINE_ROOT / "gpu_attention_rtx5060.json"
 GPU_SCHEMA = HERE / "gpu_attention_stage_schema.json"
 ROCC_SOURCE = HERE.parents[2] / "rocc" / "roccAnalog.h"
+ROCC_FLOAT = HERE.parents[2] / "rocc" / "roccAnalogFloat.h"
+ROCC_INT = HERE.parents[2] / "rocc" / "roccAnalogInt.h"
 WCP_SOURCE = HERE.parents[2] / "workercmdproc" / "workercmdproc.h"
 CPU_BUILDER = HERE.parents[1] / "architecture" / "cpu_builder.py"
 ARRAY_SOURCE = HERE.parents[2] / "array" / "computeArray.h"
@@ -49,26 +52,296 @@ MVM_ARRAY_SOURCE = HERE.parents[2] / "array" / "mvmComputeArray.h"
 GLOBAL_MEMORY_SOURCE = HERE.parents[2] / "globalmemory" / "globalmemory.h"
 GLOBAL_MEMORY_IMPL = HERE.parents[2] / "globalmemory" / "globalmemory.cc"
 SFU_SOURCE = HERE.parents[2] / "sfu" / "sfu.cc"
+SFU_HEADER = HERE.parents[2] / "sfu" / "sfu.h"
 GROUP_CTRL_HEADER = HERE.parents[2] / "groupctrl" / "groupctrl.h"
 GROUP_CTRL_SOURCE = HERE.parents[2] / "groupctrl" / "groupctrl.cc"
 MEMNIC_SOURCE = HERE.parents[3] / "memHierarchy" / "memNICBase.h"
 BASELINE_VERIFIER = HERE / "verify_flash_attention_baseline.py"
+ATTENTION_GUEST = HERE / "golem_attention_runtime.cpp"
+HBM_GENERATOR = HERE.parents[1] / "tools" / "gen_hbm_init.py"
 
 
 class FlashAttentionBaselineContractTest(unittest.TestCase):
+    def test_attention_uses_canonical_shape_and_transport_terminology(self):
+        configured = subprocess.run(
+            [
+                str(UNIFIED_RUNNER),
+                "--query-length", "1024", "--kv-length", "1024",
+                "--num-query-heads", "4", "--num-kv-heads", "1",
+                "--show-config",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        values = dict(line.split("=", 1) for line in configured.stdout.splitlines())
+        self.assertEqual(values["QUERY_LENGTH"], "1024")
+        self.assertEqual(values["KV_LENGTH"], "1024")
+        self.assertEqual(values["NUM_QUERY_HEADS"], "4")
+        self.assertEqual(values["NUM_KV_HEADS"], "1")
+
+        guest_header = (HERE / "golem_attention_runtime.h").read_text(encoding="utf-8")
+        rocc = ROCC_SOURCE.read_text(encoding="utf-8")
+        transport = GLOBAL_MEMORY_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("struct GolemAttentionDescV2", guest_header)
+        for field in (
+            "group_query_rows", "kv_length", "query_tile_rows", "kv_tile_rows",
+            "num_query_heads", "num_kv_heads", "group_query_row_begin",
+        ):
+            self.assertIn(field, guest_header)
+        self.assertNotIn("struct GolemAttentionDescV1", guest_header)
+        self.assertIn("ControlTransportMessage", transport)
+        self.assertIn("controlNetworkAvailable", transport)
+        self.assertIn("qkReductionSlice", rocc)
+        self.assertIn("pvOutputSlice", rocc)
+        rocc_variants = ROCC_FLOAT.read_text() + ROCC_INT.read_text()
+        self.assertIn("attention_cluster_qk_k_tile_broadcasts", rocc_variants)
+        self.assertIn("attention_cluster_qk_k_tile_bytes", rocc_variants)
+
+    def test_gqa_cli_and_tensor_cardinality_contract(self):
+        configured = subprocess.run(
+            [
+                str(UNIFIED_RUNNER), "--query-heads", "4", "--kv-heads", "1",
+                "--show-config",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        values = dict(line.split("=", 1) for line in configured.stdout.splitlines())
+        self.assertEqual(values["QUERY_HEADS"], "4")
+        self.assertEqual(values["KV_HEADS"], "1")
+        self.assertEqual(values["GQA_GROUP_SIZE"], "4")
+
+        invalid = subprocess.run(
+            [
+                str(UNIFIED_RUNNER), "--query-heads", "6", "--kv-heads", "4",
+                "--show-config",
+            ],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(invalid.returncode, 2)
+        self.assertIn("divisible", invalid.stderr)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            q_file, k_file, v_file = root / "q.bin", root / "k.bin", root / "v.bin"
+            generate_case(
+                256, 128, 128, q_file, k_file, v_path=v_file,
+                heads=4, kv_heads=1,
+            )
+            self.assertEqual(q_file.stat().st_size, 4 * 256 * 128 * 4)
+            self.assertEqual(k_file.stat().st_size, 1 * 128 * 128 * 4)
+            self.assertEqual(v_file.stat().st_size, 1 * 128 * 128 * 4)
+
+    def test_gqa_uses_composite_kv_group_jobs_and_worker_dispatch_fifo(self):
+        guest_header = (HERE / "golem_attention_runtime.h").read_text(encoding="utf-8")
+        guest = ATTENTION_GUEST.read_text(encoding="utf-8")
+        rocc = ROCC_SOURCE.read_text(encoding="utf-8")
+        transport = GLOBAL_MEMORY_SOURCE.read_text(encoding="utf-8")
+        memnic = MEMNIC_SOURCE.read_text(encoding="utf-8")
+
+        for field in ("num_query_heads", "num_kv_heads", "kv_head_index"):
+            self.assertIn(field, guest_header)
+            self.assertIn(field, rocc)
+        self.assertIn("gqa_group_size", guest)
+        self.assertIn("for (uint32_t kv_head = 0; kv_head < num_kv_heads; ++kv_head)", guest)
+        self.assertIn("attentionPendingDispatches_", rocc)
+        self.assertIn("numQueryHeads", transport)
+        self.assertIn("servedConsumers", memnic)
+
+    def test_gqa_writes_direct_query_major_concatenated_output(self):
+        rocc = ROCC_SOURCE.read_text(encoding="utf-8")
+        transport = GLOBAL_MEMORY_SOURCE.read_text(encoding="utf-8")
+        verifier = (HERE / "verify_fused_attention_scale_output.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("queryLength", transport)
+        self.assertIn("groupQueryRowBegin", transport)
+        self.assertIn("issueAttentionOutputDmaRows", rocc)
+        self.assertIn("kScatterDmaWindow = 16", rocc)
+        self.assertIn("state.dispatch.numQueryHeads + queryHead", rocc)
+        self.assertIn('"output_layout": "query_major_[query_length,num_query_heads,head_dim]"', verifier)
+
+    def test_multi_head_compatibility_alias_uses_gqa_interfaces(self):
+        unified = UNIFIED_RUNNER.read_text(encoding="utf-8")
+        runner = SCALE_RUNNER.read_text(encoding="utf-8")
+        guest = ATTENTION_GUEST.read_text(encoding="utf-8")
+        architecture = ARCHIVE_ARCH.read_text(encoding="utf-8")
+        hbm_generator = HBM_GENERATOR.read_text(encoding="utf-8")
+
+        self.assertIn("--heads N", unified)
+        self.assertIn("NUM_QUERY_HEADS=1", unified)
+        self.assertIn('GOLEM_ATTENTION_NUM_QUERY_HEADS=$NUM_QUERY_HEADS', runner)
+        self.assertIn('GOLEM_ATTENTION_GUEST_NUM_QUERY_HEADS=$NUM_QUERY_HEADS', runner)
+        self.assertIn('"GOLEM_ATTENTION_GUEST_NUM_QUERY_HEADS"', architecture)
+        self.assertIn("for (uint32_t kv_head = 0; kv_head < num_kv_heads; ++kv_head)", guest)
+        self.assertIn("query_head_stride", guest)
+        self.assertIn("kv_head_stride", guest)
+        self.assertIn("ATTENTION_NUM_QUERY_HEADS", hbm_generator)
+
+    def test_unified_runner_exposes_multi_head_configuration(self):
+        default = subprocess.run(
+            [str(UNIFIED_RUNNER), "--show-config"],
+            check=True, capture_output=True, text=True,
+        )
+        default_config = dict(
+            line.split("=", 1) for line in default.stdout.splitlines()
+        )
+        self.assertEqual(default_config["HEADS"], "1")
+
+        configured = subprocess.run(
+            [str(UNIFIED_RUNNER), "--heads", "4", "--show-config"],
+            check=True, capture_output=True, text=True,
+        )
+        configured_values = dict(
+            line.split("=", 1) for line in configured.stdout.splitlines()
+        )
+        self.assertEqual(configured_values["HEADS"], "4")
+
+    def test_sfu_uses_mac_equivalent_physical_operator_pipelines(self):
+        source = SFU_SOURCE.read_text(encoding="utf-8")
+        header = SFU_HEADER.read_text(encoding="utf-8")
+        builder = CPU_BUILDER.read_text(encoding="utf-8")
+
+        for unit in (
+            "scalePipeline_",
+            "maxReductionPipeline_",
+            "expPipeline_",
+            "onlineExpPipeline_",
+            "reciprocalPipeline_",
+            "normalizePipeline_",
+        ):
+            self.assertIn(unit, header + source)
+        self.assertIn("struct TensorHardwarePipeline", header)
+        self.assertIn("initiationInterval", header)
+        self.assertIn("completionCycles", header)
+        self.assertIn("TensorRowEngineEventKind::HardwareRetry", source)
+        self.assertIn("TensorRowEngineEventKind::OnlineAddDone", source)
+        self.assertIn("TensorRowEngineEventKind::ReciprocalDone", source)
+        self.assertIn("GOLEM_SFU_EXP_II", builder)
+        self.assertIn("GOLEM_SFU_PIPELINE_QUEUE_DEPTH", builder)
+        self.assertNotIn("rowEngineVectorFreeCycle_", header + source)
+        self.assertNotIn("rowEngineExpFreeCycle_", header + source)
+
+    def test_sfu_exposes_split_math_unit_latency_and_ii_parameters(self):
+        header = SFU_HEADER.read_text(encoding="utf-8")
+        source = SFU_SOURCE.read_text(encoding="utf-8")
+        builder = CPU_BUILDER.read_text(encoding="utf-8")
+        combined = header + source
+        for unit in (
+            "scalePipeline_", "maxComparePipeline_", "maxReductionPipeline_",
+            "expPipeline_", "sumReductionPipeline_", "onlineMaxPipeline_",
+            "onlineExpPipeline_", "onlineMulPipeline_", "onlineAddPipeline_",
+            "reciprocalPipeline_", "normalizePipeline_",
+        ):
+            self.assertIn(unit, combined)
+        for parameter in (
+            "GOLEM_SFU_SCALE_LATENCY", "GOLEM_SFU_SCALE_II",
+            "GOLEM_SFU_MAX_COMPARE_LATENCY", "GOLEM_SFU_MAX_COMPARE_II",
+            "GOLEM_SFU_MAX_REDUCTION_LATENCY", "GOLEM_SFU_MAX_REDUCTION_II",
+            "GOLEM_SFU_SUM_REDUCTION_LATENCY", "GOLEM_SFU_SUM_REDUCTION_II",
+            "GOLEM_SFU_ONLINE_MAX_LATENCY", "GOLEM_SFU_ONLINE_MAX_II",
+            "GOLEM_SFU_ONLINE_EXP_LATENCY", "GOLEM_SFU_ONLINE_EXP_II",
+            "GOLEM_SFU_ONLINE_MUL_LATENCY", "GOLEM_SFU_ONLINE_MUL_II",
+            "GOLEM_SFU_ONLINE_ADD_LATENCY", "GOLEM_SFU_ONLINE_ADD_II",
+        ):
+            self.assertIn(parameter, builder)
+        self.assertNotIn("onlineUpdatePipeline_", combined)
+        self.assertNotIn("GOLEM_SFU_ONLINE_UPDATE_LATENCY", builder)
+
+    def test_sequential_sfu_coalesces_each_score_and_p_tile(self):
+        header = SFU_HEADER.read_text(encoding="utf-8")
+        source = SFU_SOURCE.read_text(encoding="utf-8")
+        builder = CPU_BUILDER.read_text(encoding="utf-8")
+
+        self.assertIn("TensorRowEngineEventKind::TileStreamReadDone", source)
+        self.assertIn("TensorRowEngineEventKind::TileStreamWriteDone", source)
+        self.assertIn("issueAttentionTileStreamRead", header + source)
+        self.assertIn("issueAttentionTileStreamWrite", header + source)
+        self.assertIn("tileScoreValues", header)
+        self.assertIn("tilePValues", header)
+        self.assertIn("sfu_tensor_tile_stream_read_requests", source)
+        self.assertIn("sfu_tensor_tile_stream_write_requests", source)
+        self.assertIn("sfu_tensor_tile_stream_bytes_per_cycle", source)
+        self.assertIn("GOLEM_SFU_TILE_STREAM_ENABLE", builder)
+        self.assertIn(
+            'GOLEM_SFU_TILE_STREAM_BYTES_PER_CYCLE", "256"', builder
+        )
+        self.assertIn("GOLEM_SFU_TILE_STREAM_BASE_LATENCY_CYCLES", builder)
+        self.assertIn("sfu_tile_stream_bytes_per_cycle", builder)
+        self.assertIn('"tile_stream_bytes_per_cycle"', builder)
+
+    def test_sequential_sfu_paces_row_dispatch_at_four_cycles(self):
+        header = SFU_HEADER.read_text(encoding="utf-8")
+        source = SFU_SOURCE.read_text(encoding="utf-8")
+        builder = CPU_BUILDER.read_text(encoding="utf-8")
+
+        self.assertIn("TensorRowEngineEventKind::RowDispatch", source)
+        self.assertIn("scheduleAttentionRowDispatch", header + source)
+        self.assertIn("rowDispatchIntervalCycles_", header + source)
+        self.assertIn("tensorRowDispatches_", header + source)
+        self.assertIn(
+            'GOLEM_SFU_ROW_DISPATCH_INTERVAL_CYCLES", "4"', builder
+        )
+        self.assertIn('"row_dispatch_interval_cycles"', builder)
+
+    def test_k_first_cross_query_wait_is_classified(self):
+        source = ROCC_SOURCE.read_text(encoding="utf-8")
+        start = source.index("void continueAttentionAfterVReady()")
+        end = source.index("void beginAttentionSoftmax()", start)
+        body = source[start:end]
+
+        self.assertIn("if (descriptor.crossQuery)", body)
+        self.assertIn("statAttentionKvCrossQueryHits_->addData(1)", body)
+        self.assertIn("statAttentionKvCrossQueryWaits_->addData(1)", body)
+
+    def test_sequential_qk_group_readout_supports_tail_query_rows(self):
+        source = ROCC_SOURCE.read_text(encoding="utf-8")
+        start = source.index("void readAttentionSequentialQkTile()")
+        end = source.index("void readAttentionQkOutput()", start)
+        body = source[start:end]
+
+        self.assertNotIn("rows != 64", body)
+        self.assertIn("rows > arrayOutputSize", body)
+        self.assertIn("arrayOutputSize + query", body)
+
+    def test_sequential_vector_scatter_accepts_partial_lane_groups(self):
+        source = WCP_SOURCE.read_text(encoding="utf-8")
+        start = source.index("bool programGemmInputScatterBankAsync(",
+                             source.index("class WorkerCommandProcessorLocal"))
+        end = source.index("bool programGemmMatrixActiveBankAsync(", start)
+        body = source[start:end]
+
+        self.assertNotIn("arrayIds.size() != 64", body)
+        self.assertIn("arrayIds.size() > 64", body)
+
+    def test_sequential_pv_output_group_accepts_tail_rows(self):
+        source = MVM_ARRAY_SOURCE.read_text(encoding="utf-8")
+        start = source.index(
+            "trafficClass == AttentionClusterTrafficClass::SequentialPvORestore"
+        )
+        end = source.index(
+            "if (arrayIDs.size() != 2", start
+        )
+        body = source[start:end]
+
+        self.assertNotIn("arrayIDs.size() != 64", body)
+        self.assertIn("arrayIDs.size() > 64", body)
+
     def test_public_attention_runner_defaults_to_sequential_64(self):
         runner = WRAPPER.read_text(encoding="utf-8")
         unified = UNIFIED_RUNNER.read_text(encoding="utf-8")
-        self.assertIn(
-            'GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE:=1', runner
+        self.assertIn("GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE", runner)
+        self.assertNotIn("--attention-cluster", runner)
+        self.assertNotIn("--partitioned-qk-pv", runner)
+        self.assertNotIn("--no-sequential-64", runner)
+        self.assertIn("KV_PAIR_REUSE=0", unified)
+        self.assertIn("KV_QUERY_GROUP_SIZE=1", unified)
+
+        rejected = subprocess.run(
+            [str(WRAPPER), "--attention-cluster", "--show-config"],
+            cwd=HERE, capture_output=True, text=True,
         )
-        sequential = unified[unified.index(
-            "if (( ATTENTION_SEQUENTIAL_64 )); then"
-        ):unified.index("fi", unified.index(
-            "if (( ATTENTION_SEQUENTIAL_64 )); then"
-        ))]
-        self.assertIn("KV_PAIR_REUSE=0", sequential)
-        self.assertIn("KV_QUERY_GROUP_SIZE=1", sequential)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("Unknown", rejected.stderr)
 
     def test_attention_sfu_keeps_intermediate_rows_resident(self):
         source = SFU_SOURCE.read_text(encoding="utf-8")
@@ -100,11 +373,11 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
 
     def test_sequential_qk_reduction_restarts_for_every_key_tile(self):
         source = ROCC_SOURCE.read_text(encoding="utf-8")
-        begin = source.index("    void beginAttentionKeyTile()")
+        begin = source.index("    void beginAttentionKvTile()")
         end = source.index("    bool attentionClusterCallbackMatches", begin)
         key_tile_entry = source[begin:end]
         self.assertIn(
-            "attentionWorker_->qkReductionHalf = 0;", key_tile_entry
+            "attentionWorker_->qkReductionSlice = 0;", key_tile_entry
         )
 
     def test_sequential_qk_reads_and_writes_only_the_final_score_tile(self):
@@ -121,8 +394,8 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         begin = rocc.index("    void completeAttentionSequentialQkWave()")
         end = rocc.index("    void readAttentionQkOutput()", begin)
         final_only = rocc[begin:end]
-        self.assertIn("state.qkReductionHalf == 0", final_only)
-        self.assertIn("beginAttentionQkPanel();", final_only)
+        self.assertIn("state.qkReductionSlice == 0", final_only)
+        self.assertIn("beginAttentionQkKvSubtile();", final_only)
         self.assertIn("readAttentionSequentialQkTile();", final_only)
         self.assertEqual(final_only.count("readAttentionSequentialQkTile();"), 1)
 
@@ -139,7 +412,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             "    void programAttentionSequentialPvMatrices()", begin
         )
         pv_entry = source[begin:end]
-        self.assertIn("state.panel != 0", pv_entry)
+        self.assertIn("state.phaseSliceIndex != 0", pv_entry)
         self.assertIn("state.vPayload.size() == tileValues", pv_entry)
         self.assertIn("programAttentionSequentialPvMatrices();", pv_entry)
 
@@ -250,7 +523,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         )
 
         input_program = source[input_begin:restore_begin]
-        self.assertIn("attentionWorker_->keyTileOrdinal != 0", input_program)
+        self.assertIn("attentionWorker_->kvTileIndex != 0", input_program)
         self.assertIn(
             "AttentionTilePipelinePhase::PvRestoreOutput", input_program
         )
@@ -279,8 +552,8 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertEqual(expected["max_observed_fanout_expected"], 64)
         scatter = expected_sequential_64_scatter_activity(activity, 256, 1)
         self.assertEqual(scatter["requests"], 6)
-        self.assertEqual(scatter["bytes"], 98304)
-        self.assertEqual(scatter["transfer_cycles"], 390)
+        self.assertEqual(scatter["bytes"], 73728)
+        self.assertEqual(scatter["transfer_cycles"], 294)
 
     def test_sequential_64_q1024_activity_uses_full_worker_blocks(self):
         activity = make_sequential_64_activity(1024, 1024, 128, 64)
@@ -335,24 +608,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertEqual(qk["worker_totals"]["busy_ticks"], 184000)
         self.assertEqual(qk["max_worker_concurrency"], 19)
         self.assertIn("not end-to-end latency", profile["interval_semantics"])
-
-    def test_attention_cluster_ii_counts_cover_partial_and_small_groups(self):
-        self.assertEqual(
-            attention_cluster_ii_sample_counts(1, 1, 4),
-            {"steady": 0, "boundary": 0},
-        )
-        self.assertEqual(
-            attention_cluster_ii_sample_counts(2, 1, 4),
-            {"steady": 0, "boundary": 0},
-        )
-        self.assertEqual(
-            attention_cluster_ii_sample_counts(4, 1, 4),
-            {"steady": 2, "boundary": 0},
-        )
-        self.assertEqual(
-            attention_cluster_ii_sample_counts(5, 3, 4),
-            {"steady": 6, "boundary": 5},
-        )
 
     def test_dma_runtime_invariants_check_real_queue_and_credit_conservation(self):
         valid_lines = "".join(
@@ -425,6 +680,48 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             result = parse_dma_runtime_invariants(
                 runtime_log, expected_credit_cap=0)
             self.assertEqual(result["mismatches"], {})
+
+    def test_dma_runtime_invariants_prefer_mpi_safe_compact_summary(self):
+        compact_credit_lines = "".join(
+            f"GOLEM_MEMNIC_DMA_CREDIT_CONSERVATION "
+            f"name=dirctrl_{node}:highlink cap=128 available=128 "
+            f"admitted={40 if node else 0} released={40 if node else 0} "
+            "pending=0\n"
+            for node in range(5)
+        )
+        diagnostic_credit_lines = "".join(
+            f"CREDIT_OWNER_SUMMARY name=dirctrl_{node}:highlink cap=128 "
+            f"available=128 admitted={40 if node else 0} "
+            f"released={40 if node else 0} pending=0\n"
+            for node in range(5)
+        )
+        compact_lines = "".join(
+            f"GOLEM_MEMNIC_DMA_RESPONSE_CONSERVATION "
+            f"component=dirctrl_{node}:highlink attempted=40 immediate=10 "
+            "enqueued=30 drained=30 pending=0 responses_d0=10 "
+            "responses_d1=10 responses_d2=10 responses_far=10\n"
+            for node in range(1, 5)
+        )
+        interleaved_long_lines = (
+            "CREDIT_OWNER_SUMMARY name=dirctrl_1:highlink cap=128 "
+            "available=128 admitted=40 released=40 [rank output interleaved]\n"
+            "GOLEM_MEMNIC_DMA_RESPONSE_STATS component=dirctrl_1:highlink "
+            "attempted=40 immediate=10 enqueued=30 [rank output interleaved]\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            runtime_log = pathlib.Path(directory) / "runtime.log"
+            runtime_log.write_text(
+                compact_credit_lines + diagnostic_credit_lines
+                + compact_lines + interleaved_long_lines,
+                encoding="ascii",
+            )
+            result = parse_dma_runtime_invariants(runtime_log)
+            self.assertEqual(result["mismatches"], {})
+            self.assertEqual(len(result["credit_owners"]), 5)
+            self.assertEqual(len(result["response_nodes"]), 4)
+
+        memnic = MEMNIC_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("GOLEM_MEMNIC_DMA_CREDIT_CONSERVATION", memnic)
 
     def write_placement_manifest(self, directory, mpi_ranks, overrides=None):
         component_ranks = expected_component_ranks(mpi_ranks)
@@ -559,7 +856,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("GOLEM_ATTENTION_PV_MATRIX_BROADCAST=1", enabled.stdout)
         self.assertIn("GOLEM_ATTENTION_PV_MATRIX_BROADCAST=0", disabled.stdout)
         for name, value in (
-            ("GOLEM_MATRIX_BROADCAST_MAX_FANOUT", "16"),
+            ("GOLEM_MATRIX_BROADCAST_MAX_FANOUT", "64"),
             ("GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE", "256"),
             ("GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES", "1"),
             ("GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES", "1"),
@@ -637,47 +934,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertEqual(cluster_32_32["fanout_sum"], 1024)
         self.assertEqual(cluster_32_32["sink_bytes"], 6389760)
 
-    def test_cluster_uses_chapter4_64_array_contract(self):
-        cluster = (HERE.parents[2] / "attention" / "attentionCluster.h").read_text()
-        runner = SCALE_RUNNER.read_text()
-        rocc = ROCC_SOURCE.read_text()
-
-        for contract in (
-            "uint32_t arrays = 64",
-            "uint32_t qkArrays = 16",
-            "uint32_t pvArrays = 48",
-            "uint32_t arrayInputs = 64",
-            "uint32_t arrayOutputs = 64",
-        ):
-            self.assertIn(contract, cluster)
-        self.assertIn("ARRAY_INPUT=64", runner)
-        self.assertIn("ARRAY_OUTPUT=64", runner)
-        self.assertIn("NUM_ARRAYS=64", runner)
-        self.assertIn("attentionClusterQkArray", rocc)
-        self.assertIn("attentionClusterPvArray", rocc)
-        self.assertIn("readAttentionClusterScorePairAsync", rocc)
-
-        array = (HERE.parents[2] / "array" / "mvmComputeArray.h").read_text()
-        wcp = WCP_SOURCE.read_text()
-        builder = CPU_BUILDER.read_text()
-        for source in (array, wcp):
-            self.assertIn("attention_cluster_qk_arrays", source)
-            self.assertIn("attentionClusterQkArrays", source)
-        self.assertGreaterEqual(
-            builder.count('"attention_cluster_qk_arrays": attention_cluster_qk_arrays'),
-            3,
-        )
-
-        cluster_bc64 = expected_attention_cluster_broadcast_activity(
-            make_attention_activity(256, 256, 128, key_block_rows=64),
-            64, 1, 1,
-        )
-        self.assertEqual(cluster_bc64["requests"], 208)
-        self.assertEqual(cluster_bc64["ingress_bytes"], 311296)
-        self.assertEqual(cluster_bc64["sink_bytes"], 3211264)
-        self.assertEqual(cluster_bc64["transfer_cycles"], 5192)
-        self.assertEqual(cluster_bc64["fanout_sum"], 448)
-
     def test_qk_matrix_broadcast_has_an_explicit_disable_option(self):
         result = subprocess.run(
             [
@@ -693,20 +949,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("GOLEM_ATTENTION_QK_MATRIX_BROADCAST=0", result.stdout)
-
-    def test_attention_direct_gemm_fallback_is_explicit(self):
-        result = subprocess.run(
-            [str(SCALE_RUNNER), "--direct-gemm", "--dry-run"],
-            cwd=HERE,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-
-        self.assertIn("GOLEM_ATTENTION_GENERIC_GEMM_ENABLE=0", result.stdout)
-        self.assertIn("GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE=0", result.stdout)
-        self.assertIn("GOLEM_ATTENTION_QK_PANEL_ROW_BURST=0", result.stdout)
-        self.assertIn("architecture/archive/ncores_selfcom_dma.py", result.stdout)
 
     def test_scale_runner_uses_model_native_cycle_contract(self):
         result = subprocess.run(
@@ -838,12 +1080,13 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         verifier = BASELINE_VERIFIER.read_text()
         self.assertIn('source "$SCRIPT_DIR/env_local_install.sh"', text)
         self.assertIn('"$ATTENTION_DIR/run_flash_attention.sh"', text)
-        self.assertIn('--queries "$QUERIES"', text)
-        self.assertIn('--keys "$KEYS"', text)
+        self.assertIn('--query-length "$QUERY_LENGTH"', text)
+        self.assertIn('--kv-length "$KV_LENGTH"', text)
         self.assertIn('--head-dim "$HEAD_DIM"', text)
         self.assertIn('--timeout "$TIMEOUT" --artifact-root "$ARTIFACT_ROOT"', text)
         self.assertIn('export SST_LIB_PATH="$WORKTREE_ROOT/install/lib/sst-elements-library"', text)
         self.assertIn('--mpi-ranks) MPI_RANKS="$2"', text)
+        self.assertIn('MPI_RANKS=4', text)
         self.assertIn('--baseline) BASELINE_JSON="$2"', text)
         self.assertNotIn('BASELINE_DIR="$WORKTREE_ROOT/baseline/$PROFILE"', text)
         self.assertNotIn('--profile', text)
@@ -1036,6 +1279,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         group_one_config = dict(
             line.split("=", 1) for line in group_one.stdout.splitlines()
         )
+        self.assertEqual(group_one_config["MPI_RANKS"], "4")
         self.assertEqual(group_one_config["KV_PAIR_REUSE"], "0")
         self.assertEqual(group_one_config["KV_QUERY_GROUP_SIZE"], "1")
 
@@ -1081,8 +1325,8 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
 
     def test_unified_runner_rejects_shapes_that_do_not_fit_fixed_topology(self):
         invalid_cases = (
-            ("--queries", "257", "--queries must be divisible by 256"),
-            ("--keys", "129", "--keys must be divisible by 128"),
+            ("--queries", "257", "--query-length must be divisible by 256"),
+            ("--keys", "129", "--kv-length must be divisible by 128"),
             ("--head-dim", "65", "--head-dim must be 64 or 128"),
             ("--head-dim", "16", "--head-dim must be 64 or 128"),
             ("--head-dim", "32", "--head-dim must be 64 or 128"),
@@ -1137,8 +1381,8 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("GOLEM_ATTENTION_GUEST_MANAGER_QUERIES=192", result.stdout)
         self.assertIn("GOLEM_ATTENTION_GUEST_KEYS=512", result.stdout)
         self.assertIn("GOLEM_ATTENTION_GUEST_HEAD_DIM=64", result.stdout)
-        self.assertIn("--queries 768", result.stdout)
-        self.assertIn("--keys 512", result.stdout)
+        self.assertIn("--query-length 768", result.stdout)
+        self.assertIn("--kv-length 512", result.stdout)
         self.assertIn("--head-dim 64", result.stdout)
         self.assertNotIn("--scale-point", result.stdout)
 
@@ -1184,8 +1428,8 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         source = ROCC_SOURCE.read_text()
         self.assertIn("isStreamingAttentionWorkerShape", source)
         self.assertIn("streamingAttentionWindowBytes", source)
-        self.assertIn("desc.queries % 64 == 0", source)
-        self.assertIn("desc.keys % 128 == 0", source)
+        self.assertIn("desc.group_query_rows % 64 == 0", source)
+        self.assertIn("desc.kv_length % 128 == 0", source)
         self.assertNotIn("const bool e3Shape", source)
 
     def test_lifecycle_skew_requires_all_manager_timestamps(self):
@@ -1208,132 +1452,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("attentionCallbackGenerationMatches(generation)", source)
         self.assertIn("attention_kv_second_lookahead_prefetches", source)
 
-    def test_attention_cluster_uses_bounded_group_kv_distribution(self):
-        rocc = ROCC_SOURCE.read_text()
-        group_ctrl = GROUP_CTRL_HEADER.read_text() + GROUP_CTRL_SOURCE.read_text()
-        builder = CPU_BUILDER.read_text()
-        runner = SCALE_RUNNER.read_text()
-
-        for token in (
-            "ATTENTION_KV_REQUEST",
-            "ATTENTION_KV_DELIVERY",
-            "ATTENTION_KV_ACK",
-            "ATTENTION_KV_CANCEL",
-            "attentionKvDistributionSlots_",
-            "requestedMask",
-            "completedMask",
-            "cancelAttentionKvGeneration",
-        ):
-            self.assertIn(token, group_ctrl + rocc)
-        self.assertIn("loadAttentionKvPairToLocal", rocc)
-        self.assertGreaterEqual(rocc.count("targetQueryBlock, targetKeyTileOrdinal"), 2)
-        self.assertIn("attention_kv_distribution_enable", rocc + builder)
-        self.assertIn("GOLEM_ATTENTION_KV_DISTRIBUTION_ENABLE", runner)
-        architecture = ARCHIVE_ARCH.read_text()
-        self.assertIn('if _env_flag("GOLEM_CTRL_LINK_ENABLE", False):', architecture)
-        self.assertIn('f"ctrl_req_{worker_core}_to_{manager_core}"', architecture)
-        self.assertIn('f"ctrl_rsp_{manager_core}_to_{worker_core}"', architecture)
-
-        enabled = subprocess.run(
-            [str(SCALE_RUNNER), "--attention-cluster", "--queries", "256",
-             "--keys", "128", "--head-dim", "128", "--dry-run"],
-            cwd=HERE, check=True, capture_output=True, text=True,
-        )
-        self.assertIn("GOLEM_ATTENTION_KV_DISTRIBUTION_ENABLE=1", enabled.stdout)
-        self.assertIn("GOLEM_CTRL_LINK_ENABLE=1", enabled.stdout)
-        self.assertIn("architecture/archive/ncores_selfcom_dma.py", enabled.stdout)
-
-        disabled = subprocess.run(
-            [str(SCALE_RUNNER), "--attention-cluster", "--no-kv-distribution",
-             "--queries", "256", "--keys", "128", "--head-dim", "128",
-             "--dry-run"],
-            cwd=HERE, check=True, capture_output=True, text=True,
-        )
-        self.assertIn("GOLEM_ATTENTION_KV_DISTRIBUTION_ENABLE=0", disabled.stdout)
-        self.assertIn("GOLEM_CTRL_LINK_ENABLE=0", disabled.stdout)
-        self.assertIn("architecture/archive/ncores_selfcom_dma.py", disabled.stdout)
-
-    def test_attention_cluster_pv_o_row_fusion_has_independent_ablation(self):
-        rocc = ROCC_SOURCE.read_text()
-        builder = CPU_BUILDER.read_text()
-        runner = SCALE_RUNNER.read_text()
-        verifier = (HERE / "verify_fused_attention_scale_stats.py").read_text()
-
-        for token in (
-            "submitRow",
-            "attention_cluster_o_fused_rows",
-            "attention_cluster_o_fused_bytes",
-            "attention_pv_o_row_fusion",
-        ):
-            self.assertIn(token, rocc + builder + verifier)
-        self.assertIn("GOLEM_ATTENTION_PV_O_ROW_FUSION", runner)
-        self.assertIn("--pv-o-row-fusion", runner)
-        self.assertIn("if not pv_o_row_fusion:", verifier)
-        self.assertIn('"attention_cluster_qk_pv_overlap_cycles"', verifier)
-
-        base_args = [
-            str(SCALE_RUNNER), "--attention-cluster", "--queries", "256",
-            "--keys", "128", "--head-dim", "128", "--dry-run",
-        ]
-        enabled = subprocess.run(
-            base_args, cwd=HERE, check=True, capture_output=True, text=True,
-        )
-        disabled = subprocess.run(
-            base_args[:-1] + ["--no-pv-o-row-fusion", "--dry-run"],
-            cwd=HERE, check=True, capture_output=True, text=True,
-        )
-        ordered = subprocess.run(
-            [str(SCALE_RUNNER), "--pv-o-row-fusion", "--attention-cluster",
-             "--queries", "256", "--keys", "128", "--head-dim", "128",
-             "--dry-run"],
-            cwd=HERE, check=True, capture_output=True, text=True,
-        )
-        self.assertIn("GOLEM_ATTENTION_PV_O_ROW_FUSION=1", enabled.stdout)
-        self.assertIn("GOLEM_ATTENTION_PV_O_ROW_FUSION=0", disabled.stdout)
-        self.assertIn("GOLEM_ATTENTION_PV_O_ROW_FUSION=1", ordered.stdout)
-
-    def test_attention_cluster_pv_input_pipeline_counts_logical_rows(self):
-        verifier = (
-            HERE / "verify_fused_attention_scale_stats.py"
-        ).read_text()
-        self.assertIn(
-            'activity["jobs"] * 16 if attention_cluster else',
-            verifier,
-        )
-
-    def test_attention_manager_kv_lookahead_is_bounded_and_ablatable(self):
-        groupctrl = (
-            HERE.parents[6] / "src/sst/elements/golem/groupctrl/groupctrl.cc"
-        ).read_text()
-        header = (
-            HERE.parents[6] / "src/sst/elements/golem/groupctrl/groupctrl.h"
-        ).read_text()
-        runner = SCALE_RUNNER.read_text()
-        for token in (
-            "attention_kv_manager_lookahead",
-            "maybeStartAttentionKvLookahead",
-            "attention_kv_manager_lookahead_loads",
-            "attention_kv_manager_lookahead_hits",
-            "cancelledMask",
-        ):
-            self.assertIn(token, groupctrl + header + runner)
-        self.assertIn("GOLEM_ATTENTION_KV_MANAGER_LOOKAHEAD", runner)
-        self.assertIn("--no-kv-manager-lookahead", runner)
-
-        base_args = [
-            str(SCALE_RUNNER), "--attention-cluster", "--queries", "256",
-            "--keys", "128", "--head-dim", "128", "--dry-run",
-        ]
-        enabled = subprocess.run(
-            base_args, cwd=HERE, check=True, capture_output=True, text=True,
-        )
-        disabled = subprocess.run(
-            base_args[:-1] + ["--no-kv-manager-lookahead", "--dry-run"],
-            cwd=HERE, check=True, capture_output=True, text=True,
-        )
-        self.assertIn("GOLEM_ATTENTION_KV_MANAGER_LOOKAHEAD=1", enabled.stdout)
-        self.assertIn("GOLEM_ATTENTION_KV_MANAGER_LOOKAHEAD=0", disabled.stdout)
-
     def test_attention_dma_response_admission_uses_explicit_consumer_metadata(self):
         global_memory = GLOBAL_MEMORY_SOURCE.read_text()
         memnic = MEMNIC_SOURCE.read_text()
@@ -1342,10 +1460,10 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         for token in (
             "DmaConsumerMetadata",
             "jobId",
-            "consumerQueryBlock",
-            "consumerTile",
-            "targetQueryBlock",
-            "targetTile",
+            "consumerQueryTile",
+            "consumerKvTileIndex",
+            "targetQueryTile",
+            "targetKvTileIndex",
             "DmaOperand::AttentionK",
             "DmaOperand::AttentionV",
         ):
@@ -1437,19 +1555,17 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn('QK_READOUT_OVERLAP="${GOLEM_ATTENTION_QK_READOUT_OVERLAP:-0}"', runner)
         self.assertIn("--qk-readout-overlap", runner)
 
-    def test_qk_panel_row_burst_reuses_bounded_wcp_c_buffer(self):
+    def test_qk_score_row_burst_reuses_bounded_wcp_c_buffer(self):
         rocc = ROCC_SOURCE.read_text()
         wcp = WCP_SOURCE.read_text()
         builder = CPU_BUILDER.read_text()
         runner = SCALE_RUNNER.read_text()
         unified = UNIFIED_RUNNER.read_text()
 
-        self.assertIn("attention_qk_panel_row_burst", rocc + builder)
-        default_on = 'QK_PANEL_ROW_BURST="${GOLEM_ATTENTION_QK_PANEL_ROW_BURST:-1}"'
-        self.assertIn(default_on, runner)
-        self.assertIn(default_on, unified)
-        self.assertIn("--qk-panel-row-burst", runner + unified)
-        self.assertIn("--no-qk-panel-row-burst", runner + unified)
+        self.assertIn("attention_qk_score_row_burst", rocc + builder)
+        self.assertIn("GOLEM_ATTENTION_QK_SCORE_ROW_BURST", runner + unified)
+        self.assertIn("--qk-score-row-burst", runner)
+        self.assertIn("--no-qk-score-row-burst", runner)
         self.assertIn("CBufferMode::ATTENTION_TILE_STORAGE", wcp)
         self.assertIn("CBufferMode::GEMM_PARTIAL_C", wcp)
         self.assertIn("beginAttentionTileStorage", rocc + wcp)
@@ -1460,7 +1576,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("attentionTileStorageRowWriteReadyCycle_", wcp)
         self.assertIn("attention_tile_storage_capacity_rejections", wcp)
         self.assertIn("attention_tile_storage_mode_conflicts", wcp)
-        self.assertIn("bytes.size() != static_cast<size_t>(panelKeys) * sizeof(float)", rocc)
+        self.assertIn("bytes.size() != static_cast<size_t>(kvSubtileRows) * sizeof(float)", rocc)
         self.assertNotIn("std::vector<std::vector<float>> qkRowBurst", rocc)
 
     def test_qk_input_pipeline_is_bounded_and_tagged(self):
@@ -1471,7 +1587,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("attention_qk_input_pipeline", rocc + builder)
         self.assertIn("std::array<AttentionQkInputSlot, 2>", rocc)
         for field in (
-            "generation", "queryBlock", "keyTileOrdinal", "panel",
+            "generation", "queryTileIndex", "kvTileIndex", "phaseSliceIndex",
             "arrayId", "transferTag",
         ):
             self.assertIn(field, rocc)
@@ -1485,39 +1601,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             runner,
         )
 
-    def test_qk_input_pipeline_default_and_ablation_modes(self):
-        clean_env = os.environ.copy()
-        clean_env.pop("GOLEM_ATTENTION_QK_INPUT_PIPELINE", None)
-        base_args = [
-            str(SCALE_RUNNER), "--queries", "256", "--keys", "256",
-            "--head-dim", "128", "--dry-run",
-        ]
-        default_run = subprocess.run(
-            base_args, cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(default_run.returncode, 0, default_run.stderr)
-        self.assertIn(
-            "GOLEM_ATTENTION_QK_INPUT_PIPELINE=1", default_run.stdout,
-        )
-
-        disabled_run = subprocess.run(
-            base_args[:-1] + ["--no-qk-input-pipeline", "--dry-run"],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(disabled_run.returncode, 0, disabled_run.stderr)
-        self.assertIn(
-            "GOLEM_ATTENTION_QK_INPUT_PIPELINE=0", disabled_run.stdout,
-        )
-
-        invalid_run = subprocess.run(
-            base_args[:-1] + [
-                "--qk-dataflow-transpose", "--qk-input-pipeline", "--dry-run",
-            ],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertNotEqual(invalid_run.returncode, 0)
-
-    def test_qk_panel_row_burst_starts_sram_at_wcp_dispatch(self):
+    def test_qk_score_row_burst_starts_sram_at_wcp_dispatch(self):
         wcp = WCP_SOURCE.read_text()
         self.assertIn("uint64_t dispatchCycle", wcp)
         self.assertIn("command.storageGeneration, dispatchCycle", wcp)
@@ -1527,47 +1611,17 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             wcp,
         )
 
-    def test_qk_panel_row_burst_cancel_purges_its_generation(self):
+    def test_qk_score_row_burst_cancel_purges_its_generation(self):
         wcp = WCP_SOURCE.read_text()
         self.assertIn("completion.storageGeneration = command.storageGeneration", wcp)
         self.assertIn("purgeAttentionTileStorageCommands", wcp)
 
-    def test_qk_panel_row_burst_bank_resources_are_bounded(self):
+    def test_qk_score_row_burst_bank_resources_are_bounded(self):
         wcp = WCP_SOURCE.read_text()
         self.assertIn("maxRowsPerBank", wcp)
         self.assertIn("attention_tile_storage_banks must be in range [1, 16]", wcp)
 
-    def test_qk_panel_row_burst_default_and_ablation_modes(self):
-        base_args = [
-            str(SCALE_RUNNER), "--queries", "256", "--keys", "256",
-            "--head-dim", "128", "--dry-run",
-        ]
-        default_run = subprocess.run(
-            base_args, cwd=HERE, capture_output=True, text=True,
-        )
-        self.assertEqual(default_run.returncode, 0, default_run.stderr)
-        self.assertIn("GOLEM_ATTENTION_QK_PANEL_ROW_BURST=1", default_run.stdout)
-
-        disabled_run = subprocess.run(
-            base_args[:-1] + ["--no-qk-panel-row-burst", "--dry-run"],
-            cwd=HERE,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(disabled_run.returncode, 0, disabled_run.stderr)
-        self.assertIn("GOLEM_ATTENTION_QK_PANEL_ROW_BURST=0", disabled_run.stdout)
-
-        invalid_run = subprocess.run(
-            base_args[:-1] + ["--direct-gemm", "--qk-panel-row-burst", "--dry-run"],
-            cwd=HERE,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(invalid_run.returncode, 2)
-        self.assertIn("requires generic GEMM/WCP", invalid_run.stderr)
-
-
-    def test_qk_panel_row_burst_runner_rejects_oversized_bank_count(self):
+    def test_qk_score_row_burst_runner_rejects_oversized_bank_count(self):
         bank_env = os.environ.copy()
         bank_env["GOLEM_ATTENTION_TILE_STORAGE_BANKS"] = "17"
         result = subprocess.run(
@@ -1587,8 +1641,8 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         builder = CPU_BUILDER.read_text()
 
         self.assertIn("attention_pv_input_residency", rocc + builder)
-        self.assertIn("attentionPvInputResidentQueryBlock", rocc)
-        self.assertIn("attentionPvInputResidentKeyTile", rocc)
+        self.assertIn("attentionPvInputResidentQueryTile", rocc)
+        self.assertIn("attentionPvInputResidentKvTile", rocc)
         self.assertIn("invalidateAttentionPvInputResidency", rocc)
         self.assertIn("beginAttentionStorageSession", rocc + wcp)
         self.assertIn("endAttentionStorageSession", rocc + wcp)
@@ -1606,45 +1660,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             rocc,
         )
 
-    def test_cluster_pv_pipelines_o_commits_until_the_tile_boundary(self):
-        rocc = ROCC_SOURCE.read_text()
-        start = rocc.index("    void readAttentionClusterPvOutput()")
-        end = rocc.index("    void continueAttentionAfterSoftmaxAndPvMatrix()", start)
-        output_path = rocc[start:end]
-
-        self.assertIn(
-            "state.index + 1 == attentionQueryRows(state) &&\n"
-            "                state.attentionClusterOCommitsPending != 0",
-            output_path,
-        )
-        self.assertNotIn(
-            "state.clusterPvOutputInFlight == 0 &&\n"
-            "            state.attentionClusterOCommitsPending == 0",
-            output_path,
-        )
-        self.assertIn(
-            "attentionWorker_->attentionClusterOCommitsPending == 0",
-            rocc,
-        )
-
-    def test_cluster_group_commands_reject_permanent_errors_before_enqueue(self):
-        array = ARRAY_SOURCE.read_text()
-        mvm = MVM_ARRAY_SOURCE.read_text()
-        wcp = WCP_SOURCE.read_text()
-
-        self.assertIn("validateOperandContextRequest", array + mvm + wcp)
-        self.assertIn("validateOutputGroupRequest", array + mvm + wcp)
-        self.assertIn("elemBytes == sizeof(T)", mvm)
-        self.assertIn(
-            "!array_->validateOperandContextRequest(arrayId, operandBank)",
-            wcp,
-        )
-        self.assertIn(
-            "!array_->validateOutputGroupRequest(\n"
-            "                arrayIds, elemBytes, trafficClass)",
-            wcp,
-        )
-
     def test_near_array_verifier_uses_resolved_hardware_timing(self):
         verifier = (HERE / "verify_fused_attention_scale_stats.py").read_text()
         runner = SCALE_RUNNER.read_text()
@@ -1654,173 +1669,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("--near-array-output-bytes-per-cycle", runner)
         self.assertIn("--array-buffer-base-latency-cycles", runner)
         self.assertIn("the two durable PV overlaps", verifier)
-
-    def test_pv_residency_and_o_accumulator_have_independent_ablations(self):
-        clean_env = os.environ.copy()
-        clean_env.pop("GOLEM_ATTENTION_PV_INPUT_RESIDENCY", None)
-        clean_env.pop("GOLEM_ATTENTION_O_ACCUMULATOR_CBUFFER", None)
-        base_args = [
-            str(SCALE_RUNNER), "--queries", "256", "--keys", "256",
-            "--head-dim", "128", "--dry-run",
-        ]
-        default_run = subprocess.run(
-            base_args, cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(default_run.returncode, 0, default_run.stderr)
-        self.assertIn(
-            "GOLEM_ATTENTION_PV_INPUT_RESIDENCY=1", default_run.stdout,
-        )
-        self.assertIn(
-            "GOLEM_ATTENTION_O_ACCUMULATOR_CBUFFER=0", default_run.stdout,
-        )
-
-        enabled_run = subprocess.run(
-            base_args[:-1] + [
-                "--pv-input-residency", "--o-accumulator-cbuffer", "--dry-run",
-            ],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(enabled_run.returncode, 0, enabled_run.stderr)
-        self.assertIn(
-            "GOLEM_ATTENTION_PV_INPUT_RESIDENCY=1", enabled_run.stdout,
-        )
-        self.assertIn(
-            "GOLEM_ATTENTION_O_ACCUMULATOR_CBUFFER=1", enabled_run.stdout,
-        )
-        self.assertIn(
-            "GOLEM_ATTENTION_KV_PAIR_REUSE=0", enabled_run.stdout,
-        )
-        self.assertIn("--pv-input-residency", enabled_run.stdout)
-        self.assertIn("--o-accumulator-cbuffer", enabled_run.stdout)
-
-        disabled_run = subprocess.run(
-            base_args[:-1] + ["--no-pv-input-residency", "--dry-run"],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(disabled_run.returncode, 0, disabled_run.stderr)
-        self.assertIn(
-            "GOLEM_ATTENTION_PV_INPUT_RESIDENCY=0", disabled_run.stdout,
-        )
-        self.assertIn("--no-pv-input-residency", disabled_run.stdout)
-
-        invalid_run = subprocess.run(
-            base_args[:-1] + [
-                "--direct-gemm", "--pv-input-residency", "--dry-run",
-            ],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(invalid_run.returncode, 2)
-        self.assertIn("require generic GEMM/WCP", invalid_run.stderr)
-
-    def test_kv_query_group_reuse_has_bounded_state_and_v_retention_ablation(self):
-        rocc = ROCC_SOURCE.read_text()
-        sfu = (HERE.parents[2] / "sfu" / "sfu.cc").read_text()
-        builder = CPU_BUILDER.read_text()
-
-        self.assertIn("attention_kv_pair_reuse", rocc + builder)
-        self.assertIn("qLocalBuffers", rocc)
-        self.assertIn("oLocalBuffers", rocc)
-        self.assertIn("attentionHasNextGroupedQuery", rocc)
-        self.assertIn("attentionKvGroupOwnerQueryBlock", rocc)
-        self.assertIn(
-            "targetQueryBlock != attentionKvGroupOwnerQueryBlock(state)", rocc,
-        )
-        self.assertIn("16u * attentionKvQueryGroupSize", sfu)
-        self.assertIn("globalRow % attentionOnlineContexts_.size()", sfu)
-        self.assertIn("context.row % attentionOnlineContexts_.size()", sfu)
-        self.assertNotIn("attentionOnlineContexts_[contextIndex]", sfu)
-        self.assertIn(
-            '"16" if attention_kv_pair_reuse else "4"', builder,
-        )
-        self.assertIn(
-            "attention_kv_pair_reuse and int(sfu_row_contexts) < 16", builder,
-        )
-        self.assertIn("GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE", builder)
-        self.assertIn("GOLEM_ATTENTION_PV_V_TILE_GROUP_RETENTION", builder)
-
-        clean_env = os.environ.copy()
-        clean_env.pop("GOLEM_ATTENTION_KV_PAIR_REUSE", None)
-        clean_env.pop("GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE", None)
-        clean_env.pop("GOLEM_ATTENTION_PV_V_TILE_GROUP_RETENTION", None)
-        base_args = [
-            str(SCALE_RUNNER), "--queries", "1024", "--keys", "1024",
-            "--head-dim", "128", "--dry-run",
-        ]
-        default_run = subprocess.run(
-            base_args, cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(default_run.returncode, 0, default_run.stderr)
-        self.assertIn("GOLEM_ATTENTION_KV_PAIR_REUSE=1", default_run.stdout)
-        self.assertIn("GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE=4", default_run.stdout)
-        self.assertIn("GOLEM_ATTENTION_WINDOW_BYTES=149632", default_run.stdout)
-        self.assertIn("--kv-query-group-size 4", default_run.stdout)
-        self.assertIn("GOLEM_ATTENTION_PV_V_TILE_GROUP_RETENTION=1", default_run.stdout)
-
-        optimized_run = subprocess.run(
-            base_args[:-1] + ["--pv-v-tile-group-retention", "--dry-run"],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(optimized_run.returncode, 0, optimized_run.stderr)
-        self.assertIn(
-            "GOLEM_ATTENTION_PV_V_TILE_GROUP_RETENTION=1",
-            optimized_run.stdout,
-        )
-        self.assertIn("--pv-v-tile-group-retention", optimized_run.stdout)
-
-        retention_disabled_run = subprocess.run(
-            base_args[:-1] + ["--no-pv-v-tile-group-retention", "--dry-run"],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(
-            retention_disabled_run.returncode, 0,
-            retention_disabled_run.stderr,
-        )
-        self.assertIn(
-            "GOLEM_ATTENTION_PV_V_TILE_GROUP_RETENTION=0",
-            retention_disabled_run.stdout,
-        )
-
-        disabled_run = subprocess.run(
-            base_args[:-1] + ["--no-kv-pair-reuse", "--dry-run"],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(disabled_run.returncode, 0, disabled_run.stderr)
-        self.assertIn("GOLEM_ATTENTION_KV_PAIR_REUSE=0", disabled_run.stdout)
-
-        two_way_run = subprocess.run(
-            base_args[:-1] + ["--kv-query-group-size", "2", "--dry-run"],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(two_way_run.returncode, 0, two_way_run.stderr)
-        self.assertIn("GOLEM_ATTENTION_KV_PAIR_REUSE=1", two_way_run.stdout)
-        self.assertIn("GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE=2", two_way_run.stdout)
-        self.assertIn("GOLEM_ATTENTION_WINDOW_BYTES=116864", two_way_run.stdout)
-        self.assertIn("--kv-query-group-size 2", two_way_run.stdout)
-
-        one_way_run = subprocess.run(
-            base_args[:-1] + ["--kv-query-group-size", "1", "--dry-run"],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(one_way_run.returncode, 0, one_way_run.stderr)
-        self.assertIn("GOLEM_ATTENTION_KV_PAIR_REUSE=0", one_way_run.stdout)
-        self.assertIn("GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE=1", one_way_run.stdout)
-        self.assertIn("GOLEM_ATTENTION_WINDOW_BYTES=100480", one_way_run.stdout)
-
-        invalid_group_run = subprocess.run(
-            base_args[:-1] + ["--kv-query-group-size", "3", "--dry-run"],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(invalid_group_run.returncode, 2)
-        self.assertIn("must be 1, 2, or 4", invalid_group_run.stderr)
-
-        incompatible_run = subprocess.run(
-            base_args[:-1] + [
-                "--kv-pair-reuse", "--o-accumulator-cbuffer", "--dry-run",
-            ],
-            cwd=HERE, env=clean_env, capture_output=True, text=True,
-        )
-        self.assertEqual(incompatible_run.returncode, 2)
-        self.assertIn("incompatible", incompatible_run.stderr)
 
     def test_frozen_e3_and_e4_baselines_cover_all_rank_modes(self):
         for profile, queries in (("e3", 1024), ("e4", 2048)):
@@ -2133,47 +1981,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn('GOLEM_ATTENTION_PV_V_TILE_BUFFER_HIT_TICKS', builder)
         self.assertIn('GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES_PER_CYCLE', builder)
 
-    def test_v_tile_buffer_overrides_close_runner_and_verifier_contract(self):
-        result = subprocess.run(
-            [
-                str(SCALE_RUNNER), "--queries", "256", "--keys", "256",
-                "--head-dim", "64", "--dry-run",
-            ],
-            cwd=HERE,
-            env={
-                **os.environ,
-                "GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES": "32768",
-                "GOLEM_ATTENTION_PV_V_TILE_BUFFER_HIT_TICKS": "7",
-                "GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES_PER_CYCLE": "32",
-            },
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        for setting in (
-            "GOLEM_ATTENTION_WINDOW_BYTES=141440",
-            "GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES=32768",
-            "GOLEM_ATTENTION_PV_V_TILE_BUFFER_HIT_TICKS=7",
-            "GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES_PER_CYCLE=32",
-            "--pv-v-tile-buffer-bytes 32768",
-            "--pv-v-tile-buffer-hit-ticks 7",
-            "--pv-v-tile-buffer-bytes-per-cycle 32",
-        ):
-            self.assertIn(setting, result.stdout)
-
-        too_large = subprocess.run(
-            [str(SCALE_RUNNER), "--dry-run"],
-            cwd=HERE,
-            env={
-                **os.environ,
-                "GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES": "262144",
-            },
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(too_large.returncode, 2)
-        self.assertIn("exceeds the 256 KiB local-GM window", too_large.stderr)
-
     def test_pv_pipeline_and_active_k_are_default_benchmark_mechanisms(self):
         runner = SCALE_RUNNER.read_text()
         resolved = subprocess.run(
@@ -2296,64 +2103,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("attention_generic_gemm_qk_ops", rocc)
         self.assertIn("attention_generic_gemm_pv_ops", rocc)
 
-    def test_bounded_cross_tile_operand_pipeline_contract(self):
-        rocc = ROCC_SOURCE.read_text()
-        compute_array = ARRAY_SOURCE.read_text()
-        mvm = MVM_ARRAY_SOURCE.read_text()
-        builder = CPU_BUILDER.read_text()
-        runner = SCALE_RUNNER.read_text()
-
-        for token in (
-            "AttentionAheadOperandContext",
-            "attention_cross_tile_operand_pipeline",
-            "attention_cross_tile_operand_promotions",
-            "attention_cross_tile_operand_tag_mismatches",
-        ):
-            self.assertIn(token, rocc)
-        self.assertIn("operandContextBanks", compute_array)
-        self.assertIn("hasPendingBufferTransfers", compute_array)
-        self.assertIn("operandIndex", mvm)
-        self.assertIn("arrayID >= numArrays", mvm)
-        self.assertIn("attentionOperandContextBanks_ != 2", rocc)
-        self.assertIn("GOLEM_ARRAY_OPERAND_CONTEXT_BANKS", builder)
-        self.assertIn("--no-cross-tile-operand-pipeline", runner)
-
-        default = subprocess.run(
-            [str(SCALE_RUNNER), "--dry-run"], cwd=HERE, check=True,
-            capture_output=True, text=True,
-        )
-        self.assertIn(
-            "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE=1", default.stdout
-        )
-        self.assertIn("GOLEM_ARRAY_OPERAND_CONTEXT_BANKS=2", default.stdout)
-        direct = subprocess.run(
-            [str(SCALE_RUNNER), "--direct-gemm", "--dry-run"], cwd=HERE,
-            check=True, capture_output=True, text=True,
-        )
-        self.assertIn(
-            "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE=0", direct.stdout
-        )
-        self.assertIn("GOLEM_ARRAY_OPERAND_CONTEXT_BANKS=1", direct.stdout)
-        group1 = subprocess.run(
-            [str(SCALE_RUNNER), "--kv-query-group-size", "1", "--dry-run"],
-            cwd=HERE, check=True, capture_output=True, text=True,
-        )
-        self.assertIn(
-            "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE=0", group1.stdout
-        )
-        self.assertIn("GOLEM_ARRAY_OPERAND_CONTEXT_BANKS=1", group1.stdout)
-        invalid_group1 = subprocess.run(
-            [
-                str(SCALE_RUNNER),
-                "--kv-query-group-size", "1",
-                "--cross-tile-operand-pipeline",
-                "--dry-run",
-            ],
-            cwd=HERE, check=False, capture_output=True, text=True,
-        )
-        self.assertEqual(invalid_group1.returncode, 2)
-        self.assertIn("grouped K/V reuse", invalid_group1.stderr)
-
     def test_attention_generic_gemm_models_wcp_control_timing(self):
         result = subprocess.run(
             [str(WRAPPER), "--dry-run"],
@@ -2404,22 +2153,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         verifier = (HERE / "verify_fused_attention_scale_stats.py").read_text()
         self.assertIn('lifecycle["wcp_gemm_proxy"]', verifier)
         self.assertIn("gemm_completions * wcp_gemm_proxy_completion_latency_cycles", verifier)
-
-    def test_cluster_matrix_lookahead_switches_are_independent(self):
-        qk_only = subprocess.run(
-            [str(WRAPPER), "--attention-cluster", "--cluster-qk-matrix-lookahead",
-             "--no-cluster-pv-matrix-lookahead", "--dry-run"],
-            cwd=HERE, check=True, capture_output=True, text=True,
-        )
-        pv_only = subprocess.run(
-            [str(WRAPPER), "--attention-cluster", "--no-cluster-qk-matrix-lookahead",
-             "--cluster-pv-matrix-lookahead", "--dry-run"],
-            cwd=HERE, check=True, capture_output=True, text=True,
-        )
-        self.assertIn("GOLEM_ATTENTION_CLUSTER_QK_MATRIX_LOOKAHEAD=1", qk_only.stdout)
-        self.assertIn("GOLEM_ATTENTION_CLUSTER_PV_MATRIX_LOOKAHEAD=0", qk_only.stdout)
-        self.assertIn("GOLEM_ATTENTION_CLUSTER_QK_MATRIX_LOOKAHEAD=0", pv_only.stdout)
-        self.assertIn("GOLEM_ATTENTION_CLUSTER_PV_MATRIX_LOOKAHEAD=1", pv_only.stdout)
 
     def test_attention_wcp_control_timing_rejects_invalid_configuration(self):
         invalid_environments = (

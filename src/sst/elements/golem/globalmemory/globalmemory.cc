@@ -136,16 +136,18 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
     // three virtual networks are available.
     request_vn = 0;
     response_vn = (num_vns >= 2) ? 1 : 0;
-    reduction_vn = params.find<uint32_t>("reduction_vn", request_vn);
-    if (reduction_vn >= static_cast<uint32_t>(num_vns)) {
+    const uint32_t legacyReductionVn =
+        params.find<uint32_t>("reduction_vn", request_vn);
+    control_vn = params.find<uint32_t>("control_vn", legacyReductionVn);
+    if (control_vn >= static_cast<uint32_t>(num_vns)) {
         output->fatal(CALL_INFO, -1,
-                      "GlobalMemory '%s' reduction_vn=%u is outside num_vns=%d\n",
-                      getName().c_str(), reduction_vn, num_vns);
+                      "GlobalMemory '%s' control_vn=%u is outside num_vns=%d\n",
+                      getName().c_str(), control_vn, num_vns);
     }
-    statReductionSendImmediate_ = registerStatistic<uint64_t>("gmem_reduction_send_immediate");
-    statReductionSendQueued_ = registerStatistic<uint64_t>("gmem_reduction_send_queued");
-    statReductionSendRejected_ = registerStatistic<uint64_t>("gmem_reduction_send_rejected");
-    statReductionReceived_ = registerStatistic<uint64_t>("gmem_reduction_received");
+    statControlSendImmediate_ = registerStatistic<uint64_t>("gmem_control_send_immediate");
+    statControlSendQueued_ = registerStatistic<uint64_t>("gmem_control_send_queued");
+    statControlSendRejected_ = registerStatistic<uint64_t>("gmem_control_send_rejected");
+    statControlReceived_ = registerStatistic<uint64_t>("gmem_control_received");
     statAttentionClusterLocalReadBusyUnion_ = registerStatistic<uint64_t>(
         "attention_cluster_local_read_busy_union_ticks");
     statAttentionClusterLocalReadBusySpan_ = registerStatistic<uint64_t>(
@@ -234,8 +236,8 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
                     "GlobalMemory DMA fallback routers: [%s]\n",
                     routers_desc.str().c_str());
     output->verbose(CALL_INFO, 2, 0,
-                    "GlobalMemory VN mapping: read_request_vn=%u response_vn=%u write_vn=%u reduction_vn=%u (num_vns=%d)\n",
-                    request_vn, response_vn, write_vn, reduction_vn, num_vns);
+                    "GlobalMemory VN mapping: read_request_vn=%u response_vn=%u write_vn=%u control_vn=%u (num_vns=%d)\n",
+                    request_vn, response_vn, write_vn, control_vn, num_vns);
     output->verbose(CALL_INFO, 2, 0,
                     "GlobalMemory DMA window: max_inflight=%u retry_ticks=%u max_retries=%u\n",
                     dma_read_max_inflight, dma_read_retry_ticks, dma_read_max_retries);
@@ -357,22 +359,22 @@ bool GlobalMemoryImplement::ctrlIsReadRequestPending(uint64_t requestId) const
     return request_pending.find(requestId) != request_pending.end();
 }
 
-bool GlobalMemoryImplement::reductionNetworkAvailable() const
+bool GlobalMemoryImplement::controlNetworkAvailable() const
 {
-    return link_control != nullptr && reduction_vn < static_cast<uint32_t>(num_vns);
+    return link_control != nullptr && control_vn < static_cast<uint32_t>(num_vns);
 }
 
-void GlobalMemoryImplement::setReductionMessageHandler(ReductionMessageHandler handler)
+void GlobalMemoryImplement::setControlMessageHandler(ControlMessageHandler handler)
 {
-    reduction_message_handler = std::move(handler);
+    control_message_handler = std::move(handler);
 }
 
-bool GlobalMemoryImplement::sendReductionMessage(uint32_t destinationCore,
-                                                  const ReductionTransportMessage& message)
+bool GlobalMemoryImplement::sendControlMessage(uint32_t destinationCore,
+                                                  const ControlTransportMessage& message)
 {
-    if (!reductionNetworkAvailable() ||
+    if (!controlNetworkAvailable() ||
         destinationCore > static_cast<uint32_t>(std::numeric_limits<int>::max())) {
-        statReductionSendRejected_->addData(1);
+        statControlSendRejected_->addData(1);
         return false;
     }
 
@@ -383,35 +385,35 @@ bool GlobalMemoryImplement::sendReductionMessage(uint32_t destinationCore,
 
     const auto destination = coreEndpointMap.find(static_cast<int>(destinationCore));
     if (destination == coreEndpointMap.end() || destination->second < 0) {
-        statReductionSendRejected_->addData(1);
+        statControlSendRejected_->addData(1);
         return false;
     }
 
     auto* req = new (std::nothrow) SST::Interfaces::SimpleNetwork::Request();
-    ReductionTransportMessage stampedMessage = message;
+    ControlTransportMessage stampedMessage = message;
     stampedMessage.sendCycle = getCurrentSimCycle();
-    auto* payload = new ReductionTransportEvent(stampedMessage);
+    auto* payload = new ControlTransportEvent(stampedMessage);
     if (req == nullptr || payload == nullptr) {
         delete req;
         delete payload;
-        statReductionSendRejected_->addData(1);
+        statControlSendRejected_->addData(1);
         return false;
     }
 
-    req->size_in_bits = sizeof(ReductionTransportMessage) * 8;
+    req->size_in_bits = sizeof(ControlTransportMessage) * 8;
     req->src = network_id;
     req->dest = static_cast<SST::Interfaces::SimpleNetwork::nid_t>(destination->second);
-    req->vn = reduction_vn;
+    req->vn = control_vn;
     req->givePayload(payload);
 
-    const bool immediateSend = try_send_or_queue(req, "sendReductionMessage");
+    const bool immediateSend = try_send_or_queue(req, "sendControlMessage");
     if (immediateSend) {
-        reduction_send_immediate_count++;
-        statReductionSendImmediate_->addData(1);
+        control_send_immediate_count++;
+        statControlSendImmediate_->addData(1);
     } else {
         // try_send_or_queue retains ownership in send_retry_queue on a full NIC.
-        reduction_send_queued_count++;
-        statReductionSendQueued_->addData(1);
+        control_send_queued_count++;
+        statControlSendQueued_->addData(1);
     }
     return true;
 }
@@ -1419,14 +1421,14 @@ void GlobalMemoryImplement::finish() {
                    dma_write_last_issue_cycle,
                    dma_write_last_complete_cycle,
                    send_retry_queue_max_depth);
-    if (reduction_send_immediate_count != 0 || reduction_send_queued_count != 0 ||
-        reduction_receive_count != 0) {
+    if (control_send_immediate_count != 0 || control_send_queued_count != 0 ||
+        control_receive_count != 0) {
         output->output("GlobalMemory core=%d reduction transport stats: immediate_send=%" PRIu64
                        " queued_send=%" PRIu64 " received=%" PRIu64 "\n",
                        core_id,
-                       reduction_send_immediate_count,
-                       reduction_send_queued_count,
-                       reduction_receive_count);
+                       control_send_immediate_count,
+                       control_send_queued_count,
+                       control_receive_count);
     }
     link_control->finish();
 }
@@ -1935,13 +1937,13 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
         handled_any = true;
         // 获取并转换请求中的事件负载
         Event* ev_base = req->takePayload();
-        if (auto* reductionEvent = dynamic_cast<ReductionTransportEvent*>(ev_base)) {
-            reduction_receive_count++;
-            statReductionReceived_->addData(1);
-            if (reduction_message_handler) {
-                reduction_message_handler(reductionEvent->getMessage());
+        if (auto* controlEvent = dynamic_cast<ControlTransportEvent*>(ev_base)) {
+            control_receive_count++;
+            statControlReceived_->addData(1);
+            if (control_message_handler) {
+                control_message_handler(controlEvent->getMessage());
             }
-            delete reductionEvent;
+            delete controlEvent;
             delete req;
             continue;
         }

@@ -43,8 +43,8 @@ public:
         : SST::Event(), type(GroupCtrlMsgType::REQUEST), groupId(0), workerSlot(0),
           window(0), status(0), reqSeq(0), srcAddr(0), dstAddr(0), bytes(0),
           targetNode(0), generation(0), jobTag(0), queryGroup(0),
-          keyTileOrdinal(0), keyTile(0), keyTiles(0), totalKeys(0),
-          keyBlockRows(0), tileRows(0),
+          kvTileIndex(0), physicalKvTileIndex(0), numKvTiles(0), kvLength(0),
+          kvTileRows(0), tileRows(0),
           rowsPerBand(0), headDim(0), nodeStrideBytes(0), kAddr(0), vAddr(0),
           kDstAddr(0), vDstAddr(0) {}
 
@@ -68,11 +68,11 @@ public:
         ser & generation;
         ser & jobTag;
         ser & queryGroup;
-        ser & keyTileOrdinal;
-        ser & keyTile;
-        ser & keyTiles;
-        ser & totalKeys;
-        ser & keyBlockRows;
+        ser & kvTileIndex;
+        ser & physicalKvTileIndex;
+        ser & numKvTiles;
+        ser & kvLength;
+        ser & kvTileRows;
         ser & tileRows;
         ser & rowsPerBand;
         ser & headDim;
@@ -102,11 +102,11 @@ public:
     uint64_t generation;
     uint64_t jobTag;
     uint32_t queryGroup;
-    uint32_t keyTileOrdinal;
-    uint32_t keyTile;
-    uint32_t keyTiles;
-    uint32_t totalKeys;
-    uint32_t keyBlockRows;
+    uint32_t kvTileIndex;
+    uint32_t physicalKvTileIndex;
+    uint32_t numKvTiles;
+    uint32_t kvLength;
+    uint32_t kvTileRows;
     uint32_t tileRows;
     uint32_t rowsPerBand;
     uint32_t headDim;
@@ -123,11 +123,11 @@ struct AttentionKvRequest {
     uint64_t generation = 0;
     uint64_t jobTag = 0;
     uint32_t queryGroup = 0;
-    uint32_t keyTileOrdinal = 0;
-    uint32_t keyTile = 0;
-    uint32_t keyTiles = 0;
-    uint32_t totalKeys = 0;
-    uint32_t keyBlockRows = 0;
+    uint32_t kvTileIndex = 0;
+    uint32_t physicalKvTileIndex = 0;
+    uint32_t numKvTiles = 0;
+    uint32_t kvLength = 0;
+    uint32_t kvTileRows = 0;
     uint32_t tileRows = 0;
     uint32_t rowsPerBand = 0;
     uint32_t headDim = 0;
@@ -262,11 +262,11 @@ private:
         uint64_t generation = 0;
         uint64_t jobTag = 0;
         uint32_t queryGroup = 0;
-        uint32_t keyTileOrdinal = 0;
-        uint32_t keyTile = 0;
-        uint32_t keyTiles = 0;
-        uint32_t totalKeys = 0;
-        uint32_t keyBlockRows = 0;
+        uint32_t kvTileIndex = 0;
+        uint32_t physicalKvTileIndex = 0;
+        uint32_t numKvTiles = 0;
+        uint32_t kvLength = 0;
+        uint32_t kvTileRows = 0;
         uint32_t tileRows = 0;
         uint32_t rowsPerBand = 0;
         uint32_t headDim = 0;

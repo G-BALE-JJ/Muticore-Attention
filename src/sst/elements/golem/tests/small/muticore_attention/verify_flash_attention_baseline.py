@@ -149,8 +149,8 @@ def main():
     parser.add_argument("--lifecycle")
     parser.add_argument("--partition")
     parser.add_argument("--mpi-ranks", required=True, type=int)
-    parser.add_argument("--queries", type=int)
-    parser.add_argument("--keys", type=int)
+    parser.add_argument("--query-length", "--queries", dest="query_length", type=int)
+    parser.add_argument("--kv-length", "--keys", dest="kv_length", type=int)
     parser.add_argument("--head-dim", type=int)
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--result-json")
@@ -159,7 +159,7 @@ def main():
         if not args.preflight_only:
             parser.error("--partition is required when --mpi-ranks is greater than 1")
     if args.preflight_only and any(
-            value is None for value in (args.queries, args.keys, args.head_dim)):
+            value is None for value in (args.query_length, args.kv_length, args.head_dim)):
         parser.error("preflight requires --queries, --keys, and --head-dim")
     if not args.preflight_only and (not args.result or not args.lifecycle):
         parser.error("verification requires --result and --lifecycle")
@@ -168,7 +168,7 @@ def main():
         baseline = load_json(args.baseline)
         if args.preflight_only:
             checks = preflight_checks(
-                baseline, args.queries, args.keys, args.head_dim, args.mpi_ranks
+                baseline, args.query_length, args.kv_length, args.head_dim, args.mpi_ranks
             )
         else:
             partition = load_json(args.partition) if args.partition else None

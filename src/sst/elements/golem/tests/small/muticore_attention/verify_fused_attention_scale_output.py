@@ -10,20 +10,20 @@ import attention_case
 
 
 def compute_attention_blocked(
-    q, k, v, queries, keys, head_dim, query_block_rows=64
+    q, k, v, query_length, kv_length, head_dim, query_tile_rows=64
 ):
     """Compute a bounded-memory NumPy reference for scale-point verification."""
     import numpy as np
 
-    if query_block_rows <= 0:
-        raise ValueError("query_block_rows must be positive")
-    q_matrix = np.asarray(q, dtype=np.float64).reshape(queries, head_dim)
-    k_matrix = np.asarray(k, dtype=np.float64).reshape(keys, head_dim)
-    v_matrix = np.asarray(v, dtype=np.float64).reshape(keys, head_dim)
+    if query_tile_rows <= 0:
+        raise ValueError("query_tile_rows must be positive")
+    q_matrix = np.asarray(q, dtype=np.float64).reshape(query_length, head_dim)
+    k_matrix = np.asarray(k, dtype=np.float64).reshape(kv_length, head_dim)
+    v_matrix = np.asarray(v, dtype=np.float64).reshape(kv_length, head_dim)
     scale = 1.0 / math.sqrt(head_dim)
     output = []
-    for begin in range(0, queries, query_block_rows):
-        scores = q_matrix[begin:begin + query_block_rows] @ k_matrix.T
+    for begin in range(0, query_length, query_tile_rows):
+        scores = q_matrix[begin:begin + query_tile_rows] @ k_matrix.T
         scores *= scale
         scores -= np.max(scores, axis=1, keepdims=True)
         np.exp(scores, out=scores)
@@ -33,17 +33,42 @@ def compute_attention_blocked(
 
 
 def verify(q_file, k_file, v_file, hbm_dir, output_offset,
-           queries, keys, head_dim, band_rows):
-    q = attention_case._read_f32(q_file, queries * head_dim)
-    k = attention_case._read_f32(k_file, keys * head_dim)
-    v = attention_case._read_f32(v_file, keys * head_dim)
-    expected = compute_attention_blocked(q, k, v, queries, keys, head_dim)
+           query_length, kv_length, num_query_heads, num_kv_heads,
+           head_dim, band_rows):
+    if (num_query_heads <= 0 or num_kv_heads <= 0 or
+            num_query_heads % num_kv_heads != 0):
+        raise ValueError("num_query_heads must be divisible by num_kv_heads")
+    q = attention_case._read_f32(
+        q_file, num_query_heads * query_length * head_dim
+    )
+    k = attention_case._read_f32(k_file, num_kv_heads * kv_length * head_dim)
+    v = attention_case._read_f32(v_file, num_kv_heads * kv_length * head_dim)
+    expected = []
+    q_head_values = query_length * head_dim
+    kv_head_values = kv_length * head_dim
+    group_size = num_query_heads // num_kv_heads
+    for head in range(num_query_heads):
+        kv_head = head // group_size
+        expected.extend(compute_attention_blocked(
+            q[head * q_head_values:(head + 1) * q_head_values],
+            k[kv_head * kv_head_values:(kv_head + 1) * kv_head_values],
+            v[kv_head * kv_head_values:(kv_head + 1) * kv_head_values],
+            query_length, kv_length, head_dim,
+        ))
     actual = []
     band_values = band_rows * head_dim
-    for node in range(1, 5):
-        actual.extend(attention_case._read_f32(
-            Path(hbm_dir) / f"hbm_out_node{node}.bin", band_values, output_offset
-        ))
+    node_outputs = [
+        attention_case._read_f32(
+            Path(hbm_dir) / f"hbm_out_node{node}.bin",
+            num_query_heads * band_values, output_offset,
+        )
+        for node in range(1, 5)
+    ]
+    for head in range(num_query_heads):
+        for node_data in node_outputs:
+            for query in range(band_rows):
+                begin = (query * num_query_heads + head) * head_dim
+                actual.extend(node_data[begin:begin + head_dim])
     mismatches = 0
     max_abs_error = 0.0
     first_mismatch = None
@@ -54,7 +79,8 @@ def verify(q_file, k_file, v_file, hbm_dir, output_offset,
             mismatches += 1
             if first_mismatch is None:
                 first_mismatch = {
-                    "query": index // head_dim,
+                    "head": index // q_head_values,
+                    "query": (index % q_head_values) // head_dim,
                     "dim": index % head_dim,
                     "actual": got,
                     "expected": want,
@@ -66,8 +92,14 @@ def verify(q_file, k_file, v_file, hbm_dir, output_offset,
         "mismatches": mismatches,
         "max_abs_error": max_abs_error,
         "first_mismatch": first_mismatch,
-        "shape": {"queries": queries, "keys": keys, "head_dim": head_dim},
+        "shape": {
+            "num_query_heads": num_query_heads, "num_kv_heads": num_kv_heads,
+            "gqa_group_size": group_size,
+            "query_length": query_length, "kv_length": kv_length,
+            "head_dim": head_dim,
+        },
         "hbm_output_nodes": [1, 2, 3, 4],
+        "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
         "score_probability_hbm_bytes": 0,
     }
 
@@ -79,15 +111,26 @@ def main():
     parser.add_argument("--v-file", required=True)
     parser.add_argument("--hbm-dir", required=True)
     parser.add_argument("--output-offset", type=lambda value: int(value, 0), required=True)
-    parser.add_argument("--queries", type=int, required=True)
-    parser.add_argument("--keys", type=int, required=True)
+    parser.add_argument("--query-length", "--queries", dest="query_length",
+                        type=int, required=True)
+    parser.add_argument("--kv-length", "--keys", dest="kv_length",
+                        type=int, required=True)
+    parser.add_argument("--heads", type=int)
+    parser.add_argument("--num-query-heads", "--query-heads",
+                        dest="num_query_heads", type=int)
+    parser.add_argument("--num-kv-heads", "--kv-heads",
+                        dest="num_kv_heads", type=int)
     parser.add_argument("--head-dim", type=int, required=True)
     parser.add_argument("--band-rows", type=int, required=True)
     parser.add_argument("--result-json")
     args = parser.parse_args()
+    num_query_heads = args.num_query_heads or args.heads or 1
+    num_kv_heads = args.num_kv_heads or (
+        args.heads if args.heads is not None else num_query_heads
+    )
     result = verify(args.q_file, args.k_file, args.v_file, args.hbm_dir,
-                    args.output_offset, args.queries, args.keys,
-                    args.head_dim, args.band_rows)
+                    args.output_offset, args.query_length, args.kv_length,
+                    num_query_heads, num_kv_heads, args.head_dim, args.band_rows)
     print(json.dumps(result, indent=2))
     if args.result_json:
         Path(args.result_json).write_text(json.dumps(result, indent=2) + "\n")

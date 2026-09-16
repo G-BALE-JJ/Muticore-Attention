@@ -64,20 +64,20 @@ struct DmaConsumerMetadata {
     uint8_t valid = 0;
     uint64_t jobId = 0;
     uint32_t worker = 0;
-    uint32_t consumerQueryBlock = 0;
-    uint32_t consumerTile = 0;
-    uint32_t targetQueryBlock = 0;
-    uint32_t targetTile = 0;
+    uint32_t consumerQueryTile = 0;
+    uint32_t consumerKvTileIndex = 0;
+    uint32_t targetQueryTile = 0;
+    uint32_t targetKvTileIndex = 0;
     DmaOperand operand = DmaOperand::Unknown;
 
     void serialize_order(SST::Core::Serialization::serializer& ser) {
         ser & valid;
         ser & jobId;
         ser & worker;
-        ser & consumerQueryBlock;
-        ser & consumerTile;
-        ser & targetQueryBlock;
-        ser & targetTile;
+        ser & consumerQueryTile;
+        ser & consumerKvTileIndex;
+        ser & targetQueryTile;
+        ser & targetKvTileIndex;
         ser & operand;
     }
 };
@@ -104,7 +104,7 @@ private:
     uint64_t requestId_ = 0;
 };
 
-enum class ReductionTransportMessageKind {
+enum class ControlTransportMessageKind {
     MaxRequest,
     MaxResponse,
     SumRequest,
@@ -116,8 +116,8 @@ enum class ReductionTransportMessageKind {
     AttentionManagerComplete,
 };
 
-struct ReductionTransportMessage {
-    ReductionTransportMessageKind kind = ReductionTransportMessageKind::MaxRequest;
+struct ControlTransportMessage {
+    ControlTransportMessageKind kind = ControlTransportMessageKind::MaxRequest;
     uint64_t jobId = 0;
     uint64_t tag = 0;
     uint32_t ownerCore = 0;
@@ -135,13 +135,18 @@ struct ReductionTransportMessage {
     uint32_t dataNodeMask = 0;
     uint32_t rowsPerBand = 0;
     uint32_t headDim = 0;
-    uint32_t queryBlockRows = 0;
-    uint32_t keyBlockRows = 0;
+    uint32_t queryTileRows = 0;
+    uint32_t kvTileRows = 0;
     uint32_t flags = 0;
     uint64_t qAddr = 0;
     uint64_t kAddr = 0;
     uint64_t vAddr = 0;
     uint64_t oAddr = 0;
+    uint32_t numQueryHeads = 1;
+    uint32_t numKvHeads = 1;
+    uint32_t kvHeadIndex = 0;
+    uint32_t queryLength = 0;
+    uint32_t groupQueryRowBegin = 0;
 
     void serialize_order(SST::Core::Serialization::serializer& ser) {
         ser & kind;
@@ -162,33 +167,38 @@ struct ReductionTransportMessage {
         ser & dataNodeMask;
         ser & rowsPerBand;
         ser & headDim;
-        ser & queryBlockRows;
-        ser & keyBlockRows;
+        ser & queryTileRows;
+        ser & kvTileRows;
         ser & flags;
         ser & qAddr;
         ser & kAddr;
         ser & vAddr;
         ser & oAddr;
+        ser & numQueryHeads;
+        ser & numKvHeads;
+        ser & kvHeadIndex;
+        ser & queryLength;
+        ser & groupQueryRowBegin;
     }
 };
 
-class ReductionTransportEvent : public SST::Event {
+class ControlTransportEvent : public SST::Event {
 public:
-    ReductionTransportEvent() = default;
-    explicit ReductionTransportEvent(const ReductionTransportMessage& message)
+    ControlTransportEvent() = default;
+    explicit ControlTransportEvent(const ControlTransportMessage& message)
         : message_(message) {}
 
-    const ReductionTransportMessage& getMessage() const { return message_; }
+    const ControlTransportMessage& getMessage() const { return message_; }
 
     void serialize_order(SST::Core::Serialization::serializer& ser) override {
         Event::serialize_order(ser);
         ser & message_;
     }
 
-    ImplementSerializable(SST::Golem::ReductionTransportEvent);
+    ImplementSerializable(SST::Golem::ControlTransportEvent);
 
 private:
-    ReductionTransportMessage message_;
+    ControlTransportMessage message_;
 };
 
 class NetworkDataEvent : public Event {
@@ -285,7 +295,7 @@ public:
     using DmaCallback = ::SST::Golem::DmaCallback;
     using LocalReadCallback = ::SST::Golem::LocalReadCallback;
     using LocalWriteCallback = ::SST::Golem::LocalWriteCallback;
-    using ReductionMessageHandler = std::function<void(const ReductionTransportMessage&)>;
+    using ControlMessageHandler = std::function<void(const ControlTransportMessage&)>;
     virtual void wr_to_globalmem(uint64_t wr_addr, size_t length, const std::vector<uint8_t>& wr_data) = 0;
     virtual void rd_from_globalmem(uint64_t rd_addr, size_t length, std::vector<uint8_t>& rd_data) = 0;
     virtual bool localReadAsync(uint64_t addr, size_t length, LocalMemoryClient client,
@@ -316,10 +326,10 @@ public:
                                              const std::vector<uint8_t>& data) = 0;
     virtual bool dma_completion_done(uint64_t token) const = 0;
     virtual void dma_completion_retire(uint64_t token) = 0;
-    virtual bool reductionNetworkAvailable() const = 0;
-    virtual bool sendReductionMessage(uint32_t destinationCore,
-                                      const ReductionTransportMessage& message) = 0;
-    virtual void setReductionMessageHandler(ReductionMessageHandler handler) = 0;
+    virtual bool controlNetworkAvailable() const = 0;
+    virtual bool sendControlMessage(uint32_t destinationCore,
+                                      const ControlTransportMessage& message) = 0;
+    virtual void setControlMessageHandler(ControlMessageHandler handler) = 0;
     virtual bool beginAttentionGeneration(uint64_t generation) {
         return generation != 0;
     }
@@ -369,22 +379,22 @@ public:
         {"local_access_write_ports", "Number of modeled local-memory write ports", "1"},
         {"local_access_queue_depth", "Maximum queued plus in-flight local-memory requests", "32"},
         {"local_access_max_request_bytes", "Maximum bytes accepted by one local-memory request", "4096"},
-        {"attention_cluster_enable", "Enable Attention cluster Local-GM interval statistics", "0"},
         {"identityWindowBase", "Base address of Identity Window for DMA access to main memory", "0x04000000"},
         {"dma_read_retry_ticks", "Retry timeout ticks per DMA READ chunk (in selfLink ticks)", "96"},
         {"dma_read_max_retries", "Maximum retry attempts per DMA READ chunk", "8"},
         {"dma_read_max_inflight", "Maximum in-flight DMA READ chunks per core", "8"},
         {"dma_burst_bytes", "DMA chunk size in bytes for read/write burst splitting", "64"},
         {"dma_retry_tick_cpu_cycles", "CPU cycles represented by one DMA retry tick", "1"},
-        {"reduction_vn", "Virtual network for reduction transport (defaults to request VN).", ""},
+        {"control_vn", "Virtual network for control and collective messages (defaults to request VN).", ""},
+        {"reduction_vn", "Deprecated alias for control_vn.", ""},
         {"memoryRouters", "Comma-separated memory router IDs for DMA fallback routing (e.g., \"24,0,1,2,3\")", ""}
     })
 
     SST_ELI_DOCUMENT_STATISTICS(
-        {"gmem_reduction_send_immediate", "Reduction messages sent immediately", "messages", 1},
-        {"gmem_reduction_send_queued", "Reduction messages queued for later send", "messages", 1},
-        {"gmem_reduction_send_rejected", "Reduction messages rejected before transport ownership", "messages", 1},
-        {"gmem_reduction_received", "Reduction messages received from the network", "messages", 1},
+        {"gmem_control_send_immediate", "Control messages sent immediately", "messages", 1},
+        {"gmem_control_send_queued", "Control messages queued for later send", "messages", 1},
+        {"gmem_control_send_rejected", "Control messages rejected before transport ownership", "messages", 1},
+        {"gmem_control_received", "Control messages received from the network", "messages", 1},
         {"attention_cluster_local_read_busy_union_ticks", "Union of Local-GM read-port intervals while cluster mode is enabled", "ticks", 1},
         {"attention_cluster_local_read_busy_span_ticks", "Span of Local-GM read-port intervals while cluster mode is enabled", "ticks", 1},
         {"attention_cluster_local_read_idle_gap_ticks", "Idle gaps within the cluster Local-GM read span", "ticks", 1},
@@ -442,10 +452,10 @@ public:
                                          const DmaConsumerMetadata& consumer = DmaConsumerMetadata()) override;
     void dma_update_consumer_progress(uint64_t firstHostAddr, uint64_t secondHostAddr,
                                       const DmaConsumerMetadata& consumer) override;
-    bool reductionNetworkAvailable() const override;
-    bool sendReductionMessage(uint32_t destinationCore,
-                              const ReductionTransportMessage& message) override;
-    void setReductionMessageHandler(ReductionMessageHandler handler) override;
+    bool controlNetworkAvailable() const override;
+    bool sendControlMessage(uint32_t destinationCore,
+                              const ControlTransportMessage& message) override;
+    void setControlMessageHandler(ControlMessageHandler handler) override;
     bool beginAttentionGeneration(uint64_t generation) override;
     bool attentionGenerationDrained(uint64_t generation) const override;
     bool retireAttentionGeneration(uint64_t generation) override;
@@ -696,7 +706,7 @@ private:
     bool dma_retry_event_scheduled = false;
     uint32_t request_vn = 0;
     uint32_t response_vn = 0;
-    uint32_t reduction_vn = 0;
+    uint32_t control_vn = 0;
     uint32_t write_vn = 0;
     uint64_t dma_retry_tick_counter = 0;
     uint64_t dma_read_send_immediate_count = 0;
@@ -734,13 +744,13 @@ private:
     uint64_t request_read_submit_ready_samples = 0;
     uint64_t request_read_submit_ready_cycles_sum = 0;
     uint64_t request_read_submit_ready_cycles_max = 0;
-    uint64_t reduction_send_immediate_count = 0;
-    uint64_t reduction_send_queued_count = 0;
-    uint64_t reduction_receive_count = 0;
-    Statistic<uint64_t>* statReductionSendImmediate_ = nullptr;
-    Statistic<uint64_t>* statReductionSendQueued_ = nullptr;
-    Statistic<uint64_t>* statReductionSendRejected_ = nullptr;
-    Statistic<uint64_t>* statReductionReceived_ = nullptr;
+    uint64_t control_send_immediate_count = 0;
+    uint64_t control_send_queued_count = 0;
+    uint64_t control_receive_count = 0;
+    Statistic<uint64_t>* statControlSendImmediate_ = nullptr;
+    Statistic<uint64_t>* statControlSendQueued_ = nullptr;
+    Statistic<uint64_t>* statControlSendRejected_ = nullptr;
+    Statistic<uint64_t>* statControlReceived_ = nullptr;
     Statistic<uint64_t>* statAttentionClusterLocalReadBusyUnion_ = nullptr;
     Statistic<uint64_t>* statAttentionClusterLocalReadBusySpan_ = nullptr;
     Statistic<uint64_t>* statAttentionClusterLocalReadIdleGap_ = nullptr;
@@ -749,7 +759,7 @@ private:
     Statistic<uint64_t>* statAttentionClusterLocalWriteBusySpan_ = nullptr;
     Statistic<uint64_t>* statAttentionClusterLocalWriteIdleGap_ = nullptr;
     Statistic<uint64_t>* statAttentionClusterLocalWriteMaxConcurrency_ = nullptr;
-    ReductionMessageHandler reduction_message_handler;
+    ControlMessageHandler control_message_handler;
     size_t send_retry_queue_max_depth = 0;
     std::unordered_map<SST::Interfaces::SimpleNetwork::Request*, uint64_t> dma_read_req_to_key;
 
@@ -807,9 +817,9 @@ public:
                                          const DmaConsumerMetadata& = DmaConsumerMetadata()) override;
     void dma_update_consumer_progress(uint64_t, uint64_t,
                                       const DmaConsumerMetadata&) override {}
-    bool reductionNetworkAvailable() const override { return false; }
-    bool sendReductionMessage(uint32_t, const ReductionTransportMessage&) override { return false; }
-    void setReductionMessageHandler(ReductionMessageHandler) override {}
+    bool controlNetworkAvailable() const override { return false; }
+    bool sendControlMessage(uint32_t, const ControlTransportMessage&) override { return false; }
+    void setControlMessageHandler(ControlMessageHandler) override {}
     uint64_t dma_write_to_host_async(uint64_t dst_pa, size_t length,
                                      const std::vector<uint8_t>& data) override;
     uint64_t dma_read_from_host_to_globalmem_async(uint64_t src_pa, size_t length, uint64_t gm_dst_addr,

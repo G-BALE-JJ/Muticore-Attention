@@ -2,8 +2,8 @@
 
 ## Final Architecture
 
-The public Attention runner selects the sequential-64 path by default. The
-legacy Attention cluster is used only with `--attention-cluster`.
+The public Attention runner uses the sequential-64 path. It is the only
+supported Attention worker dataflow.
 
 For `Q=K=1024`, `D=128`, FP32:
 
@@ -362,7 +362,8 @@ tile reads the complete 32 KiB O image through two 16 KiB LocalGM requests,
 uses the image for both grouped restores and gathers, and writes it through two
 16 KiB requests after slice 1. This preserves the final output DMA layout.
 
-For QK1024, old O is restored for 15 noninitial key tiles and output is gathered
+For `Sq=Skv=1024`, the running output accumulator is restored for 15
+noninitial K/V tiles and the updated output is gathered
 for all 16 tiles:
 
 ```text
@@ -375,7 +376,7 @@ Adding this complete O path to the previous 16,384-cycle worker dependency
 floor gives 20,600 cycles. It exceeds the 16,896-cycle HBM command floor, so
 the updated complete end-to-end theoretical lower bound is 20,600 cycles.
 
-The fixed QK1024 Ramulator2 run passes numerical and lifecycle verification at
+The fixed `Sq=Skv=1024,Dh=128` Ramulator2 run passes numerical and lifecycle verification at
 44,790 accelerator cycles:
 
 | Critical-worker phase | Before grouped O | Grouped O |
@@ -433,7 +434,7 @@ QK while V remains in flight; V is checked only at the PV boundary. The active
 descriptor is retained until tile completion so the two-pair buffer layout
 cannot overwrite a live operand.
 
-The final fixed QK1024 run passes backend, numerical, and lifecycle verification:
+The final fixed `Sq=Skv=1024,Dh=128` run passes backend, numerical, and lifecycle verification:
 
 | Metric | R26 grouped O | R28 shared K/V |
 |---|---:|---:|
@@ -454,5 +455,5 @@ that gap and is the next fixed-QK1024 optimization target.
 
 ```bash
 src/sst/elements/golem/tests/small/muticore_attention/run_flash_attention.sh \
-  --queries 1024 --keys 1024 --head-dim 128
+  --query-length 1024 --kv-length 1024 --head-dim 128
 ```

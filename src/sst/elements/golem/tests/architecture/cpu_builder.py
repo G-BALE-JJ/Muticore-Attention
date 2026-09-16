@@ -334,9 +334,39 @@ sfu_merge_latency = os.getenv("GOLEM_SFU_MERGE_LATENCY", "1")
 sfu_normalize_latency = os.getenv("GOLEM_SFU_NORMALIZE_LATENCY", "1")
 sfu_vector_lanes = os.getenv("GOLEM_SFU_VECTOR_LANES", "16")
 sfu_exp_lanes = os.getenv("GOLEM_SFU_EXP_LANES", "4")
-sfu_reduction_tree_latency = os.getenv("GOLEM_SFU_REDUCTION_TREE_LATENCY", "4")
+sfu_scale_latency = os.getenv("GOLEM_SFU_SCALE_LATENCY", "3")
+sfu_scale_ii = os.getenv("GOLEM_SFU_SCALE_II", "1")
+sfu_max_compare_latency = os.getenv("GOLEM_SFU_MAX_COMPARE_LATENCY", "1")
+sfu_max_compare_ii = os.getenv("GOLEM_SFU_MAX_COMPARE_II", "1")
+sfu_max_reduction_latency = os.getenv("GOLEM_SFU_MAX_REDUCTION_LATENCY", "4")
+sfu_max_reduction_ii = os.getenv("GOLEM_SFU_MAX_REDUCTION_II", "1")
+sfu_sum_reduction_latency = os.getenv("GOLEM_SFU_SUM_REDUCTION_LATENCY", "8")
+sfu_sum_reduction_ii = os.getenv("GOLEM_SFU_SUM_REDUCTION_II", "1")
 sfu_exp_latency = os.getenv("GOLEM_SFU_EXP_LATENCY", "8")
-sfu_reciprocal_latency = os.getenv("GOLEM_SFU_RECIPROCAL_LATENCY", "1")
+sfu_exp_ii = os.getenv("GOLEM_SFU_EXP_II", "1")
+sfu_online_max_latency = os.getenv("GOLEM_SFU_ONLINE_MAX_LATENCY", "1")
+sfu_online_max_ii = os.getenv("GOLEM_SFU_ONLINE_MAX_II", "1")
+sfu_online_exp_latency = os.getenv("GOLEM_SFU_ONLINE_EXP_LATENCY", "8")
+sfu_online_exp_ii = os.getenv("GOLEM_SFU_ONLINE_EXP_II", "1")
+sfu_online_mul_latency = os.getenv("GOLEM_SFU_ONLINE_MUL_LATENCY", "3")
+sfu_online_mul_ii = os.getenv("GOLEM_SFU_ONLINE_MUL_II", "1")
+sfu_online_add_latency = os.getenv("GOLEM_SFU_ONLINE_ADD_LATENCY", "3")
+sfu_online_add_ii = os.getenv("GOLEM_SFU_ONLINE_ADD_II", "1")
+sfu_reciprocal_latency = os.getenv("GOLEM_SFU_RECIPROCAL_LATENCY", "8")
+sfu_reciprocal_ii = os.getenv("GOLEM_SFU_RECIPROCAL_II", "1")
+sfu_normalize_vector_latency = os.getenv("GOLEM_SFU_NORMALIZE_VECTOR_LATENCY", "3")
+sfu_normalize_vector_ii = os.getenv("GOLEM_SFU_NORMALIZE_VECTOR_II", "1")
+sfu_pipeline_queue_depth = os.getenv("GOLEM_SFU_PIPELINE_QUEUE_DEPTH", "16")
+sfu_tile_stream_enable = os.getenv("GOLEM_SFU_TILE_STREAM_ENABLE", "1")
+sfu_tile_stream_bytes_per_cycle = os.getenv(
+    "GOLEM_SFU_TILE_STREAM_BYTES_PER_CYCLE", "256"
+)
+sfu_tile_stream_base_latency_cycles = os.getenv(
+    "GOLEM_SFU_TILE_STREAM_BASE_LATENCY_CYCLES", "1"
+)
+sfu_row_dispatch_interval_cycles = os.getenv(
+    "GOLEM_SFU_ROW_DISPATCH_INTERVAL_CYCLES", "4"
+)
 attention_kv_pair_reuse = int(
     os.getenv("GOLEM_ATTENTION_KV_PAIR_REUSE", "0")
 )
@@ -363,13 +393,12 @@ if attention_kv_pair_reuse and int(sfu_row_contexts) < 16:
     )
 sfu_scratchpad_bytes = os.getenv("GOLEM_SFU_SCRATCHPAD_BYTES", "65536")
 sfu_distributed_reduction_transport = os.getenv("GOLEM_SFU_DISTRIBUTED_REDUCTION_TRANSPORT", "shared")
-sfu_reduction_vn = os.getenv("GOLEM_SFU_REDUCTION_VN", "")
+sfu_control_vn = os.getenv(
+    "GOLEM_SFU_CONTROL_VN", os.getenv("GOLEM_SFU_REDUCTION_VN", "")
+)
 sfu_verbose = os.getenv("GOLEM_SFU_VERBOSE", "0")
 
 num_arrays = int(os.getenv("GOLEM_NUM_ARRAYS", 1))
-attention_cluster_qk_arrays = int(
-    os.getenv("GOLEM_ATTENTION_CLUSTER_QK_ARRAYS", "16")
-)
 array_input_size = int(os.getenv("GOLEM_ARRAY_INPUT_SIZE", "4"))
 array_output_size = int(os.getenv("GOLEM_ARRAY_OUTPUT_SIZE", "4"))
 array_mac_per_cu_per_cycle = float(os.getenv("GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE", "1"))
@@ -601,13 +630,9 @@ roccarrayParams = {
     "workerCommandProcessorEnable": worker_command_processor_enable,
     "attention_window_offset": int(os.getenv("GOLEM_ATTENTION_WINDOW_OFFSET", "0xC0000"), 0),
     "attention_window_bytes": int(os.getenv("GOLEM_ATTENTION_WINDOW_BYTES", "0x10000"), 0),
-    "attention_cluster_enable": int(
-        os.getenv("GOLEM_ATTENTION_CLUSTER_ENABLE", "0")
-    ),
     "attention_sequential_64_enable": int(
         os.getenv("GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE", "0")
     ),
-    "attention_cluster_qk_arrays": attention_cluster_qk_arrays,
     "attention_kv_tile_rotation": int(
         os.getenv("GOLEM_ATTENTION_KV_TILE_ROTATION", "0")
     ),
@@ -649,15 +674,6 @@ roccarrayParams = {
     ),
     "attention_pv_input_pipeline": int(
         os.getenv("GOLEM_ATTENTION_PV_INPUT_PIPELINE", "0")
-    ),
-    "attention_cluster_pv_row_wavefront": int(
-        os.getenv("GOLEM_ATTENTION_CLUSTER_PV_ROW_WAVEFRONT", "0")
-    ),
-    "attention_cluster_qk_matrix_lookahead": int(
-        os.getenv("GOLEM_ATTENTION_CLUSTER_QK_MATRIX_LOOKAHEAD", "0")
-    ),
-    "attention_cluster_pv_matrix_lookahead": int(
-        os.getenv("GOLEM_ATTENTION_CLUSTER_PV_MATRIX_LOOKAHEAD", "0")
     ),
     "attention_pv_compact_input": int(
         os.getenv("GOLEM_ATTENTION_PV_COMPACT_INPUT", "0")
@@ -701,8 +717,11 @@ roccarrayParams = {
     "attention_qk_readout_window": int(
         os.getenv("GOLEM_ATTENTION_QK_READOUT_WINDOW", "2")
     ),
-    "attention_qk_panel_row_burst": int(
-        os.getenv("GOLEM_ATTENTION_QK_PANEL_ROW_BURST", "0")
+    "attention_qk_score_row_burst": int(
+        os.getenv(
+            "GOLEM_ATTENTION_QK_SCORE_ROW_BURST",
+            os.getenv("GOLEM_ATTENTION_QK_PANEL_ROW_BURST", "0"),
+        )
     ),
     "attention_cross_tile_operand_pipeline": int(
         os.getenv("GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE", "0")
@@ -737,7 +756,6 @@ arrayParams = {
     "arrayBufferBytesPerCycle": array_buffer_bytes_per_cycle,
     "arrayBufferPorts": array_buffer_ports,
     "operandContextBanks": array_operand_context_banks,
-    "attention_cluster_qk_arrays": attention_cluster_qk_arrays,
     "arrayBufferQueueDepth": array_buffer_queue_depth,
     "arrayOutputReadCredits": array_output_read_credits,
     "arrayOutputReadBanks": array_output_read_banks,
@@ -1016,9 +1034,6 @@ class CPU_Builder:
                 "dma_read_max_retries": gm_dma_max_retries,
                 "dma_burst_bytes": gm_dma_burst_bytes,
                 "globalMemTransLatency": gm_trans_latency,
-                "attention_cluster_enable": int(
-                    os.getenv("GOLEM_ATTENTION_CLUSTER_ENABLE", "0")
-                ),
                 "local_access_clock": cpu_clock,
                 "local_access_base_latency_cycles": local_gm_base_latency_cycles,
                 "local_access_bytes_per_cycle": local_gm_bytes_per_cycle,
@@ -1038,8 +1053,8 @@ class CPU_Builder:
             mem_node_size = os.getenv("GOLEM_MEM_NODE_SIZE", "")
             if mem_node_size:
                 gm_params["memNodeSize"] = mem_node_size
-            if sfu_reduction_vn:
-                gm_params["reduction_vn"] = sfu_reduction_vn
+            if sfu_control_vn:
+                gm_params["control_vn"] = sfu_control_vn
             GlobalMemory.addParams(gm_params)
             if enable_all_stats:
                 GlobalMemory.enableAllStatistics()
@@ -1057,15 +1072,36 @@ class CPU_Builder:
                         "accelerator_clock_hz": int(_parse_frequency_hz(cpu_clock)),
                         "vector_lanes": sfu_vector_lanes,
                         "exp_lanes": sfu_exp_lanes,
-                        "reduction_tree_latency": sfu_reduction_tree_latency,
+                        "scale_latency": sfu_scale_latency,
+                        "scale_ii": sfu_scale_ii,
+                        "max_compare_latency": sfu_max_compare_latency,
+                        "max_compare_ii": sfu_max_compare_ii,
+                        "max_reduction_latency": sfu_max_reduction_latency,
+                        "max_reduction_ii": sfu_max_reduction_ii,
+                        "sum_reduction_latency": sfu_sum_reduction_latency,
+                        "sum_reduction_ii": sfu_sum_reduction_ii,
                         "exp_latency": sfu_exp_latency,
+                        "exp_ii": sfu_exp_ii,
+                        "online_max_latency": sfu_online_max_latency,
+                        "online_max_ii": sfu_online_max_ii,
+                        "online_exp_latency": sfu_online_exp_latency,
+                        "online_exp_ii": sfu_online_exp_ii,
+                        "online_mul_latency": sfu_online_mul_latency,
+                        "online_mul_ii": sfu_online_mul_ii,
+                        "online_add_latency": sfu_online_add_latency,
+                        "online_add_ii": sfu_online_add_ii,
                         "reciprocal_latency": sfu_reciprocal_latency,
+                        "reciprocal_ii": sfu_reciprocal_ii,
+                        "normalize_vector_latency": sfu_normalize_vector_latency,
+                        "normalize_vector_ii": sfu_normalize_vector_ii,
+                        "pipeline_queue_depth": sfu_pipeline_queue_depth,
+                        "tile_stream_enable": sfu_tile_stream_enable,
+                        "tile_stream_bytes_per_cycle": sfu_tile_stream_bytes_per_cycle,
+                        "tile_stream_base_latency_cycles": sfu_tile_stream_base_latency_cycles,
+                        "row_dispatch_interval_cycles": sfu_row_dispatch_interval_cycles,
                         "row_contexts": sfu_row_contexts,
                         "attention_kv_pair_reuse": attention_kv_pair_reuse,
                         "attention_kv_query_group_size": attention_kv_query_group_size,
-                        "attention_cluster_enable": int(
-                            os.getenv("GOLEM_ATTENTION_CLUSTER_ENABLE", "0")
-                        ),
                         "scratchpad_bytes": sfu_scratchpad_bytes,
                         "distributed_reduction_transport": sfu_distributed_reduction_transport,
                         "verbose": sfu_verbose,
@@ -1158,7 +1194,6 @@ class CPU_Builder:
                         "verbose": worker_command_processor_verbose,
                         "dtype_is_float": 1 if "Float" in rocc_type else 0,
                         "stage3_trace": os.getenv("GOLEM_WCP_STAGE3_TRACE", "0"),
-                        "attention_cluster_qk_arrays": attention_cluster_qk_arrays,
                         "prefetch_windows": wcp_prefetch_windows,
                         "cross_macro_prefetch": wcp_cross_macro_prefetch,
                         "window_k_tiles": os.getenv("GOLEM_DMA_WINDOW_K_TILES", "4"),

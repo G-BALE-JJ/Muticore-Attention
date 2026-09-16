@@ -29,26 +29,31 @@ It combines the Golem generic GEMM/WCP path, deterministic MPI partitioning,
 Ramulator2-backed memory timing, bounded resource models, and the current
 single-head FP32 FlashAttention dataflow.
 
-The primary Attention comparison is `B=1,H=1,D=128`, non-causal, with SST
+The primary Attention comparison is `B=1,Hq=Hkv=1,Dh=128`, non-causal, with SST
 normalized cycles interpreted at 1 GHz. Host wall time is simulator execution
 time and is not accelerator latency.
 
 The current default is a worker-local sequential architecture with four
 control-only managers and 16 workers. Every worker has 64 physical 64x64 arrays
-and reuses all of them in the dependency order QK -> online softmax -> PV.
+and reuses all of them in the dependency order `QK^T` -> online softmax -> PV.
 Br64/Bc64/D128 uses two accumulated QK D64 reduction slices and two PV D64
-output slices. The SFU has 64 online row contexts, balanced 16-lane vector/EXP paths,
-and row-resident intermediate storage. The historical 16-QK + 48-PV Attention
-cluster remains available only through `--attention-cluster`.
+output slices. The SFU has 64 online row contexts, balanced 16-lane vector/EXP
+paths, and row-resident intermediate storage. This is the only supported
+Attention worker dataflow.
 
 | Workload | Current SST cycles | RTX 5060 FP32 Scope A | SST/GPU | Status |
 |---|---:|---:|---:|---|
-| Q1024/K1024 | **31,197** | 97,568 | 0.320x | numerical/lifecycle/backend PASS |
+| Sq=Skv=1024 | **31,197** | 97,568 | 0.320x | numerical/lifecycle/backend PASS |
 
-R1-R12 establish the historical cluster implementation and Ramulator2 HBM2E
-backend. R13-R28 replace the default with worker-local 64-array QK -> softmax ->
-PV execution, group QK score readout, 256 B/cycle matrix/vector/O fabrics,
-grouped old-O restore/output, and shared-node K/V delivery.
+The implementation uses worker-local 64-array `QK^T` -> softmax -> PV
+execution, grouped score readout, 256 B/cycle matrix/vector/O fabrics, grouped
+running-output restore/writeback, and shared-node K/V delivery.
+
+The current multi-head path supports GQA with independent `Hq` and `Hkv`
+(`Hq/Hkv` equal to 1, 2, or 4). One composite job shares each K/V head across
+its Query-head group, heads are spatially distributed over the 16 workers, and
+each worker still uses all 64 arrays for every QK and PV operation. Output is
+written directly as `[Sq,Hq,Dh]`, so there is no serial concatenation copy.
 
 For Q1024/K1024, every 32 KiB K or V tile is split into two 16 KiB chunks.
 Identical requests from all 16 workers are coalesced at the shared memory node;
@@ -63,28 +68,19 @@ measured critical-worker phases are 137 input, 6,736 QK, 12,567 softmax, and
 9,848 PV cycles. End-to-end latency is 31,197 cycles, down 30.35% from the
 44,790-cycle grouped-O baseline. Softmax accounts for 8,135 of the remaining
 10,597 cycles above the bound.
-Performance experiments and cycle acceptance remain fixed to Q=K=1024/D=128;
+Performance experiments and cycle acceptance remain fixed to
+`Sq=Skv=1024,Dh=128`;
 other shapes remain available only for correctness contracts.
 
 See
 [`src/sst/elements/golem/tests/small/muticore_attention/README.md`](src/sst/elements/golem/tests/small/muticore_attention/README.md)
 for the runner contract,
-[`attention_cluster/R1_R6_OPTIMIZATION_RESULTS.md`](attention_cluster/R1_R6_OPTIMIZATION_RESULTS.md)
-for the historical baseline,
-[`attention_cluster/R8_KV_DISTRIBUTION_RESULTS.md`](attention_cluster/R8_KV_DISTRIBUTION_RESULTS.md)
-for K/V distribution measurements,
-[`attention_cluster/R9_PV_O_ROW_FUSION_RESULTS.md`](attention_cluster/R9_PV_O_ROW_FUSION_RESULTS.md)
-for the prior measurements,
-[`attention_cluster/R10_MANAGER_KV_P_OVERLAP_RESULTS.md`](attention_cluster/R10_MANAGER_KV_P_OVERLAP_RESULTS.md)
-for the prior measurements,
-[`attention_cluster/R11_QK_PV_MATRIX_LOOKAHEAD_RESULTS.md`](attention_cluster/R11_QK_PV_MATRIX_LOOKAHEAD_RESULTS.md)
-for the prior DRAMSim3 measurements,
-[`attention_cluster/R12_RAMULATOR2_HBM2E_RESULTS.md`](attention_cluster/R12_RAMULATOR2_HBM2E_RESULTS.md)
-for historical cluster measurements,
 [`attention_sequential_64/README.md`](attention_sequential_64/README.md)
-for the current architecture, cycle derivation, and measurements, and
-[`GPU_COMPETITIVE_ROADMAP.md`](src/sst/elements/golem/tests/small/muticore_attention/GPU_COMPETITIVE_ROADMAP.md)
-for the GPU comparison and remaining architecture plan.
+for the single-head architecture evolution,
+[`attention_sequential_64/GQA_ARCHITECTURE.md`](attention_sequential_64/GQA_ARCHITECTURE.md)
+for the parallel GQA dataflow, cycle derivation, and measurements,
+[`attention_sequential_64/ATTENTION_TERMINOLOGY.md`](attention_sequential_64/ATTENTION_TERMINOLOGY.md)
+for the canonical terminology and compatibility map.
 
 ## Portable RISC-V CIM worktree build
 

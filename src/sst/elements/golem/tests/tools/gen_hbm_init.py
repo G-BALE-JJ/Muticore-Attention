@@ -47,8 +47,21 @@ ATTENTION_V_FILE = os.getenv("GOLEM_ATTENTION_V_FILE", "")
 ATTENTION_Q_OFFSET = int(os.getenv("GOLEM_ATTENTION_Q_OFFSET", "0x02000000"), 0)
 ATTENTION_K_OFFSET = int(os.getenv("GOLEM_ATTENTION_K_OFFSET", "0x02010000"), 0)
 ATTENTION_V_OFFSET = int(os.getenv("GOLEM_ATTENTION_V_OFFSET", "0x02020000"), 0)
-ATTENTION_QUERIES = int(os.getenv("GOLEM_ATTENTION_QUERIES", "32"))
-ATTENTION_KEYS = int(os.getenv("GOLEM_ATTENTION_KEYS", "32"))
+ATTENTION_QUERY_LENGTH = int(os.getenv(
+    "GOLEM_ATTENTION_QUERY_LENGTH", os.getenv("GOLEM_ATTENTION_QUERIES", "32")
+))
+ATTENTION_KV_LENGTH = int(os.getenv(
+    "GOLEM_ATTENTION_KV_LENGTH", os.getenv("GOLEM_ATTENTION_KEYS", "32")
+))
+ATTENTION_HEADS = int(os.getenv("GOLEM_ATTENTION_HEADS", "1"))
+ATTENTION_NUM_QUERY_HEADS = int(os.getenv(
+    "GOLEM_ATTENTION_NUM_QUERY_HEADS",
+    os.getenv("GOLEM_ATTENTION_QUERY_HEADS", str(ATTENTION_HEADS)),
+))
+ATTENTION_NUM_KV_HEADS = int(os.getenv(
+    "GOLEM_ATTENTION_NUM_KV_HEADS",
+    os.getenv("GOLEM_ATTENTION_KV_HEADS", str(ATTENTION_HEADS)),
+))
 ATTENTION_HEAD_DIM = int(os.getenv("GOLEM_ATTENTION_HEAD_DIM", "64"))
 ATTENTION_HBM_STRIPED = int(os.getenv("GOLEM_ATTENTION_HBM_STRIPED", "0")) != 0
 SOFTMAX_LOGITS_FILE = os.getenv("GOLEM_SOFTMAX_LOGITS_FILE", "")
@@ -342,11 +355,11 @@ def _preload_fused_attention(node_buffers):
         raise ValueError("fused Attention requires HBM data node 1")
     tensors = (
         ("Q", ATTENTION_Q_FILE, ATTENTION_Q_OFFSET,
-         ATTENTION_QUERIES * ATTENTION_HEAD_DIM * 4),
+         ATTENTION_NUM_QUERY_HEADS * ATTENTION_QUERY_LENGTH * ATTENTION_HEAD_DIM * 4),
         ("K", ATTENTION_K_FILE, ATTENTION_K_OFFSET,
-         ATTENTION_KEYS * ATTENTION_HEAD_DIM * 4),
+         ATTENTION_NUM_KV_HEADS * ATTENTION_KV_LENGTH * ATTENTION_HEAD_DIM * 4),
         ("V", ATTENTION_V_FILE, ATTENTION_V_OFFSET,
-         ATTENTION_KEYS * ATTENTION_HEAD_DIM * 4),
+         ATTENTION_NUM_KV_HEADS * ATTENTION_KV_LENGTH * ATTENTION_HEAD_DIM * 4),
     )
     loaded = {}
     for name, path, offset, expected_bytes in tensors:
@@ -360,24 +373,30 @@ def _preload_fused_attention(node_buffers):
             )
         loaded[name] = (offset, data)
     if ATTENTION_HBM_STRIPED:
-        if len(DATA_NODE_IDS) != 4 or ATTENTION_QUERIES % 4 != 0 or ATTENTION_KEYS % 4 != 0:
+        if len(DATA_NODE_IDS) != 4 or ATTENTION_QUERY_LENGTH % 4 != 0 or ATTENTION_KV_LENGTH % 4 != 0:
             raise ValueError("striped fused Attention requires four data nodes and /4 shapes")
-        q_band_bytes = (ATTENTION_QUERIES // 4) * ATTENTION_HEAD_DIM * 4
-        kv_band_bytes = (ATTENTION_KEYS // 4) * ATTENTION_HEAD_DIM * 4
+        q_band_bytes = (ATTENTION_QUERY_LENGTH // 4) * ATTENTION_HEAD_DIM * 4
+        kv_band_bytes = (ATTENTION_KV_LENGTH // 4) * ATTENTION_HEAD_DIM * 4
         for band, node_idx in enumerate(DATA_NODE_IDS):
             q_offset, q_data = loaded["Q"]
-            _write_block(
-                node_buffers[node_idx], q_offset,
-                q_data[band * q_band_bytes:(band + 1) * q_band_bytes],
-                f"attention_q_band{band}",
-            )
-            for name in ("K", "V"):
-                offset, data = loaded[name]
+            for head in range(ATTENTION_NUM_QUERY_HEADS):
+                q_head_bytes = ATTENTION_QUERY_LENGTH * ATTENTION_HEAD_DIM * 4
+                q_source = head * q_head_bytes + band * q_band_bytes
                 _write_block(
-                    node_buffers[node_idx], offset,
-                    data[band * kv_band_bytes:(band + 1) * kv_band_bytes],
-                    f"attention_kv_band{band}_{name}",
+                    node_buffers[node_idx], q_offset + head * q_band_bytes,
+                    q_data[q_source:q_source + q_band_bytes],
+                    f"attention_q_head{head}_band{band}",
                 )
+            for head in range(ATTENTION_NUM_KV_HEADS):
+                for name in ("K", "V"):
+                    offset, data = loaded[name]
+                    kv_head_bytes = ATTENTION_KV_LENGTH * ATTENTION_HEAD_DIM * 4
+                    kv_source = head * kv_head_bytes + band * kv_band_bytes
+                    _write_block(
+                        node_buffers[node_idx], offset + head * kv_band_bytes,
+                        data[kv_source:kv_source + kv_band_bytes],
+                        f"attention_{name.lower()}_head{head}_band{band}",
+                    )
         print("Preloaded fused Attention Q/K/V bands across four HBM data nodes")
     else:
         for name, (offset, data) in loaded.items():
@@ -997,11 +1016,17 @@ def main(argv=None):
 
     _preload_fused_attention(node_buffers)
 
-    a_matrix = _load_matrix_from_file(args.a_file, GEMM_M, GEMM_K, "A")
     transpose_b = MATMUL_OP_DESC["transpose_b"] == 1
     b_rows = GEMM_N if transpose_b else GEMM_K
     b_cols = GEMM_K if transpose_b else GEMM_N
-    b_matrix = _load_matrix_from_file(args.b_file, b_rows, b_cols, "B")
+    if ATTENTION_FUSED:
+        # Q/K/V were loaded above with their explicit multi-head layout. The
+        # generic GEMM A/B images are unused by the fused Attention runtime.
+        a_matrix = None
+        b_matrix = None
+    else:
+        a_matrix = _load_matrix_from_file(args.a_file, GEMM_M, GEMM_K, "A")
+        b_matrix = _load_matrix_from_file(args.b_file, b_rows, b_cols, "B")
     bias_vec = _load_bias_vector_from_file(args.bias_file, GEMM_N)
     softmax_logits = None
     bias_enabled = int(os.getenv("GOLEM_BIAS_ENABLE", "0")) != 0

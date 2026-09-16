@@ -127,7 +127,7 @@ def synthetic_lifecycle():
                     "gemm_proxy_completion_delay_cycles": 128,
                 },
             },
-            "qk_panel_row_burst": {
+            "qk_score_row_burst": {
                 "enabled": True,
                 "mode": "ATTENTION_TILE_STORAGE",
                 "capacity_bytes": 1024,
@@ -391,7 +391,7 @@ class AttentionMetricsReportTest(unittest.TestCase):
             )
             self.assertIn(("wcp", "gemm_proxy_commands_issued"), metrics)
             self.assertIn(
-                ("qk_panel_row_burst", "attention_tile_storage_row_reads"),
+                ("qk_score_row_burst", "attention_tile_storage_row_reads"),
                 metrics,
             )
             self.assertIn(("kv_prefetch", "wait_cycles"), metrics)
@@ -799,8 +799,8 @@ generic configuration line that must remain archived
         self.assertIn("status=%s", text)
         self.assertIn("sst_tick=", text)
         self.assertIn("rocc_cycle=", text)
-        self.assertIn("completedQueryBlock", text)
-        self.assertIn("completedKeyTile", text)
+        self.assertIn("completedQueryTile", text)
+        self.assertIn("completedKvTile", text)
 
 
 if __name__ == "__main__":

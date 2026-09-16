@@ -322,19 +322,29 @@ for key in process_env_keys:
 attention_guest_args = []
 if _attention_fused:
     attention_guest_arg_names = (
-        "GOLEM_ATTENTION_GUEST_MANAGER_QUERIES",
-        "GOLEM_ATTENTION_GUEST_KEYS",
-        "GOLEM_ATTENTION_GUEST_HEAD_DIM",
-        "GOLEM_ATTENTION_GUEST_KEY_BLOCK_ROWS",
+        ("GOLEM_ATTENTION_GUEST_MANAGER_QUERY_ROWS", "GOLEM_ATTENTION_GUEST_MANAGER_QUERIES"),
+        ("GOLEM_ATTENTION_GUEST_KV_LENGTH", "GOLEM_ATTENTION_GUEST_KEYS"),
+        ("GOLEM_ATTENTION_GUEST_NUM_QUERY_HEADS", "GOLEM_ATTENTION_GUEST_QUERY_HEADS"),
+        ("GOLEM_ATTENTION_GUEST_NUM_KV_HEADS", "GOLEM_ATTENTION_GUEST_KV_HEADS"),
+        ("GOLEM_ATTENTION_GUEST_HEAD_DIM",),
+        ("GOLEM_ATTENTION_GUEST_KV_TILE_ROWS", "GOLEM_ATTENTION_GUEST_KEY_BLOCK_ROWS"),
+        ("GOLEM_ATTENTION_GUEST_Q_OFFSET",),
+        ("GOLEM_ATTENTION_GUEST_K_OFFSET",),
+        ("GOLEM_ATTENTION_GUEST_V_OFFSET",),
+        ("GOLEM_ATTENTION_GUEST_O_OFFSET",),
     )
     missing_attention_args = [
-        name for name in attention_guest_arg_names if name not in os.environ
+        names[0] for names in attention_guest_arg_names
+        if not any(name in os.environ for name in names)
     ]
     if missing_attention_args:
         raise ValueError(
             "missing Attention guest arguments: " + ", ".join(missing_attention_args)
         )
-    attention_guest_args = [os.environ[name] for name in attention_guest_arg_names]
+    attention_guest_args = [
+        next(os.environ[name] for name in names if name in os.environ)
+        for names in attention_guest_arg_names
+    ]
 
 for core_id in range(numCpus):
     process_params = {

@@ -42,7 +42,9 @@ def build_report(lifecycle_result, numerical_result, *, profile, mpi_ranks,
     active_k = dict(lifecycle.get("pv_active_k", {}))
     qk_early = dict(lifecycle.get("qk_early_compute", {}))
     qk_input_pipeline = dict(lifecycle.get("qk_input_pipeline", {}))
-    qk_row_burst = dict(lifecycle.get("qk_panel_row_burst", {}))
+    qk_row_burst = dict(lifecycle.get(
+        "qk_score_row_burst", lifecycle.get("qk_panel_row_burst", {})
+    ))
     v_tile = dict(lifecycle.get("pv_v_tile_buffer", {}))
     cross_query = dict(lifecycle.get("kv_cross_query_prefetch", {}))
     attention_cluster = dict(lifecycle.get("attention_cluster", {}))
@@ -163,7 +165,7 @@ def build_report(lifecycle_result, numerical_result, *, profile, mpi_ranks,
             "qk_input_pipeline": bool(
                 qk_input_pipeline.get("enabled", False)
             ),
-            "qk_panel_row_burst": bool(qk_row_burst.get("enabled", False)),
+            "qk_score_row_burst": bool(qk_row_burst.get("enabled", False)),
             "pv_v_tile_buffer": bool(v_tile.get("enabled", False)),
             "kv_cross_query_prefetch": bool(cross_query.get("enabled", False)),
         },
@@ -229,7 +231,7 @@ def build_report(lifecycle_result, numerical_result, *, profile, mpi_ranks,
         "pv_active_k": active_k,
         "qk_early_compute": qk_early,
         "qk_input_pipeline": qk_input_pipeline,
-        "qk_panel_row_burst": qk_row_burst,
+        "qk_score_row_burst": qk_row_burst,
         "pv_v_tile_buffer": v_tile,
         "kv_cross_query_prefetch": cross_query,
         "attention_cluster": attention_cluster,
@@ -425,7 +427,7 @@ def _csv_rows(report):
         )
         for name, value in qk_input_pipeline.get("worker_totals", {}).items()
     )
-    qk_row_burst = report.get("qk_panel_row_burst", {})
+    qk_row_burst = report.get("qk_score_row_burst", {})
     for name, unit in {
         "enabled": "boolean",
         "mode": "label",
@@ -437,14 +439,14 @@ def _csv_rows(report):
         "clock_hz": "hertz",
     }.items():
         if name in qk_row_burst:
-            rows.append(("qk_panel_row_burst", name, qk_row_burst[name], unit))
+            rows.append(("qk_score_row_burst", name, qk_row_burst[name], unit))
     qk_row_burst_cycle_metrics = {
         "attention_tile_storage_write_wait_cycles",
         "attention_tile_storage_read_wait_cycles",
     }
     rows.extend(
         (
-            "qk_panel_row_burst", name, value,
+            "qk_score_row_burst", name, value,
             "wcp_component_cycles"
             if name in qk_row_burst_cycle_metrics else
             ("bytes" if name.endswith("_bytes") else "count"),
@@ -805,7 +807,7 @@ def print_summary(report):
             f"mismatch={totals.get('tag_mismatches', 0):,}",
             value_color="1;32",
         )
-    qk_row_burst = report.get("qk_panel_row_burst", {})
+    qk_row_burst = report.get("qk_score_row_burst", {})
     if qk_row_burst.get("enabled"):
         totals = qk_row_burst.get("worker_totals", {})
         _result_metric(

@@ -79,12 +79,12 @@ constexpr uint8_t GOLEM_ROCC_FUNC7_TENSOR_MANAGER_WAIT = 0x20;
 constexpr uint8_t GOLEM_ROCC_FUNC7_ATTENTION_MANAGER_JOB = 0x21;
 constexpr uint8_t GOLEM_ROCC_FUNC7_ATTENTION_MANAGER_WAIT = 0x22;
 constexpr uint32_t GOLEM_ATTENTION_DESC_MAGIC = 0x41545431u;
-constexpr uint16_t GOLEM_ATTENTION_DESC_VERSION = 1u;
+constexpr uint16_t GOLEM_ATTENTION_DESC_VERSION = 2u;
 constexpr uint32_t GOLEM_ATTENTION_FLAG_CAUSAL = 0x1u;
 constexpr uint64_t ATTENTION_C1_WINDOW_BYTES = 26752;
 constexpr uint64_t ATTENTION_D1_WINDOW_BYTES = 43136;
 constexpr uint64_t ATTENTION_D3_WINDOW_BYTES = 46208;
-struct GolemAttentionDescV1 {
+struct GolemAttentionDescV2 {
     uint32_t magic;
     uint16_t version;
     uint16_t size_bytes;
@@ -94,25 +94,26 @@ struct GolemAttentionDescV1 {
     uint64_t v_addr;
     uint64_t output_addr;
     uint64_t topology_gm_addr;
-    uint32_t queries;
-    uint32_t keys;
+    uint32_t group_query_rows;
+    uint32_t kv_length;
     uint32_t head_dim;
-    uint32_t query_block_rows;
-    uint32_t key_block_rows;
+    uint32_t query_tile_rows;
+    uint32_t kv_tile_rows;
     uint32_t worker_count;
     uint32_t flags;
-    uint32_t query_row_begin;
-    uint32_t kv_rows_per_node;
+    uint32_t group_query_row_begin;
+    uint32_t kv_rows_per_memory_node;
     uint64_t kv_node_stride_bytes;
     uint32_t tensor_root_core;
     uint32_t tensor_manager_slot;
     uint32_t tensor_manager_count;
-    uint32_t reserved0;
-    uint64_t reserved[1];
+    uint32_t num_query_heads;
+    uint32_t num_kv_heads;
+    uint32_t kv_head_index;
 };
 
-static_assert(sizeof(GolemAttentionDescV1) == 128,
-              "GolemAttentionDescV1 ABI must remain fixed");
+static_assert(sizeof(GolemAttentionDescV2) == 128,
+              "GolemAttentionDescV2 ABI must remain fixed");
 
 template <typename T>
 class RoCCAnalog : public SST::Vanadis::VanadisRoCCInterface {
@@ -353,10 +354,10 @@ public:
             registerStatistic<uint64_t>("attention_cluster_pv_array_idle_gap_ticks");
         statAttentionClusterPvArrayMaxConcurrency_ =
             registerStatistic<uint64_t>("attention_cluster_pv_array_max_concurrency");
-        statAttentionClusterKPanelBroadcasts_ =
-            registerStatistic<uint64_t>("attention_cluster_qk_k_panel_broadcasts");
-        statAttentionClusterKPanelBytes_ =
-            registerStatistic<uint64_t>("attention_cluster_qk_k_panel_bytes");
+        statAttentionClusterKTileBroadcasts_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_k_tile_broadcasts");
+        statAttentionClusterKTileBytes_ =
+            registerStatistic<uint64_t>("attention_cluster_qk_k_tile_bytes");
         statAttentionClusterQPairMulticasts_ =
             registerStatistic<uint64_t>("attention_cluster_qk_q_pair_multicasts");
         statAttentionClusterQPairBytes_ =
@@ -500,8 +501,10 @@ public:
         attentionQkReadoutWindow_ = std::max<uint32_t>(
             1u, std::min<uint32_t>(16u,
                 params.find<uint32_t>("attention_qk_readout_window", 2)));
-        attentionQkPanelRowBurst_ =
+        const bool legacyQkPanelRowBurst =
             params.find<bool>("attention_qk_panel_row_burst", false);
+        attentionQkScoreRowBurst_ = params.find<bool>(
+            "attention_qk_score_row_burst", legacyQkPanelRowBurst);
         attentionQkMatrixBroadcast_ = attentionQkDataflowTranspose_ ||
             params.find<bool>("attention_qk_matrix_broadcast", false);
         attentionCrossTileOperandPipeline_ =
@@ -520,7 +523,7 @@ public:
             "attention_sequential_64_enable", false);
         attentionClusterConfig_.qkArrays = params.find<uint32_t>(
             "attention_cluster_qk_arrays", 16);
-        attentionClusterConfig_.keyBlockRows = params.find<uint32_t>(
+        attentionClusterConfig_.kvTileRows = params.find<uint32_t>(
             "attention_key_block_rows", 32);
 
         if (attentionSequential64Enable_) {
@@ -531,7 +534,7 @@ public:
             }
             if (attentionQkDataflowTranspose_ || attentionQkEarlyCompute_ ||
                 attentionQkInputPipeline_ || attentionQkReadoutOverlap_ ||
-                attentionQkPanelRowBurst_ || attentionPvInputPipeline_ ||
+                attentionQkScoreRowBurst_ || attentionPvInputPipeline_ ||
                 attentionPvEarlyCompute_ || attentionPvMatrixSoftmaxOverlap_ ||
                 attentionOAccumulatorCBuffer_) {
                 output->fatal(CALL_INFO, -1,
@@ -619,9 +622,9 @@ public:
                 static_cast<uint32_t>(coreID),
                 params.find<uint32_t>("active_worker_cores", 1));
         }
-        globalMem->setReductionMessageHandler(
-            [this](const ReductionTransportMessage& message) {
-                handleReductionTransportMessage(message);
+        globalMem->setControlMessageHandler(
+            [this](const ControlTransportMessage& message) {
+                handleControlTransportMessage(message);
             });
 
         groupCtrl = nullptr;
@@ -673,12 +676,12 @@ public:
                 CALL_INFO, -1,
                 "Error: attention_generic_gemm_enable=1 requires workerCommandProcessorEnable=1.\n");
         }
-        if (attentionQkPanelRowBurst_ &&
+        if (attentionQkScoreRowBurst_ &&
             (!attentionGenericGemmEnable_ || attentionQkDataflowTranspose_ ||
              attentionQkReadoutOverlap_)) {
             output->fatal(
                 CALL_INFO, -1,
-                "Error: attention_qk_panel_row_burst requires generic GEMM/WCP, "
+                "Error: attention_qk_score_row_burst requires generic GEMM/WCP, "
                 "non-transposed QK, and disabled QK readout overlap.\n");
         }
         if (attentionQkInputPipeline_ && attentionQkDataflowTranspose_) {
@@ -1789,9 +1792,9 @@ public:
     };
 
     struct AttentionKvBufferState {
-        uint32_t queryBlockOrdinal = UINT32_MAX;
-        uint32_t keyTileOrdinal = UINT32_MAX;
-        uint32_t keyTile = UINT32_MAX;
+        uint32_t queryTileIndex = UINT32_MAX;
+        uint32_t kvTileIndex = UINT32_MAX;
+        uint32_t physicalKvTileIndex = UINT32_MAX;
         uint32_t loadsPending = 0;
         uint64_t issueTick = 0;
         uint64_t readyTick = 0;
@@ -1813,9 +1816,9 @@ public:
     struct AttentionQkInputSlot {
         AttentionQkInputSlotState state = AttentionQkInputSlotState::Free;
         uint64_t generation = 0;
-        uint32_t queryBlock = UINT32_MAX;
-        uint32_t keyTileOrdinal = UINT32_MAX;
-        uint32_t panel = UINT32_MAX;
+        uint32_t queryTileIndex = UINT32_MAX;
+        uint32_t kvTileIndex = UINT32_MAX;
+        uint32_t phaseSliceIndex = UINT32_MAX;
         uint32_t arrayId = UINT32_MAX;
         uint64_t transferTag = 0;
         std::vector<uint8_t> payload;
@@ -1833,9 +1836,9 @@ public:
     struct AttentionAheadOperandContext {
         AttentionAheadOperandPhase phase = AttentionAheadOperandPhase::Idle;
         uint64_t generation = 0;
-        uint32_t queryBlock = UINT32_MAX;
-        uint32_t keyTileOrdinal = UINT32_MAX;
-        uint32_t keyTile = UINT32_MAX;
+        uint32_t queryTileIndex = UINT32_MAX;
+        uint32_t kvTileIndex = UINT32_MAX;
+        uint32_t physicalKvTileIndex = UINT32_MAX;
         uint32_t operandBank = 0;
         uint64_t qLocal = 0;
         uint64_t kLocal = 0;
@@ -1867,9 +1870,9 @@ public:
     struct AttentionClusterAheadContext {
         AttentionClusterAheadPhase phase = AttentionClusterAheadPhase::Idle;
         uint64_t generation = 0;
-        uint32_t queryBlock = UINT32_MAX;
-        uint32_t keyTileOrdinal = UINT32_MAX;
-        uint32_t keyTile = UINT32_MAX;
+        uint32_t queryTileIndex = UINT32_MAX;
+        uint32_t kvTileIndex = UINT32_MAX;
+        uint32_t physicalKvTileIndex = UINT32_MAX;
         uint32_t operandBank = 0;
         uint64_t qLocal = 0;
         AttentionClusterTag tag = {};
@@ -1905,8 +1908,8 @@ public:
         AttentionClusterQkMatrixAheadPhase phase =
             AttentionClusterQkMatrixAheadPhase::Idle;
         uint64_t generation = 0;
-        uint32_t keyTileOrdinal = UINT32_MAX;
-        uint32_t keyTile = UINT32_MAX;
+        uint32_t kvTileIndex = UINT32_MAX;
+        uint32_t physicalKvTileIndex = UINT32_MAX;
         uint32_t operandBank = 0;
         uint32_t buffer = UINT32_MAX;
         uint32_t half = 0;
@@ -1921,8 +1924,8 @@ public:
         AttentionClusterQkMatrixAheadPhase phase =
             AttentionClusterQkMatrixAheadPhase::Idle;
         uint64_t generation = 0;
-        uint32_t keyTileOrdinal = UINT32_MAX;
-        uint32_t keyTile = UINT32_MAX;
+        uint32_t kvTileIndex = UINT32_MAX;
+        uint32_t physicalKvTileIndex = UINT32_MAX;
         uint32_t operandBank = 0;
         uint32_t buffer = UINT32_MAX;
         uint32_t half = 0;
@@ -1934,7 +1937,7 @@ public:
     };
 
     struct AttentionWorkerState {
-        ReductionTransportMessage dispatch = {};
+        ControlTransportMessage dispatch = {};
         uint64_t generation = 0;
         AttentionWorkerPhase phase = AttentionWorkerPhase::Idle;
         uint64_t qLocal = 0;
@@ -1961,7 +1964,7 @@ public:
         uint32_t clusterOwnerLaunchNext = 0;
         uint32_t clusterOwnerLaunchEnd = 0;
         bool clusterOwnerLaunchQk = false;
-        uint32_t sequentialPvProgramPanel = 0;
+        uint32_t pvOutputSliceToProgram = 0;
         uint32_t sequentialPvOutputArray = 0;
         std::vector<double> sequentialKTilePayload;
         std::vector<double> sequentialPPayload;
@@ -1969,13 +1972,13 @@ public:
         bool clusterQkTileStartValid = false;
         uint64_t clusterLastQkTileStartCycle = 0;
         uint32_t clusterLastQkTileStartGroup = UINT32_MAX;
-        uint32_t clusterLastQkTileStartKeyTile = UINT32_MAX;
+        uint32_t clusterLastQkTileStartKvTile = UINT32_MAX;
         uint64_t vTileBufferLocal = 0;
-        uint32_t queryBlock = 0;
-        uint32_t keyTile = 0;
-        uint32_t keyTileOrdinal = 0;
-        uint32_t panel = 0;
-        uint32_t qkReductionHalf = 0;
+        uint32_t queryTileIndex = 0;
+        uint32_t physicalKvTileIndex = 0;
+        uint32_t kvTileIndex = 0;
+        uint32_t phaseSliceIndex = 0;
+        uint32_t qkReductionSlice = 0;
         uint32_t index = 0;
         uint32_t lane = 0;
         uint32_t arraysPending = 0;
@@ -1986,7 +1989,7 @@ public:
         std::array<int32_t, 4> clusterOContextSlots = {{-1, -1, -1, -1}};
         std::array<AttentionClusterTag, 4> clusterOTags = {};
         AttentionClusterTag clusterTileTag = {};
-        uint32_t clusterQkMatrixPanel = 0;
+        uint32_t clusterQkReductionSlice = 0;
         uint32_t clusterQkWave = 0;
         uint32_t clusterQkPair = 0;
         uint32_t clusterPvWave = 0;
@@ -1994,7 +1997,7 @@ public:
         bool clusterPvBankLeaseHeld = false;
         AttentionClusterTag clusterPvBankLeaseTag = {};
         bool clusterPvMatrixResident = false;
-        uint32_t clusterPvMatrixKeyTile = UINT32_MAX;
+        uint32_t clusterPvMatrixKvTile = UINT32_MAX;
         uint32_t clusterPvMatrixGroupOwner = UINT32_MAX;
         uint32_t clusterPvOutputIssued = 0;
         uint32_t clusterPvOutputCompleted = 0;
@@ -2008,6 +2011,9 @@ public:
         uint32_t attentionPvInputsPending = 0;
         uint32_t attentionPvRestoresPending = 0;
         uint32_t attentionPvOutputWritesPending = 0;
+        uint32_t attentionOutputDmaRowsPending = 0;
+        uint32_t attentionOutputDmaNextRow = 0;
+        uint32_t attentionOutputDmaRowsInFlight = 0;
         uint32_t attentionPvMatrixProgramsPending = 0;
         uint32_t activeKvBuffer = 0;
         std::vector<AttentionKvBufferState> kvBuffers;
@@ -2029,8 +2035,8 @@ public:
         uint64_t attentionClusterODrainId = 0;
         bool attentionPvPreparationComplete = false;
         bool attentionPvInputResidentValid = false;
-        uint32_t attentionPvInputResidentQueryBlock = UINT32_MAX;
-        uint32_t attentionPvInputResidentKeyTile = UINT32_MAX;
+        uint32_t attentionPvInputResidentQueryTile = UINT32_MAX;
+        uint32_t attentionPvInputResidentKvTile = UINT32_MAX;
         bool attentionOAccumulatorStorageActive = false;
         bool attentionQkInputProgrammingComplete = false;
         std::array<AttentionQkInputSlot, 2> qkInputSlots;
@@ -2041,7 +2047,7 @@ public:
         bool qkInputOverlapActive = false;
         uint64_t qkInputOverlapStartTick = 0;
         uint32_t qkInputMaxDepth = 0;
-        uint32_t qkReadPanel = UINT32_MAX;
+        uint32_t qkReadKvSubtile = UINT32_MAX;
         uint32_t qkReadIssueIndex = 0;
         uint32_t qkReadCommitIndex = 0;
         uint32_t qkReadInFlight = 0;
@@ -2049,7 +2055,7 @@ public:
         bool qkReadCommitInFlight = false;
         std::vector<std::vector<uint8_t>> qkReadBuffers;
         std::vector<uint8_t> qkReadReady;
-        uint32_t qkRowBurstPanel = UINT32_MAX;
+        uint32_t qkRowBurstKvSubtile = UINT32_MAX;
         bool qkRowBurstStorageActive = false;
         uint64_t attentionPvOutputWriteAddr = 0;
         uint32_t attentionPvOutputWriteAccumulatorRow = UINT32_MAX;
@@ -2216,7 +2222,7 @@ public:
             arrayId, elemBytes, tag, std::move(callback));
     }
 
-    bool programAttentionClusterKPanelAsync(
+    bool programAttentionClusterKTileAsync(
         const std::vector<uint32_t>& arrayIds,
         const std::vector<double>& matrix, uint64_t tag,
         Golem::ComputeArray::BufferCallback callback) {
@@ -2333,18 +2339,18 @@ public:
     }
 
     void recordAttentionClusterQkTileStart(
-        uint64_t cycle, uint32_t keyTileOrdinal, uint32_t queryBlock) {
+        uint64_t cycle, uint32_t kvTileIndex, uint32_t queryTileIndex) {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         statAttentionClusterQkTileStarts_->addData(1);
         if (state.clusterQkTileStartValid) {
             const uint64_t interval = cycle - state.clusterLastQkTileStartCycle;
-            const uint32_t group = queryBlock / attentionClusterConfig_.groupSize;
+            const uint32_t group = queryTileIndex / attentionClusterConfig_.groupSize;
             const bool samePhysicalTile =
                 state.clusterLastQkTileStartGroup == group &&
-                state.clusterLastQkTileStartKeyTile == keyTileOrdinal;
+                state.clusterLastQkTileStartKvTile == kvTileIndex;
             const uint32_t queryInGroup =
-                queryBlock % attentionClusterConfig_.groupSize;
+                queryTileIndex % attentionClusterConfig_.groupSize;
             if (samePhysicalTile && queryInGroup >= 2) {
                 statAttentionClusterQkTileIiCycles_->addData(interval);
                 if (interval > 625) {
@@ -2356,8 +2362,8 @@ public:
         }
         state.clusterLastQkTileStartCycle = cycle;
         state.clusterLastQkTileStartGroup =
-            queryBlock / attentionClusterConfig_.groupSize;
-        state.clusterLastQkTileStartKeyTile = keyTileOrdinal;
+            queryTileIndex / attentionClusterConfig_.groupSize;
+        state.clusterLastQkTileStartKvTile = kvTileIndex;
         state.clusterQkTileStartValid = true;
     }
 
@@ -2443,8 +2449,8 @@ public:
             if (attentionClusterEnable_ && qkOperation && arrayId == 0 &&
                 attentionWorker_ && attentionWorker_->clusterQkWave == 0) {
                 recordAttentionClusterQkTileStart(
-                    LastTickCycle, attentionWorker_->keyTileOrdinal,
-                    attentionWorker_->queryBlock);
+                    LastTickCycle, attentionWorker_->kvTileIndex,
+                    attentionWorker_->queryTileIndex);
             }
             if (attentionClusterEnable_) {
                 BusyActivityTracker& activity = qkOperation
@@ -2520,16 +2526,16 @@ public:
     }
 
     int32_t findAttentionKvBuffer(uint32_t ordinal, uint32_t physicalTile,
-                                  int64_t queryBlock = -1) const {
+                                  int64_t queryTileIndex = -1) const {
         if (!attentionWorker_) return -1;
-        const uint32_t targetQueryBlock = queryBlock < 0
-            ? attentionWorker_->queryBlock : static_cast<uint32_t>(queryBlock);
+        const uint32_t targetQueryTile = queryTileIndex < 0
+            ? attentionWorker_->queryTileIndex : static_cast<uint32_t>(queryTileIndex);
         for (uint32_t buffer = 0; buffer < attentionWorker_->kvBuffers.size(); ++buffer) {
             const AttentionKvBufferState& descriptor =
                 attentionWorker_->kvBuffers[buffer];
-            if (descriptor.queryBlockOrdinal == targetQueryBlock &&
-                descriptor.keyTileOrdinal == ordinal &&
-                descriptor.keyTile == physicalTile) {
+            if (descriptor.queryTileIndex == targetQueryTile &&
+                descriptor.kvTileIndex == ordinal &&
+                descriptor.physicalKvTileIndex == physicalTile) {
                 return static_cast<int32_t>(buffer);
             }
         }
@@ -2542,7 +2548,7 @@ public:
             if (buffer == avoid) continue;
             const AttentionKvBufferState& descriptor =
                 attentionWorker_->kvBuffers[buffer];
-            if (descriptor.keyTileOrdinal == UINT32_MAX &&
+            if (descriptor.kvTileIndex == UINT32_MAX &&
                 descriptor.loadsPending == 0 && !descriptor.ready) {
                 return static_cast<int32_t>(buffer);
             }
@@ -2558,14 +2564,14 @@ public:
             state.attentionKvSecondLookaheadEligibleTick != 0 ||
             state.attentionKvKReleaseTick == 0 ||
             state.attentionKvVReleaseTick == 0 ||
-            state.keyTileOrdinal + 2 >= attentionKeyTilesForQueryBlock(state)) {
+            state.kvTileIndex + 2 >= attentionKvTileCountForQueryTile(state)) {
             return;
         }
-        const uint32_t nextOrdinal = state.keyTileOrdinal + 1;
-        const uint32_t nextTile = attentionPhysicalKeyTileForOrdinal(state, nextOrdinal);
-        const uint32_t targetQueryBlock = attentionKvGroupOwnerQueryBlock(state);
+        const uint32_t nextOrdinal = state.kvTileIndex + 1;
+        const uint32_t nextTile = attentionPhysicalKvTileForIndex(state, nextOrdinal);
+        const uint32_t targetQueryTile = attentionKvGroupOwnerQueryTile(state);
         const int32_t nextBuffer = findAttentionKvBuffer(
-            nextOrdinal, nextTile, targetQueryBlock);
+            nextOrdinal, nextTile, targetQueryTile);
         if (nextBuffer < 0 || !state.kvBuffers[nextBuffer].ready) return;
         const int32_t freeBuffer = findFreeAttentionKvBuffer(state.activeKvBuffer);
         const uint32_t targetBuffer = freeBuffer >= 0
@@ -2583,7 +2589,7 @@ public:
         state.attentionKvNextReadyAtRelease =
             state.kvBuffers[nextBuffer].readyTick <= releaseTick;
         launchAttentionKvPrefetch(
-            state.keyTileOrdinal + 2, targetBuffer, true, targetQueryBlock);
+            state.kvTileIndex + 2, targetBuffer, true, targetQueryTile);
     }
 
     void recordAttentionKvOperandRelease(bool keyOperand) {
@@ -2654,26 +2660,26 @@ public:
         return (state.dispatch.flags & GOLEM_ATTENTION_FLAG_CAUSAL) != 0;
     }
 
-    uint32_t attentionQueryRowsForBlock(
-        const AttentionWorkerState& state, uint32_t queryBlock) const {
-        const uint32_t begin = queryBlock * state.dispatch.queryBlockRows;
-        return std::min(state.dispatch.queryBlockRows,
+    uint32_t attentionQueryRowsForTile(
+        const AttentionWorkerState& state, uint32_t queryTileIndex) const {
+        const uint32_t begin = queryTileIndex * state.dispatch.queryTileRows;
+        return std::min(state.dispatch.queryTileRows,
                         state.dispatch.expectedRows - begin);
     }
 
     uint32_t attentionQueryRows(const AttentionWorkerState& state) const {
-        return attentionQueryRowsForBlock(state, state.queryBlock);
+        return attentionQueryRowsForTile(state, state.queryTileIndex);
     }
 
-    uint32_t attentionKeyColsForTile(const AttentionWorkerState& state,
-                                     uint32_t keyTile) const {
-        const uint32_t begin = keyTile * state.dispatch.keyBlockRows;
-        return std::min(state.dispatch.keyBlockRows,
+    uint32_t attentionKvRowsForTile(const AttentionWorkerState& state,
+                                     uint32_t physicalKvTileIndex) const {
+        const uint32_t begin = physicalKvTileIndex * state.dispatch.kvTileRows;
+        return std::min(state.dispatch.kvTileRows,
                         state.dispatch.expectedCols - begin);
     }
 
     uint32_t attentionKeyCols(const AttentionWorkerState& state) const {
-        return attentionKeyColsForTile(state, state.keyTile);
+        return attentionKvRowsForTile(state, state.physicalKvTileIndex);
     }
 
     uint32_t attentionPvActiveColumns(const AttentionWorkerState& state) const {
@@ -2681,9 +2687,9 @@ public:
         return attentionPvActiveK_ && keyCols < arrayInputSize ? keyCols : 0;
     }
 
-    uint32_t attentionQueryBlocks(const AttentionWorkerState& state) const {
-        return (state.dispatch.expectedRows + state.dispatch.queryBlockRows - 1) /
-            state.dispatch.queryBlockRows;
+    uint32_t attentionQueryTileCount(const AttentionWorkerState& state) const {
+        return (state.dispatch.expectedRows + state.dispatch.queryTileRows - 1) /
+            state.dispatch.queryTileRows;
     }
 
     bool attentionKvPairReuseActive(const AttentionWorkerState& state) const {
@@ -2702,10 +2708,10 @@ public:
         AttentionClusterTag tag;
         tag.generation = state.generation;
         tag.jobId = state.dispatch.jobId;
-        tag.group = state.queryBlock / attentionClusterConfig_.groupSize;
-        tag.queryContext = state.queryBlock % attentionClusterConfig_.groupSize;
-        tag.queryBlock = state.queryBlock;
-        tag.keyTile = state.keyTileOrdinal;
+        tag.group = state.queryTileIndex / attentionClusterConfig_.groupSize;
+        tag.queryContext = state.queryTileIndex % attentionClusterConfig_.groupSize;
+        tag.queryTileIndex = state.queryTileIndex;
+        tag.kvTileIndex = state.kvTileIndex;
         tag.sequence = sequence;
         return tag;
     }
@@ -2760,8 +2766,8 @@ public:
             state.clusterQkMatrixAhead.phase ==
                 AttentionClusterQkMatrixAheadPhase::Ready &&
             state.clusterQkMatrixAhead.generation == state.generation &&
-            state.clusterQkMatrixAhead.keyTileOrdinal == state.keyTileOrdinal &&
-            state.clusterQkMatrixAhead.keyTile == state.keyTile &&
+            state.clusterQkMatrixAhead.kvTileIndex == state.kvTileIndex &&
+            state.clusterQkMatrixAhead.physicalKvTileIndex == state.physicalKvTileIndex &&
             state.clusterQkMatrixAhead.operandBank == state.activeOperandBank &&
             state.clusterQkMatrixAhead.tag == state.clusterTileTag;
         uint32_t acquired = 0;
@@ -2793,7 +2799,7 @@ public:
             ++acquired;
         }
         if (useLookahead) {
-            state.clusterQkMatrixPanel = attentionClusterHeadHalves(state);
+            state.clusterQkReductionSlice = attentionClusterHeadHalves(state);
             state.clusterQkMatrixAhead = {};
             statAttentionClusterQkMatrixLookaheadHits_->addData(1);
         }
@@ -2864,7 +2870,7 @@ public:
         if (slot < 0) return false;
         AttentionClusterTag bankTag = state.clusterTileTag;
         bankTag.queryContext = 0;
-        bankTag.queryBlock = attentionKvGroupOwnerQueryBlock(state);
+        bankTag.queryTileIndex = attentionKvGroupOwnerQueryTile(state);
         const bool useLookahead = attentionClusterPvMatrixLookahead_ &&
             state.clusterPvMatrixAhead.phase ==
                 AttentionClusterQkMatrixAheadPhase::Ready &&
@@ -2884,9 +2890,9 @@ public:
             state.clusterPvBankLeaseHeld = true;
             state.clusterPvBankLeaseTag = bankTag;
             state.clusterPvMatrixResident = true;
-            state.clusterPvMatrixKeyTile = state.keyTileOrdinal;
+            state.clusterPvMatrixKvTile = state.kvTileIndex;
             state.clusterPvMatrixGroupOwner =
-                attentionKvGroupOwnerQueryBlock(state);
+                attentionKvGroupOwnerQueryTile(state);
             state.clusterPvMatrixAhead = {};
             statAttentionClusterPvMatrixLookaheadHits_->addData(1);
         } else if (attentionClusterPvMatrixLookahead_ &&
@@ -2960,29 +2966,29 @@ public:
         if (!attentionWorker_ || !attentionCluster_) return false;
         AttentionWorkerState& state = *attentionWorker_;
         const uint32_t queryContext =
-            state.queryBlock % attentionClusterConfig_.groupSize;
+            state.queryTileIndex % attentionClusterConfig_.groupSize;
         if (state.clusterOContextSlots[queryContext] >= 0) return true;
         AttentionClusterTag tag = attentionClusterTag(state);
-        tag.keyTile = 0;
+        tag.kvTileIndex = 0;
         const int slot = attentionCluster_->reserve(
             AttentionClusterContextKind::O, tag, state.activeOperandBank);
         if (slot < 0) {
             output->output(
                 "Attention O metadata reserve rejected core=%" PRIu64
-                " generation=%" PRIu64 " query=%u key_tiles=%u\n",
-                coreID, state.generation, state.queryBlock,
-                attentionKeyTilesForQueryBlock(state));
+                " generation=%" PRIu64 " query=%u kv_tiles=%u\n",
+                coreID, state.generation, state.queryTileIndex,
+                attentionKvTileCountForQueryTile(state));
             return false;
         }
         if (!attentionOAccumulator_.reserve(
                 static_cast<uint32_t>(slot), tag,
-                attentionKeyTilesForQueryBlock(state))) {
+                attentionKvTileCountForQueryTile(state))) {
             output->output(
                 "Attention O accumulator reserve rejected core=%" PRIu64
                 " slot=%d generation=%" PRIu64
-                " query=%u key_tiles=%u occupied=%u\n",
-                coreID, slot, state.generation, state.queryBlock,
-                attentionKeyTilesForQueryBlock(state),
+                " query=%u kv_tiles=%u occupied=%u\n",
+                coreID, slot, state.generation, state.queryTileIndex,
+                attentionKvTileCountForQueryTile(state),
                 attentionOAccumulator_.occupied());
             attentionCluster_->release(
                 AttentionClusterContextKind::O,
@@ -3003,7 +3009,7 @@ public:
         if (!attentionWorker_ || !attentionCluster_) return false;
         AttentionWorkerState& state = *attentionWorker_;
         const uint32_t queryContext =
-            state.queryBlock % attentionClusterConfig_.groupSize;
+            state.queryTileIndex % attentionClusterConfig_.groupSize;
         const int32_t slot = state.clusterOContextSlots[queryContext];
         if (slot < 0) return false;
         const bool accumulatorOk = attentionOAccumulator_.release(
@@ -3019,23 +3025,23 @@ public:
         return ok;
     }
 
-    uint32_t attentionKvGroupOwnerQueryBlock(
+    uint32_t attentionKvGroupOwnerQueryTile(
         const AttentionWorkerState& state) const {
         const uint32_t groupSize = attentionKvQueryGroupSize(state);
-        return state.queryBlock - state.queryBlock % groupSize;
+        return state.queryTileIndex - state.queryTileIndex % groupSize;
     }
 
-    uint32_t attentionKvGroupEndQueryBlock(
+    uint32_t attentionKvGroupEndQueryTile(
         const AttentionWorkerState& state) const {
         return std::min(
-            attentionKvGroupOwnerQueryBlock(state) +
+            attentionKvGroupOwnerQueryTile(state) +
                 attentionKvQueryGroupSize(state),
-            attentionQueryBlocks(state));
+            attentionQueryTileCount(state));
     }
 
     bool attentionHasNextGroupedQuery(const AttentionWorkerState& state) const {
         return attentionKvPairReuseActive(state) &&
-            state.queryBlock + 1 < attentionKvGroupEndQueryBlock(state);
+            state.queryTileIndex + 1 < attentionKvGroupEndQueryTile(state);
     }
 
     bool attentionAheadOperandsMatch(
@@ -3043,9 +3049,9 @@ public:
         const AttentionAheadOperandContext& ahead) const {
         return ahead.phase != AttentionAheadOperandPhase::Idle &&
             ahead.generation == state.generation &&
-            ahead.queryBlock == state.queryBlock + (ahead.commitWaiting ? 0u : 1u) &&
-            ahead.keyTileOrdinal == state.keyTileOrdinal &&
-            ahead.keyTile == state.keyTile;
+            ahead.queryTileIndex == state.queryTileIndex + (ahead.commitWaiting ? 0u : 1u) &&
+            ahead.kvTileIndex == state.kvTileIndex &&
+            ahead.physicalKvTileIndex == state.physicalKvTileIndex;
     }
 
     void promoteAttentionAheadOperands() {
@@ -3054,9 +3060,9 @@ public:
         AttentionAheadOperandContext& ahead = state.aheadOperands;
         if (ahead.phase != AttentionAheadOperandPhase::Ready ||
             ahead.generation != state.generation ||
-            ahead.queryBlock != state.queryBlock ||
-            ahead.keyTileOrdinal != state.keyTileOrdinal ||
-            ahead.keyTile != state.keyTile || ahead.operandBank == state.activeOperandBank) {
+            ahead.queryTileIndex != state.queryTileIndex ||
+            ahead.kvTileIndex != state.kvTileIndex ||
+            ahead.physicalKvTileIndex != state.physicalKvTileIndex || ahead.operandBank == state.activeOperandBank) {
             finishAttentionWorker(false);
             return;
         }
@@ -3072,13 +3078,13 @@ public:
 
         beginAttentionTilePipeline();
         const DmaConsumerMetadata consumerProgress = attentionDmaConsumerMetadata(
-            state, state.queryBlock, state.keyTileOrdinal, DmaOperand::Unknown);
+            state, state.queryTileIndex, state.kvTileIndex, DmaOperand::Unknown);
         globalMem->dma_update_consumer_progress(
             attentionKvHostAddr(state, state.dispatch.kAddr),
             attentionKvHostAddr(state, state.dispatch.vAddr), consumerProgress);
         recordAttentionInterTilePhase(AttentionInterTilePhase::KvLoad);
         invalidateAttentionPvInputResidency();
-        if (attentionSequential64Enable_) state.qkReductionHalf = 0;
+        if (attentionSequential64Enable_) state.qkReductionSlice = 0;
         if (!attentionPvVTileGroupRetention_ ||
             !attentionVTileMatchesCurrentGroup(state)) {
             invalidateAttentionVTileStaging();
@@ -3086,12 +3092,12 @@ public:
         state.vTileBufferWaiting = false;
         state.vTileBufferBypassWait = false;
         state.vTileBufferCurrentWaitTicks = 0;
-        state.panel = 0;
+        state.phaseSliceIndex = 0;
         state.index = 0;
         state.attentionQkInputProgrammingComplete = true;
         transitionAttentionTilePipeline(
             AttentionTilePipelinePhase::QkComputeReadout);
-        startAttentionQkCompute(attentionPanelKeys(state));
+        startAttentionQkCompute(attentionKvSubtileRows(state));
     }
 
     void pumpAttentionAheadOperands() {
@@ -3108,9 +3114,9 @@ public:
         }
 
         const uint64_t generation = ahead.generation;
-        const uint32_t queryBlock = ahead.queryBlock;
-        const uint32_t keyTileOrdinal = ahead.keyTileOrdinal;
-        const uint32_t keyTile = ahead.keyTile;
+        const uint32_t queryTileIndex = ahead.queryTileIndex;
+        const uint32_t kvTileIndex = ahead.kvTileIndex;
+        const uint32_t physicalKvTileIndex = ahead.physicalKvTileIndex;
         const uint32_t bank = ahead.operandBank;
         if (ahead.phase == AttentionAheadOperandPhase::QueryRead) {
             if (ahead.queryOffset == ahead.queryBytes.size()) {
@@ -3125,7 +3131,7 @@ public:
             const uint64_t tag = attentionTransferTag();
             const bool accepted = globalMem->localReadAsync(
                 ahead.qLocal + offset, chunk, LocalMemoryClient::RoCC, tag,
-                [this, generation, queryBlock, keyTileOrdinal, keyTile, bank,
+                [this, generation, queryTileIndex, kvTileIndex, physicalKvTileIndex, bank,
                  tag, offset, chunk](bool ok, uint64_t callbackTag,
                                     const std::vector<uint8_t>& bytes) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
@@ -3133,9 +3139,9 @@ public:
                         attentionWorker_->aheadOperands;
                     if (!ok || callbackTag != tag || bytes.size() != chunk ||
                         callbackAhead.phase != AttentionAheadOperandPhase::QueryRead ||
-                        callbackAhead.queryBlock != queryBlock ||
-                        callbackAhead.keyTileOrdinal != keyTileOrdinal ||
-                        callbackAhead.keyTile != keyTile ||
+                        callbackAhead.queryTileIndex != queryTileIndex ||
+                        callbackAhead.kvTileIndex != kvTileIndex ||
+                        callbackAhead.physicalKvTileIndex != physicalKvTileIndex ||
                         callbackAhead.operandBank != bank ||
                         callbackAhead.queryOffset != offset) {
                         statAttentionCrossTileOperandTagMismatches_->addData(1);
@@ -3161,21 +3167,21 @@ public:
             const std::vector<double> query =
                 attentionBytesToDoubles(ahead.queryBytes);
             std::copy(query.begin(), query.end(), matrix.begin());
-            std::vector<uint32_t> arrayIds(attentionPanelKeys(state));
+            std::vector<uint32_t> arrayIds(attentionKvSubtileRows(state));
             std::iota(arrayIds.begin(), arrayIds.end(), 0);
             const uint64_t tag = attentionTransferTag();
             const bool accepted = workerCommandProcessor->programGemmMatrixGroupBankAsync(
                 arrayIds, bank, matrix, sizeof(float), tag, LastTickCycle,
-                [this, generation, queryBlock, keyTileOrdinal, keyTile, bank, tag]
+                [this, generation, queryTileIndex, kvTileIndex, physicalKvTileIndex, bank, tag]
                 (bool ok, uint64_t callbackTag) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
                     AttentionAheadOperandContext& callbackAhead =
                         attentionWorker_->aheadOperands;
                     if (!ok || callbackTag != tag ||
                         callbackAhead.phase != AttentionAheadOperandPhase::MatrixProgram ||
-                        callbackAhead.queryBlock != queryBlock ||
-                        callbackAhead.keyTileOrdinal != keyTileOrdinal ||
-                        callbackAhead.keyTile != keyTile ||
+                        callbackAhead.queryTileIndex != queryTileIndex ||
+                        callbackAhead.kvTileIndex != kvTileIndex ||
+                        callbackAhead.physicalKvTileIndex != physicalKvTileIndex ||
                         callbackAhead.operandBank != bank) {
                         statAttentionCrossTileOperandTagMismatches_->addData(1);
                         finishAttentionWorker(false);
@@ -3193,7 +3199,7 @@ public:
             return;
         }
         if (ahead.phase == AttentionAheadOperandPhase::InputRead) {
-            if (ahead.inputIndex == attentionPanelKeys(state)) {
+            if (ahead.inputIndex == attentionKvSubtileRows(state)) {
                 ahead.phase = AttentionAheadOperandPhase::Ready;
                 if (ahead.commitWaiting) promoteAttentionAheadOperands();
                 return;
@@ -3207,7 +3213,7 @@ public:
                 ahead.kLocal + static_cast<uint64_t>(key) *
                     state.dispatch.headDim * sizeof(float),
                 bytesExpected, LocalMemoryClient::RoCC, tag,
-                [this, generation, queryBlock, keyTileOrdinal, keyTile, bank,
+                [this, generation, queryTileIndex, kvTileIndex, physicalKvTileIndex, bank,
                  arrayId, tag, bytesExpected]
                 (bool ok, uint64_t callbackTag, const std::vector<uint8_t>& bytes) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
@@ -3215,9 +3221,9 @@ public:
                         attentionWorker_->aheadOperands;
                     if (!ok || callbackTag != tag || bytes.size() != bytesExpected ||
                         callbackAhead.phase != AttentionAheadOperandPhase::InputRead ||
-                        callbackAhead.queryBlock != queryBlock ||
-                        callbackAhead.keyTileOrdinal != keyTileOrdinal ||
-                        callbackAhead.keyTile != keyTile ||
+                        callbackAhead.queryTileIndex != queryTileIndex ||
+                        callbackAhead.kvTileIndex != kvTileIndex ||
+                        callbackAhead.physicalKvTileIndex != physicalKvTileIndex ||
                         callbackAhead.operandBank != bank ||
                         callbackAhead.inputIndex != arrayId) {
                         statAttentionCrossTileOperandTagMismatches_->addData(1);
@@ -3242,16 +3248,16 @@ public:
             const uint64_t tag = attentionTransferTag();
             const bool accepted = workerCommandProcessor->programGemmInputBankAsync(
                 arrayId, bank, input, sizeof(float), tag, LastTickCycle,
-                [this, generation, queryBlock, keyTileOrdinal, keyTile, bank,
+                [this, generation, queryTileIndex, kvTileIndex, physicalKvTileIndex, bank,
                  arrayId, tag](bool ok, uint64_t callbackTag) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
                     AttentionAheadOperandContext& callbackAhead =
                         attentionWorker_->aheadOperands;
                     if (!ok || callbackTag != tag ||
                         callbackAhead.phase != AttentionAheadOperandPhase::InputProgram ||
-                        callbackAhead.queryBlock != queryBlock ||
-                        callbackAhead.keyTileOrdinal != keyTileOrdinal ||
-                        callbackAhead.keyTile != keyTile ||
+                        callbackAhead.queryTileIndex != queryTileIndex ||
+                        callbackAhead.kvTileIndex != kvTileIndex ||
+                        callbackAhead.physicalKvTileIndex != physicalKvTileIndex ||
                         callbackAhead.operandBank != bank ||
                         callbackAhead.inputIndex != arrayId) {
                         statAttentionCrossTileOperandTagMismatches_->addData(1);
@@ -3276,17 +3282,17 @@ public:
         if (!attentionWorker_ || !attentionCrossTileOperandPipeline_) return;
         AttentionWorkerState& state = *attentionWorker_;
         if (state.aheadOperands.phase != AttentionAheadOperandPhase::Idle ||
-            state.keyTileOrdinal == 0 || !attentionHasNextGroupedQuery(state)) return;
+            state.kvTileIndex == 0 || !attentionHasNextGroupedQuery(state)) return;
         statAttentionCrossTileOperandCandidates_->addData(1);
         AttentionAheadOperandContext ahead;
         ahead.phase = AttentionAheadOperandPhase::QueryRead;
         ahead.generation = state.generation;
-        ahead.queryBlock = state.queryBlock + 1;
-        ahead.keyTileOrdinal = state.keyTileOrdinal;
-        ahead.keyTile = state.keyTile;
+        ahead.queryTileIndex = state.queryTileIndex + 1;
+        ahead.kvTileIndex = state.kvTileIndex;
+        ahead.physicalKvTileIndex = state.physicalKvTileIndex;
         ahead.operandBank = (state.activeOperandBank + 1) % attentionOperandContextBanks_;
         const uint32_t querySlot =
-            ahead.queryBlock % attentionKvQueryGroupSize(state);
+            ahead.queryTileIndex % attentionKvQueryGroupSize(state);
         if (querySlot >= state.qLocalBuffers.size() ||
             ahead.operandBank == state.activeOperandBank) {
             finishAttentionWorker(false);
@@ -3295,9 +3301,9 @@ public:
         ahead.qLocal = state.qLocalBuffers[querySlot];
         ahead.kLocal = state.kLocal;
         const uint32_t queryRows = std::min<uint32_t>(
-            state.dispatch.queryBlockRows,
+            state.dispatch.queryTileRows,
             state.dispatch.expectedRows -
-                ahead.queryBlock * state.dispatch.queryBlockRows);
+                ahead.queryTileIndex * state.dispatch.queryTileRows);
         ahead.queryBytes.resize(
             static_cast<size_t>(queryRows) * state.dispatch.headDim * sizeof(float));
         ahead.startTick = getCurrentSimCycle();
@@ -3306,15 +3312,15 @@ public:
     }
 
     AttentionClusterAheadContext* attentionClusterAhead(
-        uint32_t queryBlock, uint32_t keyTileOrdinal) {
+        uint32_t queryTileIndex, uint32_t kvTileIndex) {
         if (!attentionWorker_) return nullptr;
         AttentionClusterAheadContext& ahead =
             attentionWorker_->clusterAhead[
-                queryBlock % attentionClusterConfig_.groupSize];
+                queryTileIndex % attentionClusterConfig_.groupSize];
         return ahead.phase != AttentionClusterAheadPhase::Idle &&
             ahead.generation == attentionWorker_->generation &&
-            ahead.queryBlock == queryBlock &&
-            ahead.keyTileOrdinal == keyTileOrdinal ? &ahead : nullptr;
+            ahead.queryTileIndex == queryTileIndex &&
+            ahead.kvTileIndex == kvTileIndex ? &ahead : nullptr;
     }
 
     bool reserveAttentionClusterAheadQk(AttentionClusterAheadContext& ahead) {
@@ -3408,8 +3414,8 @@ public:
             state.clusterQkMatrixAhead;
         return ahead.phase != AttentionClusterQkMatrixAheadPhase::Idle &&
             ahead.generation == state.generation &&
-            ahead.keyTileOrdinal == state.keyTileOrdinal &&
-            ahead.keyTile == state.keyTile &&
+            ahead.kvTileIndex == state.kvTileIndex &&
+            ahead.physicalKvTileIndex == state.physicalKvTileIndex &&
             ahead.tag == attentionClusterTag(state);
     }
 
@@ -3423,8 +3429,8 @@ public:
             ahead.phase == AttentionClusterQkMatrixAheadPhase::Ready ||
             ahead.requestInFlight) return;
         const uint64_t generation = ahead.generation;
-        const uint32_t ordinal = ahead.keyTileOrdinal;
-        const uint32_t physicalTile = ahead.keyTile;
+        const uint32_t ordinal = ahead.kvTileIndex;
+        const uint32_t physicalTile = ahead.physicalKvTileIndex;
         const uint32_t bank = ahead.operandBank;
         if (ahead.phase == AttentionClusterQkMatrixAheadPhase::Reading) {
             if (ahead.readOffset == ahead.bytes.size()) {
@@ -3450,8 +3456,8 @@ public:
                         if (!ok || callbackTag != tag || bytes.size() != chunk ||
                             callbackAhead.phase !=
                                 AttentionClusterQkMatrixAheadPhase::Reading ||
-                            callbackAhead.keyTileOrdinal != ordinal ||
-                            callbackAhead.keyTile != physicalTile ||
+                            callbackAhead.kvTileIndex != ordinal ||
+                            callbackAhead.physicalKvTileIndex != physicalTile ||
                             callbackAhead.operandBank != bank ||
                             callbackAhead.readOffset != offset) {
                             finishAttentionWorker(false);
@@ -3474,12 +3480,12 @@ public:
             if (state.clusterQkMatrixAheadPromotionWaiting &&
                 attentionClusterQkMatrixAheadMatchesCurrent()) {
                 state.clusterQkMatrixAheadPromotionWaiting = false;
-                beginAttentionKeyTile();
+                beginAttentionKvTile();
             }
             return;
         }
         const uint32_t half = ahead.half;
-        const uint32_t keyCols = attentionKeyColsForTile(state, physicalTile);
+        const uint32_t keyCols = attentionKvRowsForTile(state, physicalTile);
         std::vector<double> matrix(
             static_cast<size_t>(arrayOutputSize) * arrayInputSize, 0.0);
         for (uint32_t key = 0; key < keyCols; ++key) {
@@ -3508,8 +3514,8 @@ public:
                     if (!ok || callbackTag != transferTag ||
                         callbackAhead.phase !=
                             AttentionClusterQkMatrixAheadPhase::Programming ||
-                        callbackAhead.keyTileOrdinal != ordinal ||
-                        callbackAhead.keyTile != physicalTile ||
+                        callbackAhead.kvTileIndex != ordinal ||
+                        callbackAhead.physicalKvTileIndex != physicalTile ||
                         callbackAhead.operandBank != bank ||
                         callbackAhead.half != half) {
                         finishAttentionWorker(false);
@@ -3517,8 +3523,8 @@ public:
                     }
                     callbackAhead.requestInFlight = false;
                     ++callbackAhead.half;
-                    statAttentionClusterKPanelBroadcasts_->addData(1);
-                    statAttentionClusterKPanelBytes_->addData(bytesCount);
+                    statAttentionClusterKTileBroadcasts_->addData(1);
+                    statAttentionClusterKTileBytes_->addData(bytesCount);
                     statAttentionQkMatrixBroadcasts_->addData(1);
                     pumpAttentionClusterQkMatrixLookahead();
                 })) {
@@ -3533,41 +3539,41 @@ public:
             attentionWorker_->clusterQkMatrixAhead.phase !=
                 AttentionClusterQkMatrixAheadPhase::Idle) return;
         AttentionWorkerState& state = *attentionWorker_;
-        uint32_t ordinal = state.keyTileOrdinal + 1;
-        uint32_t physicalTile = ordinal < attentionKeyTilesForQueryBlock(state)
-            ? attentionPhysicalKeyTileForOrdinal(state, ordinal) : UINT32_MAX;
-        uint32_t owner = attentionKvGroupOwnerQueryBlock(state);
+        uint32_t ordinal = state.kvTileIndex + 1;
+        uint32_t physicalTile = ordinal < attentionKvTileCountForQueryTile(state)
+            ? attentionPhysicalKvTileForIndex(state, ordinal) : UINT32_MAX;
+        uint32_t owner = attentionKvGroupOwnerQueryTile(state);
         int32_t buffer = preferredBuffer;
         if (buffer >= 0) {
             if (static_cast<size_t>(buffer) >= state.kvBuffers.size()) return;
             const AttentionKvBufferState& descriptor = state.kvBuffers[buffer];
-            ordinal = descriptor.keyTileOrdinal;
-            physicalTile = descriptor.keyTile;
-            owner = descriptor.queryBlockOrdinal;
+            ordinal = descriptor.kvTileIndex;
+            physicalTile = descriptor.physicalKvTileIndex;
+            owner = descriptor.queryTileIndex;
             if (!descriptor.kReady || ordinal == UINT32_MAX ||
                 physicalTile == UINT32_MAX || owner == UINT32_MAX ||
-                (ordinal != state.keyTileOrdinal &&
-                 ordinal != state.keyTileOrdinal + 1)) return;
+                (ordinal != state.kvTileIndex &&
+                 ordinal != state.kvTileIndex + 1)) return;
         } else {
-            if (ordinal >= attentionKeyTilesForQueryBlock(state)) return;
+            if (ordinal >= attentionKvTileCountForQueryTile(state)) return;
             buffer = findAttentionKvBuffer(ordinal, physicalTile, owner);
             if (buffer < 0 || !state.kvBuffers[buffer].kReady) return;
         }
         AttentionClusterQkMatrixAheadContext ahead;
         ahead.phase = AttentionClusterQkMatrixAheadPhase::Reading;
         ahead.generation = state.generation;
-        ahead.keyTileOrdinal = ordinal;
-        ahead.keyTile = physicalTile;
+        ahead.kvTileIndex = ordinal;
+        ahead.physicalKvTileIndex = physicalTile;
         ahead.operandBank = (state.activeOperandBank + 1) %
             attentionOperandContextBanks_;
         ahead.buffer = static_cast<uint32_t>(buffer);
         ahead.tag = attentionClusterTag(state);
         ahead.tag.group = owner / attentionClusterConfig_.groupSize;
-        ahead.tag.queryBlock = owner;
+        ahead.tag.queryTileIndex = owner;
         ahead.tag.queryContext = owner % attentionClusterConfig_.groupSize;
-        ahead.tag.keyTile = ordinal;
+        ahead.tag.kvTileIndex = ordinal;
         const size_t bytes = static_cast<size_t>(
-            attentionKeyColsForTile(state, physicalTile)) *
+            attentionKvRowsForTile(state, physicalTile)) *
             state.dispatch.headDim * sizeof(float);
         ahead.bytes.resize(bytes);
         uint32_t acquired = 0;
@@ -3597,11 +3603,11 @@ public:
             state.clusterPvMatrixAhead;
         AttentionClusterTag tag = state.clusterTileTag;
         tag.queryContext = 0;
-        tag.queryBlock = attentionKvGroupOwnerQueryBlock(state);
+        tag.queryTileIndex = attentionKvGroupOwnerQueryTile(state);
         return ahead.phase != AttentionClusterQkMatrixAheadPhase::Idle &&
             ahead.generation == state.generation &&
-            ahead.keyTileOrdinal == state.keyTileOrdinal &&
-            ahead.keyTile == state.keyTile &&
+            ahead.kvTileIndex == state.kvTileIndex &&
+            ahead.physicalKvTileIndex == state.physicalKvTileIndex &&
             ahead.operandBank == state.clusterPvOperandBank &&
             ahead.tag == tag;
     }
@@ -3613,7 +3619,7 @@ public:
         }
         transitionAttentionTilePipeline(
             AttentionTilePipelinePhase::PvMatrixProgram);
-        beginAttentionPvPanel();
+        beginAttentionPvOutputSlice();
         pumpAttentionClusterAhead();
     }
 
@@ -3626,8 +3632,8 @@ public:
             ahead.phase == AttentionClusterQkMatrixAheadPhase::Ready ||
             ahead.requestInFlight) return;
         const uint64_t generation = ahead.generation;
-        const uint32_t ordinal = ahead.keyTileOrdinal;
-        const uint32_t physicalTile = ahead.keyTile;
+        const uint32_t ordinal = ahead.kvTileIndex;
+        const uint32_t physicalTile = ahead.physicalKvTileIndex;
         const uint32_t bank = ahead.operandBank;
         if (ahead.phase == AttentionClusterQkMatrixAheadPhase::Reading) {
             if (ahead.readOffset == ahead.bytes.size()) {
@@ -3653,8 +3659,8 @@ public:
                             bytes.size() != chunk ||
                             callbackAhead.phase !=
                                 AttentionClusterQkMatrixAheadPhase::Reading ||
-                            callbackAhead.keyTileOrdinal != ordinal ||
-                            callbackAhead.keyTile != physicalTile ||
+                            callbackAhead.kvTileIndex != ordinal ||
+                            callbackAhead.physicalKvTileIndex != physicalTile ||
                             callbackAhead.operandBank != bank ||
                             callbackAhead.readOffset != offset) {
                             finishAttentionWorker(false);
@@ -3680,7 +3686,7 @@ public:
             return;
         }
         const uint32_t half = ahead.half;
-        const uint32_t keyCols = attentionKeyColsForTile(state, physicalTile);
+        const uint32_t keyCols = attentionKvRowsForTile(state, physicalTile);
         std::vector<double> matrix(
             static_cast<size_t>(arrayOutputSize) * keyCols, 0.0);
         for (uint32_t dim = 0; dim < static_cast<uint32_t>(arrayOutputSize); ++dim) {
@@ -3705,8 +3711,8 @@ public:
                     if (!ok || callbackTag != transferTag ||
                         callbackAhead.phase !=
                             AttentionClusterQkMatrixAheadPhase::Programming ||
-                        callbackAhead.keyTileOrdinal != ordinal ||
-                        callbackAhead.keyTile != physicalTile ||
+                        callbackAhead.kvTileIndex != ordinal ||
+                        callbackAhead.physicalKvTileIndex != physicalTile ||
                         callbackAhead.operandBank != bank ||
                         callbackAhead.half != half) {
                         finishAttentionWorker(false);
@@ -3724,38 +3730,38 @@ public:
             attentionWorker_->clusterPvMatrixAhead.phase !=
                 AttentionClusterQkMatrixAheadPhase::Idle) return;
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t nextOrdinal = state.keyTileOrdinal + 1;
+        const uint32_t nextOrdinal = state.kvTileIndex + 1;
         if (buffer < 0) {
-            if (nextOrdinal >= attentionKeyTilesForQueryBlock(state)) return;
+            if (nextOrdinal >= attentionKvTileCountForQueryTile(state)) return;
             buffer = findAttentionKvBuffer(
                 nextOrdinal,
-                attentionPhysicalKeyTileForOrdinal(state, nextOrdinal),
-                attentionKvGroupOwnerQueryBlock(state));
+                attentionPhysicalKvTileForIndex(state, nextOrdinal),
+                attentionKvGroupOwnerQueryTile(state));
         }
         if (buffer < 0) return;
         if (static_cast<size_t>(buffer) >= state.kvBuffers.size()) return;
         const AttentionKvBufferState& descriptor = state.kvBuffers[buffer];
-        if (!descriptor.ready || descriptor.keyTileOrdinal == UINT32_MAX ||
-            descriptor.keyTile == UINT32_MAX ||
-            descriptor.queryBlockOrdinal == UINT32_MAX ||
-            (descriptor.keyTileOrdinal != state.keyTileOrdinal &&
-             descriptor.keyTileOrdinal != nextOrdinal)) return;
+        if (!descriptor.ready || descriptor.kvTileIndex == UINT32_MAX ||
+            descriptor.physicalKvTileIndex == UINT32_MAX ||
+            descriptor.queryTileIndex == UINT32_MAX ||
+            (descriptor.kvTileIndex != state.kvTileIndex &&
+             descriptor.kvTileIndex != nextOrdinal)) return;
         AttentionClusterPvMatrixAheadContext ahead;
         ahead.phase = AttentionClusterQkMatrixAheadPhase::Reading;
         ahead.generation = state.generation;
-        ahead.keyTileOrdinal = descriptor.keyTileOrdinal;
-        ahead.keyTile = descriptor.keyTile;
-        ahead.operandBank = descriptor.keyTileOrdinal %
+        ahead.kvTileIndex = descriptor.kvTileIndex;
+        ahead.physicalKvTileIndex = descriptor.physicalKvTileIndex;
+        ahead.operandBank = descriptor.kvTileIndex %
             attentionOperandContextBanks_;
         ahead.buffer = static_cast<uint32_t>(buffer);
         ahead.tag = attentionClusterTag(state);
-        ahead.tag.group = descriptor.queryBlockOrdinal /
+        ahead.tag.group = descriptor.queryTileIndex /
             attentionClusterConfig_.groupSize;
         ahead.tag.queryContext = 0;
-        ahead.tag.queryBlock = descriptor.queryBlockOrdinal;
-        ahead.tag.keyTile = descriptor.keyTileOrdinal;
+        ahead.tag.queryTileIndex = descriptor.queryTileIndex;
+        ahead.tag.kvTileIndex = descriptor.kvTileIndex;
         ahead.bytes.resize(static_cast<size_t>(
-            attentionKeyColsForTile(state, descriptor.keyTile)) *
+            attentionKvRowsForTile(state, descriptor.physicalKvTileIndex)) *
             state.dispatch.headDim * sizeof(float));
         statAttentionPvVTileBufferMisses_->addData(1);
         statAttentionPvVTileBufferBytesRead_->addData(ahead.bytes.size());
@@ -3779,24 +3785,24 @@ public:
         pumpAttentionClusterPvMatrixLookahead();
     }
 
-    bool startAttentionClusterAheadContext(uint32_t queryBlock) {
+    bool startAttentionClusterAheadContext(uint32_t queryTileIndex) {
         if (!attentionWorker_ || !attentionClusterEnable_) return false;
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t slot = queryBlock % attentionClusterConfig_.groupSize;
+        const uint32_t slot = queryTileIndex % attentionClusterConfig_.groupSize;
         AttentionClusterAheadContext& ahead = state.clusterAhead[slot];
         if (ahead.phase != AttentionClusterAheadPhase::Idle) return false;
         ahead.generation = state.generation;
-        ahead.queryBlock = queryBlock;
-        ahead.keyTileOrdinal = state.keyTileOrdinal;
-        ahead.keyTile = state.keyTile;
+        ahead.queryTileIndex = queryTileIndex;
+        ahead.kvTileIndex = state.kvTileIndex;
+        ahead.physicalKvTileIndex = state.physicalKvTileIndex;
         ahead.operandBank = state.activeOperandBank;
         ahead.qLocal = state.qLocalBuffers[slot];
         ahead.tag.generation = state.generation;
         ahead.tag.jobId = state.dispatch.jobId;
-        ahead.tag.group = queryBlock / attentionClusterConfig_.groupSize;
+        ahead.tag.group = queryTileIndex / attentionClusterConfig_.groupSize;
         ahead.tag.queryContext = slot;
-        ahead.tag.queryBlock = queryBlock;
-        ahead.tag.keyTile = state.keyTileOrdinal;
+        ahead.tag.queryTileIndex = queryTileIndex;
+        ahead.tag.kvTileIndex = state.kvTileIndex;
         ahead.queryBytes.resize(
             static_cast<size_t>(attentionQueryRows(state)) *
             state.dispatch.headDim * sizeof(float));
@@ -3842,9 +3848,9 @@ public:
             !attentionWorker_->clusterAheadEnabledForTile ||
             attentionClusterHasQkProducer()) return;
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t end = attentionKvGroupEndQueryBlock(state);
-        for (uint32_t query = state.queryBlock + 1; query < end; ++query) {
-            if (attentionClusterAhead(query, state.keyTileOrdinal)) continue;
+        const uint32_t end = attentionKvGroupEndQueryTile(state);
+        for (uint32_t query = state.queryTileIndex + 1; query < end; ++query) {
+            if (attentionClusterAhead(query, state.kvTileIndex)) continue;
             if (startAttentionClusterAheadContext(query)) break;
             return;
         }
@@ -3865,21 +3871,21 @@ public:
         if (selected == nullptr) return;
         AttentionClusterAheadContext& ahead = *selected;
         const uint64_t generation = ahead.generation;
-        const uint32_t queryBlock = ahead.queryBlock;
-        const uint32_t keyTileOrdinal = ahead.keyTileOrdinal;
-        const uint32_t slot = queryBlock % attentionClusterConfig_.groupSize;
+        const uint32_t queryTileIndex = ahead.queryTileIndex;
+        const uint32_t kvTileIndex = ahead.kvTileIndex;
+        const uint32_t slot = queryTileIndex % attentionClusterConfig_.groupSize;
 
         if (ahead.phase == AttentionClusterAheadPhase::QueryDma) {
             if (ahead.requestInFlight) return;
             ahead.requestInFlight = true;
             globalMem->dma_read_from_host_to_globalmem(
-                state.dispatch.qAddr + static_cast<uint64_t>(queryBlock) *
-                    state.dispatch.queryBlockRows * state.dispatch.headDim *
+                state.dispatch.qAddr + static_cast<uint64_t>(queryTileIndex) *
+                    state.dispatch.queryTileRows * state.dispatch.headDim *
                     sizeof(float),
                 ahead.queryBytes.size(), ahead.qLocal,
-                [this, generation, queryBlock, keyTileOrdinal, slot](bool ok) {
+                [this, generation, queryTileIndex, kvTileIndex, slot](bool ok) {
                     AttentionClusterAheadContext* callbackAhead =
-                        attentionClusterAhead(queryBlock, keyTileOrdinal);
+                        attentionClusterAhead(queryTileIndex, kvTileIndex);
                     if (!attentionCallbackGenerationMatches(generation)) return;
                     if (!ok || callbackAhead == nullptr ||
                         callbackAhead->phase !=
@@ -3911,11 +3917,11 @@ public:
             const uint64_t tag = attentionTransferTag();
             if (globalMem->localReadAsync(
                     ahead.qLocal + offset, chunk, LocalMemoryClient::RoCC, tag,
-                    [this, generation, queryBlock, keyTileOrdinal, offset, chunk,
+                    [this, generation, queryTileIndex, kvTileIndex, offset, chunk,
                      tag](bool ok, uint64_t callbackTag,
                           const std::vector<uint8_t>& bytes) {
                         AttentionClusterAheadContext* callbackAhead =
-                            attentionClusterAhead(queryBlock, keyTileOrdinal);
+                            attentionClusterAhead(queryTileIndex, kvTileIndex);
                         if (!attentionCallbackGenerationMatches(generation)) return;
                         if (!ok || callbackTag != tag || callbackAhead == nullptr ||
                             callbackAhead->phase !=
@@ -3955,7 +3961,7 @@ public:
             const uint32_t query = attentionClusterWaveRowBegin(
                 ahead.wave, lanes) + physical / halves;
             const uint32_t half = physical % halves;
-            if (query >= attentionQueryRowsForBlock(state, queryBlock)) {
+            if (query >= attentionQueryRowsForTile(state, queryTileIndex)) {
                 finishAttentionWorker(false);
                 return;
             }
@@ -3972,11 +3978,11 @@ public:
             if (workerCommandProcessor->programGemmInputGroupBankAsync(
                     arrays, ahead.operandBank, input, sizeof(float),
                     AttentionClusterTrafficClass::QkQPair, tag, LastTickCycle,
-                    [this, generation, queryBlock, keyTileOrdinal, physical, wave,
+                    [this, generation, queryTileIndex, kvTileIndex, physical, wave,
                      tag, bytes = input.size() * sizeof(float)](
                         bool ok, uint64_t callbackTag) {
                         AttentionClusterAheadContext* callbackAhead =
-                            attentionClusterAhead(queryBlock, keyTileOrdinal);
+                            attentionClusterAhead(queryTileIndex, kvTileIndex);
                         if (!attentionCallbackGenerationMatches(generation)) return;
                         if (!ok || callbackTag != tag || callbackAhead == nullptr ||
                             callbackAhead->phase !=
@@ -4008,10 +4014,10 @@ public:
             const uint64_t acceptedCycle = LastTickCycle;
             const bool accepted = workerCommandProcessor->launchGemmArrayGroupActiveBank(
                 arrayIds, ahead.operandBank, 0, 0, LastTickCycle,
-                [this, generation, queryBlock, keyTileOrdinal, activeArrays](
+                [this, generation, queryTileIndex, kvTileIndex, activeArrays](
                     uint32_t completedArrayId, uint64_t) {
                     AttentionClusterAheadContext* callbackAhead =
-                        attentionClusterAhead(queryBlock, keyTileOrdinal);
+                        attentionClusterAhead(queryTileIndex, kvTileIndex);
                     if (!attentionCallbackGenerationMatches(generation)) {
                         if (!attentionClusterQkArrayActivity_.leave(
                                 getCurrentSimCycle())) {
@@ -4051,7 +4057,7 @@ public:
             ahead.qkStartCycle = acceptedCycle;
             if (ahead.wave == 0) {
                 recordAttentionClusterQkTileStart(
-                    acceptedCycle, ahead.keyTileOrdinal, ahead.queryBlock);
+                    acceptedCycle, ahead.kvTileIndex, ahead.queryTileIndex);
             }
             for (uint32_t arrayId : arrayIds) {
                 arrayStates[arrayId] = 1;
@@ -4087,15 +4093,15 @@ public:
                     traceAttentionMilestone(
                         "worker", "qk_tile_complete", "done",
                         state.dispatch.jobId, state.dispatch.tag,
-                        queryBlock, keyTileOrdinal);
+                        queryTileIndex, kvTileIndex);
                 }
-                if (queryBlock + 1 == attentionQueryBlocks(state) &&
-                    keyTileOrdinal + 1 ==
-                        attentionKeyTilesForQueryBlock(state)) {
+                if (queryTileIndex + 1 == attentionQueryTileCount(state) &&
+                    kvTileIndex + 1 ==
+                        attentionKvTileCountForQueryTile(state)) {
                     traceAttentionMilestone(
                         "worker", "final_qk_tile_complete", "done",
                         state.dispatch.jobId, state.dispatch.tag,
-                        queryBlock, keyTileOrdinal);
+                        queryTileIndex, kvTileIndex);
                 }
                 if (!releaseAttentionClusterAheadQk(ahead)) {
                     finishAttentionWorker(false);
@@ -4116,12 +4122,12 @@ public:
                     arrays, sizeof(float),
                     AttentionClusterTrafficClass::QkScoreOut, tag,
                     LastTickCycle,
-                    [this, generation, queryBlock, keyTileOrdinal,
+                    [this, generation, queryTileIndex, kvTileIndex,
                      logicalQuery, halves, tag](
                         bool ok, uint64_t callbackTag,
                         const std::vector<double>& values) {
                         AttentionClusterAheadContext* callbackAhead =
-                            attentionClusterAhead(queryBlock, keyTileOrdinal);
+                            attentionClusterAhead(queryTileIndex, kvTileIndex);
                         if (!attentionCallbackGenerationMatches(generation)) return;
                         if (!ok || callbackTag != tag || callbackAhead == nullptr ||
                             callbackAhead->phase !=
@@ -4166,10 +4172,10 @@ public:
             if (sfu->writeAttentionScoreBeatAsync(
                     static_cast<uint32_t>(ahead.scoreContext), ahead.tag,
                     offset, ahead.pendingScoreBeat, tag,
-                    [this, generation, queryBlock, keyTileOrdinal, tag, bytes](
+                    [this, generation, queryTileIndex, kvTileIndex, tag, bytes](
                         bool ok, uint64_t callbackTag) {
                         AttentionClusterAheadContext* callbackAhead =
-                            attentionClusterAhead(queryBlock, keyTileOrdinal);
+                            attentionClusterAhead(queryTileIndex, kvTileIndex);
                         if (!attentionCallbackGenerationMatches(generation)) return;
                         if (!ok || callbackTag != tag || callbackAhead == nullptr ||
                             callbackAhead->phase !=
@@ -4216,18 +4222,18 @@ public:
             }
             AttentionTileRequest request;
             request.tag = state.dispatch.tag +
-                queryBlock * ((state.dispatch.expectedCols +
-                    state.dispatch.keyBlockRows - 1) /
-                    state.dispatch.keyBlockRows) + keyTileOrdinal + 1;
+                queryTileIndex * ((state.dispatch.expectedCols +
+                    state.dispatch.kvTileRows - 1) /
+                    state.dispatch.kvTileRows) + kvTileIndex + 1;
             request.jobId = state.dispatch.jobId;
             request.globalRowBegin = state.dispatch.row +
-                queryBlock * state.dispatch.queryBlockRows;
-            request.keyBegin = ahead.keyTile * state.dispatch.keyBlockRows;
+                queryTileIndex * state.dispatch.queryTileRows;
+            request.keyBegin = ahead.physicalKvTileIndex * state.dispatch.kvTileRows;
             request.rows = attentionQueryRows(state);
             request.cols = attentionKeyCols(state);
             request.headDim = state.dispatch.headDim;
-            request.keyTile = keyTileOrdinal;
-            request.keyTiles = attentionKeyTilesForQueryBlock(state);
+            request.kvTileIndex = kvTileIndex;
+            request.numKvTiles = attentionKvTileCountForQueryTile(state);
             request.causal = false;
             request.firstTileForJob = false;
             request.directScoreMode = true;
@@ -4249,10 +4255,10 @@ public:
             }
             if (!sfu->issueAttentionTile(
                     request,
-                    [this, generation, queryBlock, keyTileOrdinal](
+                    [this, generation, queryTileIndex, kvTileIndex](
                         bool ok, const AttentionTileResult& result) {
                         AttentionClusterAheadContext* callbackAhead =
-                            attentionClusterAhead(queryBlock, keyTileOrdinal);
+                            attentionClusterAhead(queryTileIndex, kvTileIndex);
                         if (!attentionCallbackGenerationMatches(generation)) return;
                         if (!ok || callbackAhead == nullptr ||
                             callbackAhead->phase !=
@@ -4272,24 +4278,24 @@ public:
                                 "worker", "softmax_tile_complete", "done",
                                 attentionWorker_->dispatch.jobId,
                                 attentionWorker_->dispatch.tag,
-                                queryBlock, keyTileOrdinal);
+                                queryTileIndex, kvTileIndex);
                         }
-                        if (queryBlock + 1 ==
-                                attentionQueryBlocks(*attentionWorker_) &&
-                            keyTileOrdinal + 1 ==
-                                attentionKeyTilesForQueryBlock(
+                        if (queryTileIndex + 1 ==
+                                attentionQueryTileCount(*attentionWorker_) &&
+                            kvTileIndex + 1 ==
+                                attentionKvTileCountForQueryTile(
                                     *attentionWorker_)) {
                             traceAttentionMilestone(
                                 "worker", "final_softmax_tile_complete", "done",
                                 attentionWorker_->dispatch.jobId,
                                 attentionWorker_->dispatch.tag,
-                                queryBlock, keyTileOrdinal);
+                                queryTileIndex, kvTileIndex);
                         }
                         callbackAhead->phase =
                             AttentionClusterAheadPhase::Ready;
                         statAttentionClusterAheadContextsCompleted_->addData(1);
                         if (attentionWorker_->clusterAheadPromotionWaiting &&
-                            attentionWorker_->queryBlock == queryBlock) {
+                            attentionWorker_->queryTileIndex == queryTileIndex) {
                             attentionWorker_->clusterAheadPromotionWaiting = false;
                             promoteAttentionClusterAhead();
                             return;
@@ -4310,7 +4316,7 @@ public:
         if (!attentionWorker_ || !attentionClusterEnable_) return false;
         AttentionWorkerState& state = *attentionWorker_;
         AttentionClusterAheadContext* ahead =
-            attentionClusterAhead(state.queryBlock, state.keyTileOrdinal);
+            attentionClusterAhead(state.queryTileIndex, state.kvTileIndex);
         if (ahead == nullptr || ahead->phase != AttentionClusterAheadPhase::Ready)
             return false;
         state.activeOperandBank = ahead->operandBank;
@@ -4322,12 +4328,12 @@ public:
         ahead->pContext = -1;
         *ahead = {};
         statAttentionClusterAheadContextsPromoted_->addData(1);
-        state.panel = 0;
+        state.phaseSliceIndex = 0;
         state.clusterPvWave = 0;
         state.attentionSoftmaxComplete = true;
         beginAttentionTilePipeline();
         const DmaConsumerMetadata consumerProgress = attentionDmaConsumerMetadata(
-            state, state.queryBlock, state.keyTileOrdinal, DmaOperand::Unknown);
+            state, state.queryTileIndex, state.kvTileIndex, DmaOperand::Unknown);
         globalMem->dma_update_consumer_progress(
             attentionKvHostAddr(state, state.dispatch.kAddr),
             attentionKvHostAddr(state, state.dispatch.vAddr), consumerProgress);
@@ -4342,13 +4348,13 @@ public:
         }
         transitionAttentionTilePipeline(
             AttentionTilePipelinePhase::PvMatrixProgram);
-        beginAttentionPvPanel();
+        beginAttentionPvOutputSlice();
         pumpAttentionClusterAhead();
         return true;
     }
 
     bool selectAttentionQueryStorage(AttentionWorkerState& state) {
-        const uint32_t slot = state.queryBlock % attentionKvQueryGroupSize(state);
+        const uint32_t slot = state.queryTileIndex % attentionKvQueryGroupSize(state);
         if (slot >= state.qLocalBuffers.size() ||
             state.oLocalBuffers.empty()) {
             return false;
@@ -4359,20 +4365,20 @@ public:
         return true;
     }
 
-    uint32_t attentionKeyPanels(const AttentionWorkerState& state) const {
+    uint32_t attentionKvSubtileCount(const AttentionWorkerState& state) const {
         if (attentionSequential64Enable_) return 1;
         return (attentionKeyCols(state) + 15) / 16;
     }
 
     bool buildAttentionSequentialQkMatrix(AttentionWorkerState& state) {
-        if (!attentionSequential64Enable_ || state.qkReductionHalf >= 2 ||
+        if (!attentionSequential64Enable_ || state.qkReductionSlice >= 2 ||
             state.dispatch.headDim != 2u * static_cast<uint32_t>(arrayInputSize)) {
             return false;
         }
         state.arrayPayload.assign(
             static_cast<size_t>(arrayOutputSize) * arrayInputSize, 0.0);
         const size_t qOffset =
-            static_cast<size_t>(state.qkReductionHalf) * arrayInputSize;
+            static_cast<size_t>(state.qkReductionSlice) * arrayInputSize;
         const uint32_t rows = attentionQueryRows(state);
         if (state.qPayload.size() <
             static_cast<size_t>(rows) * state.dispatch.headDim) {
@@ -4426,23 +4432,23 @@ public:
             (attentionQueryRows(state) + lanes - 1) / lanes;
     }
 
-    uint32_t attentionDimensionPanels(const AttentionWorkerState& state) const {
+    uint32_t attentionOutputSliceCount(const AttentionWorkerState& state) const {
         if (attentionSequential64Enable_)
             return (state.dispatch.headDim + arrayOutputSize - 1) / arrayOutputSize;
         return (state.dispatch.headDim + 15) / 16;
     }
 
-    uint32_t attentionSequentialPvPanels(
+    uint32_t attentionSequentialPvOutputSliceCount(
             const AttentionWorkerState& state) const {
-        if (!attentionSequential64Enable_ || state.panel >=
-                attentionDimensionPanels(state)) return 0;
+        if (!attentionSequential64Enable_ || state.phaseSliceIndex >=
+                attentionOutputSliceCount(state)) return 0;
         return 1;
     }
 
     uint32_t attentionSequentialPvArray(
-            const AttentionWorkerState& state, uint32_t localPanel,
+            const AttentionWorkerState& state, uint32_t localOutputSlice,
             uint32_t row) const {
-        (void)localPanel;
+        (void)localOutputSlice;
         return row;
     }
 
@@ -4465,15 +4471,15 @@ public:
 
     uint32_t attentionOAccumulatorRow(
         const AttentionWorkerState& state, uint32_t arrayId) const {
-        return arrayId * attentionDimensionPanels(state) + state.panel;
+        return arrayId * attentionOutputSliceCount(state) + state.phaseSliceIndex;
     }
 
     bool attentionPvInputResidentForCurrentTile(
         const AttentionWorkerState& state) const {
         return attentionPvInputResidency_ &&
             state.attentionPvInputResidentValid &&
-            state.attentionPvInputResidentQueryBlock == state.queryBlock &&
-            state.attentionPvInputResidentKeyTile == state.keyTileOrdinal;
+            state.attentionPvInputResidentQueryTile == state.queryTileIndex &&
+            state.attentionPvInputResidentKvTile == state.kvTileIndex;
     }
 
     void invalidateAttentionPvInputResidency() {
@@ -4483,15 +4489,15 @@ public:
             statAttentionPvInputResidencyInvalidations_->addData(1);
         }
         state.attentionPvInputResidentValid = false;
-        state.attentionPvInputResidentQueryBlock = UINT32_MAX;
-        state.attentionPvInputResidentKeyTile = UINT32_MAX;
+        state.attentionPvInputResidentQueryTile = UINT32_MAX;
+        state.attentionPvInputResidentKvTile = UINT32_MAX;
     }
 
     bool attentionVTileMatchesCurrentGroup(
         const AttentionWorkerState& state) const {
         return state.vTileValid && state.vTileGeneration == state.generation &&
-            state.vTileGroupOwner == attentionKvGroupOwnerQueryBlock(state) &&
-            state.vTileTag == state.keyTileOrdinal;
+            state.vTileGroupOwner == attentionKvGroupOwnerQueryTile(state) &&
+            state.vTileTag == state.kvTileIndex;
     }
 
     void invalidateAttentionVTileStaging() {
@@ -4504,40 +4510,40 @@ public:
         state.vPayload.clear();
     }
 
-    uint32_t attentionPanelKeys(const AttentionWorkerState& state) const {
+    uint32_t attentionKvSubtileRows(const AttentionWorkerState& state) const {
         if (attentionSequential64Enable_) return attentionKeyCols(state);
-        return std::min<uint32_t>(16, attentionKeyCols(state) - state.panel * 16);
+        return std::min<uint32_t>(16, attentionKeyCols(state) - state.phaseSliceIndex * 16);
     }
 
-    uint32_t attentionKeyTilesForQueryBlock(const AttentionWorkerState& state) const {
-        const uint32_t totalKeyTiles =
-            (state.dispatch.expectedCols + state.dispatch.keyBlockRows - 1) /
-            state.dispatch.keyBlockRows;
-        if (!attentionCausal(state)) return totalKeyTiles;
+    uint32_t attentionKvTileCountForQueryTile(const AttentionWorkerState& state) const {
+        const uint32_t totalNumKvTiles =
+            (state.dispatch.expectedCols + state.dispatch.kvTileRows - 1) /
+            state.dispatch.kvTileRows;
+        if (!attentionCausal(state)) return totalNumKvTiles;
         const uint32_t queryEnd = state.dispatch.row + std::min(
             state.dispatch.expectedRows,
-            (state.queryBlock + 1) * state.dispatch.queryBlockRows) - 1;
-        return std::min(totalKeyTiles, queryEnd / state.dispatch.keyBlockRows + 1);
+            (state.queryTileIndex + 1) * state.dispatch.queryTileRows) - 1;
+        return std::min(totalNumKvTiles, queryEnd / state.dispatch.kvTileRows + 1);
     }
 
-    uint32_t attentionPhysicalKeyTileForOrdinal(
+    uint32_t attentionPhysicalKvTileForIndex(
             const AttentionWorkerState& state, uint32_t ordinal) const {
-        const uint32_t keyTiles = attentionKeyTilesForQueryBlock(state);
-        if (!attentionKvTileRotation_ || !attentionStreamKv(state) || keyTiles <= 1) {
+        const uint32_t numKvTiles = attentionKvTileCountForQueryTile(state);
+        if (!attentionKvTileRotation_ || !attentionStreamKv(state) || numKvTiles <= 1) {
             return ordinal;
         }
         const uint32_t dataBands =
             (state.dispatch.expectedCols + state.dispatch.rowsPerBand - 1) /
             state.dispatch.rowsPerBand;
         const uint32_t tilesPerBand = std::max<uint32_t>(
-            1, state.dispatch.rowsPerBand / state.dispatch.keyBlockRows);
+            1, state.dispatch.rowsPerBand / state.dispatch.kvTileRows);
         const uint32_t startBand =
             (state.dispatch.ownerCore + state.dispatch.workerSlot) % dataBands;
-        return (ordinal + startBand * tilesPerBand) % keyTiles;
+        return (ordinal + startBand * tilesPerBand) % numKvTiles;
     }
 
-    uint32_t attentionPhysicalKeyTile(const AttentionWorkerState& state) const {
-        return attentionPhysicalKeyTileForOrdinal(state, state.keyTileOrdinal);
+    uint32_t attentionPhysicalKvTile(const AttentionWorkerState& state) const {
+        return attentionPhysicalKvTileForIndex(state, state.kvTileIndex);
     }
 
     bool attentionStreamKv(const AttentionWorkerState& state) const {
@@ -4546,8 +4552,8 @@ public:
 
     uint64_t attentionKvHostAddrForTile(const AttentionWorkerState& state,
                                         uint64_t tensorBase,
-                                        uint32_t keyTile) const {
-        const uint32_t keyBegin = keyTile * state.dispatch.keyBlockRows;
+                                        uint32_t physicalKvTileIndex) const {
+        const uint32_t keyBegin = physicalKvTileIndex * state.dispatch.kvTileRows;
         const uint32_t nodeBand = keyBegin / state.dispatch.rowsPerBand;
         const uint32_t rowInBand = keyBegin % state.dispatch.rowsPerBand;
         return tensorBase + static_cast<uint64_t>(nodeBand) *
@@ -4557,20 +4563,20 @@ public:
 
     uint64_t attentionKvHostAddr(const AttentionWorkerState& state,
                                  uint64_t tensorBase) const {
-        return attentionKvHostAddrForTile(state, tensorBase, state.keyTile);
+        return attentionKvHostAddrForTile(state, tensorBase, state.physicalKvTileIndex);
     }
 
     void dmaAttentionKvTileToLocal(
             const AttentionWorkerState& state, uint64_t tensorBase,
-            uint32_t keyTile, uint64_t localBase, DmaRequestKind kind,
+            uint32_t physicalKvTileIndex, uint64_t localBase, DmaRequestKind kind,
             const DmaConsumerMetadata& consumer,
             std::function<void(bool)> callback) {
-        const uint32_t tileRows = attentionKeyColsForTile(state, keyTile);
-        const uint32_t firstRow = keyTile * state.dispatch.keyBlockRows;
+        const uint32_t tileRows = attentionKvRowsForTile(state, physicalKvTileIndex);
+        const uint32_t firstRow = physicalKvTileIndex * state.dispatch.kvTileRows;
         if (!attentionStreamKv(state) || tileRows <= state.dispatch.rowsPerBand -
                 firstRow % state.dispatch.rowsPerBand) {
             globalMem->dma_read_from_host_to_globalmem(
-                attentionKvHostAddrForTile(state, tensorBase, keyTile),
+                attentionKvHostAddrForTile(state, tensorBase, physicalKvTileIndex),
                 static_cast<uint64_t>(tileRows) * state.dispatch.headDim *
                     sizeof(float),
                 localBase, std::move(callback), kind, consumer);
@@ -4610,8 +4616,8 @@ public:
     }
 
     void loadAttentionKvPairToLocal(
-            const AttentionWorkerState& state, uint32_t keyTile,
-            uint32_t targetQueryBlock, uint32_t targetKeyTileOrdinal,
+            const AttentionWorkerState& state, uint32_t physicalKvTileIndex,
+            uint32_t targetQueryTile, uint32_t targetKvTileIndex,
             uint64_t kLocal, uint64_t vLocal, DmaRequestKind kind,
             std::function<void(bool)> callback,
             std::function<void(bool)> kReadyCallback = {}) {
@@ -4619,14 +4625,14 @@ public:
             AttentionKvRequest request;
             request.generation = state.generation;
             request.jobTag = state.dispatch.tag;
-            request.queryGroup = targetQueryBlock /
+            request.queryGroup = targetQueryTile /
                 attentionKvQueryGroupSize(state);
-            request.keyTileOrdinal = targetKeyTileOrdinal;
-            request.keyTile = keyTile;
-            request.keyTiles = attentionKeyTilesForQueryBlock(state);
-            request.totalKeys = state.dispatch.expectedCols;
-            request.keyBlockRows = state.dispatch.keyBlockRows;
-            request.tileRows = attentionKeyColsForTile(state, keyTile);
+            request.kvTileIndex = targetKvTileIndex;
+            request.physicalKvTileIndex = physicalKvTileIndex;
+            request.numKvTiles = attentionKvTileCountForQueryTile(state);
+            request.kvLength = state.dispatch.expectedCols;
+            request.kvTileRows = state.dispatch.kvTileRows;
+            request.tileRows = attentionKvRowsForTile(state, physicalKvTileIndex);
             request.rowsPerBand = state.dispatch.rowsPerBand;
             request.headDim = state.dispatch.headDim;
             request.nodeStrideBytes = state.dispatch.nodeStrideBytes;
@@ -4648,54 +4654,55 @@ public:
             if (--*pending == 0) callback(*allOk);
         };
         dmaAttentionKvTileToLocal(
-            state, state.dispatch.kAddr, keyTile, kLocal, kind,
+            state, state.dispatch.kAddr, physicalKvTileIndex, kLocal, kind,
             attentionDmaConsumerMetadata(
-                state, targetQueryBlock, targetKeyTileOrdinal,
+                state, targetQueryTile, targetKvTileIndex,
                 DmaOperand::AttentionK),
             [complete, kReadyCallback](bool ok) {
                 if (kReadyCallback) kReadyCallback(ok);
                 complete(ok);
             });
         dmaAttentionKvTileToLocal(
-            state, state.dispatch.vAddr, keyTile, vLocal, kind,
+            state, state.dispatch.vAddr, physicalKvTileIndex, vLocal, kind,
             attentionDmaConsumerMetadata(
-                state, targetQueryBlock, targetKeyTileOrdinal,
+                state, targetQueryTile, targetKvTileIndex,
                 DmaOperand::AttentionV), complete);
     }
 
     DmaConsumerMetadata attentionDmaConsumerMetadata(
-            const AttentionWorkerState& state, uint32_t targetQueryBlock,
-            uint32_t targetTile, DmaOperand operand) const {
+            const AttentionWorkerState& state, uint32_t targetQueryTile,
+            uint32_t targetKvTileIndex, DmaOperand operand) const {
         DmaConsumerMetadata metadata;
         metadata.valid = 1;
-        // Descriptor IDs may be reused by later jobs; the local generation is
-        // monotonic for this worker and prevents stale progress aliasing.
-        metadata.jobId = state.generation;
+        // A composite GQA job is the cross-worker identity of one K/V head.
+        // Local generations may differ when managers dispatch queued groups in
+        // different orders, so they cannot safely key shared-node coalescing.
+        metadata.jobId = state.dispatch.jobId;
         metadata.worker = static_cast<uint32_t>(coreID);
-        metadata.consumerQueryBlock = state.queryBlock;
-        metadata.consumerTile = state.keyTileOrdinal;
-        metadata.targetQueryBlock = targetQueryBlock;
-        metadata.targetTile = targetTile;
+        metadata.consumerQueryTile = state.queryTileIndex;
+        metadata.consumerKvTileIndex = state.kvTileIndex;
+        metadata.targetQueryTile = targetQueryTile;
+        metadata.targetKvTileIndex = targetKvTileIndex;
         metadata.operand = operand;
         return metadata;
     }
 
     void traceAttentionMilestone(const char* role, const char* stage,
                                  const char* status, uint64_t jobId,
-                                 uint64_t tag, int64_t queryBlock = -1,
-                                 int64_t keyTile = -1) {
+                                 uint64_t tag, int64_t queryTileIndex = -1,
+                                 int64_t physicalKvTileIndex = -1) {
         if (!attentionMilestoneTrace_) return;
         output->output(
             "[ATTENTION_MILESTONE] stage=%s status=%s sst_tick=%" PRIu64
             " rocc_cycle=%" PRIu64 " core=%" PRIu64 " role=%s job=%" PRIu64
-            " tag=%" PRIu64 " query_block=%" PRId64 " key_tile=%" PRId64 "\n",
+            " tag=%" PRIu64 " query_tile=%" PRId64 " kv_tile=%" PRId64 "\n",
             stage, status, getCurrentSimCycle(), LastTickCycle, coreID, role,
-            jobId, tag, queryBlock, keyTile);
+            jobId, tag, queryTileIndex, physicalKvTileIndex);
     }
 
     bool isFinalAttentionTile(const AttentionWorkerState& state) const {
-        return state.queryBlock + 1 == attentionQueryBlocks(state) &&
-            state.keyTileOrdinal + 1 == attentionKeyTilesForQueryBlock(state);
+        return state.queryTileIndex + 1 == attentionQueryTileCount(state) &&
+            state.kvTileIndex + 1 == attentionKvTileCountForQueryTile(state);
     }
 
     void traceAttentionTileCompletion(const char* stage,
@@ -4704,19 +4711,19 @@ public:
         if (attentionTileTrace_) {
             traceAttentionMilestone(
                 "worker", stage, "done", state.dispatch.jobId,
-                state.dispatch.tag, state.queryBlock, state.keyTileOrdinal);
+                state.dispatch.tag, state.queryTileIndex, state.kvTileIndex);
         }
         if (isFinalAttentionTile(state)) {
             traceAttentionMilestone(
                 "worker", finalStage, "done", state.dispatch.jobId,
-                state.dispatch.tag, state.queryBlock, state.keyTileOrdinal);
+                state.dispatch.tag, state.queryTileIndex, state.kvTileIndex);
         }
     }
 
     uint32_t attentionKvLocalKey(const AttentionWorkerState& state,
                                  uint32_t keyInTile) const {
         return attentionStreamKv(state) ? keyInTile :
-            state.keyTile * state.dispatch.keyBlockRows + keyInTile;
+            state.physicalKvTileIndex * state.dispatch.kvTileRows + keyInTile;
     }
 
     void finishAttentionWorker(bool ok) {
@@ -4775,32 +4782,37 @@ public:
                 ok = false;
             }
         }
-        const int64_t completedQueryBlock = ok && attentionWorker_->queryBlock > 0 ?
-            static_cast<int64_t>(attentionWorker_->queryBlock - 1) :
-            static_cast<int64_t>(attentionWorker_->queryBlock);
-        const int64_t completedKeyTile = ok && attentionWorker_->keyTileOrdinal > 0 ?
-            static_cast<int64_t>(attentionWorker_->keyTileOrdinal - 1) :
-            static_cast<int64_t>(attentionWorker_->keyTileOrdinal);
+        const int64_t completedQueryTile = ok && attentionWorker_->queryTileIndex > 0 ?
+            static_cast<int64_t>(attentionWorker_->queryTileIndex - 1) :
+            static_cast<int64_t>(attentionWorker_->queryTileIndex);
+        const int64_t completedKvTile = ok && attentionWorker_->kvTileIndex > 0 ?
+            static_cast<int64_t>(attentionWorker_->kvTileIndex - 1) :
+            static_cast<int64_t>(attentionWorker_->kvTileIndex);
         traceAttentionMilestone(
             "worker", "worker_complete", ok ? "done" : "fail",
             attentionWorker_->dispatch.jobId, attentionWorker_->dispatch.tag,
-            completedQueryBlock, completedKeyTile);
+            completedQueryTile, completedKvTile);
         if (!ok) {
             output->output(
-                "Attention worker failure core=%" PRIu64 " phase=%u query_block=%u "
-                "key_tile=%u panel=%u index=%u\n",
+                "Attention worker failure core=%" PRIu64 " phase=%u query_tile=%u "
+                "kv_tile=%u phaseSliceIndex=%u index=%u\n",
                 coreID, static_cast<unsigned>(attentionWorker_->phase),
-                attentionWorker_->queryBlock, attentionWorker_->keyTile,
-                attentionWorker_->panel, attentionWorker_->index);
+                attentionWorker_->queryTileIndex, attentionWorker_->physicalKvTileIndex,
+                attentionWorker_->phaseSliceIndex, attentionWorker_->index);
         }
-        ReductionTransportMessage completion = attentionWorker_->dispatch;
-        completion.kind = ReductionTransportMessageKind::AttentionComplete;
+        ControlTransportMessage completion = attentionWorker_->dispatch;
+        completion.kind = ControlTransportMessageKind::AttentionComplete;
         completion.sendCycle = getCurrentSimCycle();
         completion.value = ok ? 1.0 : 0.0;
         attentionWorker_.reset();
         std::fill(attentionArrayPending_.begin(), attentionArrayPending_.end(), 0);
-        if (!globalMem->sendReductionMessage(completion.ownerCore, completion)) {
+        if (!globalMem->sendControlMessage(completion.ownerCore, completion)) {
             output->verbose(CALL_INFO, 1, 0, "Attention completion send failed\n");
+        }
+        if (!attentionPendingDispatches_.empty()) {
+            ControlTransportMessage next = attentionPendingDispatches_.front();
+            attentionPendingDispatches_.pop_front();
+            startAttentionWorker(next);
         }
     }
 
@@ -4915,7 +4927,7 @@ public:
         return bytes;
     }
 
-    void beginAttentionQueryBlock() {
+    void beginAttentionQueryTile() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         if (attentionClusterEnable_) {
@@ -4923,7 +4935,7 @@ public:
             state.clusterAheadPromotionWaiting = false;
         }
         if (attentionClusterEnable_ &&
-            state.queryBlock % attentionClusterConfig_.groupSize == 0) {
+            state.queryTileIndex % attentionClusterConfig_.groupSize == 0) {
             state.clusterQueryLoaded.fill(false);
         }
         if (!selectAttentionQueryStorage(state)) {
@@ -4934,7 +4946,7 @@ public:
             const uint64_t qkScratchBytes =
                 static_cast<uint64_t>(attentionQueryRows(state)) * 16 * sizeof(float);
             const uint32_t accumulatorRows = attentionQueryRows(state) *
-                attentionDimensionPanels(state);
+                attentionOutputSliceCount(state);
             if (!workerCommandProcessor->beginAttentionStorageSession(
                     qkScratchBytes, accumulatorRows, 16 * sizeof(float),
                     state.generation)) {
@@ -4944,14 +4956,14 @@ public:
             state.attentionOAccumulatorStorageActive = true;
         }
         const int32_t crossQueryBuffer = attentionKvDoubleBuffer_ &&
-            attentionKvCrossQueryPrefetch_ && state.queryBlock != 0
+            attentionKvCrossQueryPrefetch_ && state.queryTileIndex != 0
             ? findAttentionKvBuffer(0,
-                attentionPhysicalKeyTileForOrdinal(state, 0), state.queryBlock)
+                attentionPhysicalKvTileForIndex(state, 0), state.queryTileIndex)
             : -1;
         state.phase = AttentionWorkerPhase::LoadingQ;
-        state.panel = 0;
-        state.keyTileOrdinal = 0;
-        state.keyTile = attentionPhysicalKeyTile(state);
+        state.phaseSliceIndex = 0;
+        state.kvTileIndex = 0;
+        state.physicalKvTileIndex = attentionPhysicalKvTile(state);
         state.activeKvBuffer = crossQueryBuffer >= 0
             ? static_cast<uint32_t>(crossQueryBuffer) : 0;
         state.kLocal = state.kLocalBuffers[state.activeKvBuffer];
@@ -4969,8 +4981,8 @@ public:
         state.attentionWaitingForPrefetch = false;
         const uint64_t generation = state.generation;
         globalMem->dma_read_from_host_to_globalmem(
-            state.dispatch.qAddr + static_cast<uint64_t>(state.queryBlock) *
-                state.dispatch.queryBlockRows * state.dispatch.headDim * sizeof(float),
+            state.dispatch.qAddr + static_cast<uint64_t>(state.queryTileIndex) *
+                state.dispatch.queryTileRows * state.dispatch.headDim * sizeof(float),
             static_cast<uint64_t>(attentionQueryRows(state)) *
                 state.dispatch.headDim * sizeof(float),
             state.qLocal, [this, generation](bool ok) {
@@ -4981,21 +4993,21 @@ public:
                 }
                 if (attentionClusterEnable_) {
                     attentionWorker_->clusterQueryLoaded[
-                        attentionWorker_->queryBlock %
+                        attentionWorker_->queryTileIndex %
                             attentionClusterConfig_.groupSize] = true;
                 }
                 recordAttentionInterTilePhase(AttentionInterTilePhase::QueryLoad);
-                loadAttentionKeyTile();
+                loadAttentionKvTile();
             }, DmaRequestKind::AttentionQuery);
     }
 
-    void beginAttentionKeyTile() {
+    void beginAttentionKvTile() {
         if (!attentionWorker_) return;
         // Every sequential D128 QK tile starts with the low K64 reduction.
         // Some tile transitions bypass the ahead-operand promotion path, so
         // resetting only during promotion can silently skip this first half.
         if (attentionSequential64Enable_) {
-            attentionWorker_->qkReductionHalf = 0;
+            attentionWorker_->qkReductionSlice = 0;
             attentionWorker_->sequentialKTilePayload.clear();
             attentionWorker_->sequentialPPayload.clear();
             attentionWorker_->sequentialOPayload.clear();
@@ -5013,7 +5025,7 @@ public:
             }
             attentionWorker_->clusterAheadEnabledForTile = false;
             attentionWorker_->clusterPvOperandBank =
-                attentionWorker_->keyTileOrdinal % attentionOperandContextBanks_;
+                attentionWorker_->kvTileIndex % attentionOperandContextBanks_;
         }
         invalidateAttentionPvInputResidency();
         if (!attentionPvVTileGroupRetention_ ||
@@ -5039,7 +5051,7 @@ public:
                 if (attentionClusterEnable_) {
                     AttentionWorkerState& state = *attentionWorker_;
                     state.qPayload = q;
-                    state.clusterQkMatrixPanel = 0;
+                    state.clusterQkReductionSlice = 0;
                     state.clusterQkWave = 0;
                     state.clusterQkPair = 0;
                     if (!reserveAttentionClusterQkAndScore()) {
@@ -5052,13 +5064,13 @@ public:
                         finishAttentionWorker(false);
                         return;
                     }
-                    beginAttentionClusterKPanel();
+                    beginAttentionClusterKTile();
                     return;
                 }
                 if (attentionQkDataflowTranspose_) {
                     attentionWorker_->qPayload = q;
-                    attentionWorker_->panel = 0;
-                    beginAttentionQkTransposedPanel();
+                    attentionWorker_->phaseSliceIndex = 0;
+                    beginAttentionQkTransposedKvSubtile();
                     return;
                 }
                 attentionWorker_->qPayload = q;
@@ -5068,9 +5080,9 @@ public:
                     return;
                 }
                 attentionWorker_->phase = AttentionWorkerPhase::QkProgramMatrix;
-                attentionWorker_->panel = 0;
+                attentionWorker_->phaseSliceIndex = 0;
                 attentionWorker_->index = 0;
-                beginAttentionQkPanel();
+                beginAttentionQkKvSubtile();
             });
     }
 
@@ -5086,12 +5098,12 @@ public:
         return true;
     }
 
-    void beginAttentionClusterKPanel() {
+    void beginAttentionClusterKTile() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         state.phase = AttentionWorkerPhase::QkProgramMatrix;
         const uint32_t halves = attentionClusterHeadHalves(state);
-        if (state.clusterQkMatrixPanel == halves) {
+        if (state.clusterQkReductionSlice == halves) {
             recordAttentionInterTilePhase(
                 AttentionInterTilePhase::QkMatrixProgram);
             transitionAttentionTilePipeline(
@@ -5102,7 +5114,7 @@ public:
             programAttentionClusterQPair();
             return;
         }
-        if (state.clusterQkMatrixPanel != 0 || !state.arrayPayload.empty()) {
+        if (state.clusterQkReductionSlice != 0 || !state.arrayPayload.empty()) {
             programAttentionClusterKHalf();
             return;
         }
@@ -5117,7 +5129,7 @@ public:
             [this, generation, clusterTag, contextSlot](
                 bool ok, const std::vector<uint8_t>& bytes) {
                 if (!attentionCallbackGenerationMatches(generation)) return;
-                if (!ok || attentionWorker_->clusterQkMatrixPanel != 0 ||
+                if (!ok || attentionWorker_->clusterQkReductionSlice != 0 ||
                     !attentionClusterCallbackMatches(
                         AttentionClusterContextKind::Qk, contextSlot,
                         clusterTag)) {
@@ -5132,10 +5144,10 @@ public:
     void programAttentionClusterKHalf() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t half = state.clusterQkMatrixPanel;
+        const uint32_t half = state.clusterQkReductionSlice;
         const uint32_t halves = attentionClusterHeadHalves(state);
         if (half >= halves) {
-            beginAttentionClusterKPanel();
+            beginAttentionClusterKTile();
             return;
         }
         const uint32_t keyCols = attentionKeyCols(state);
@@ -5157,7 +5169,7 @@ public:
         const AttentionClusterTag clusterTag = state.clusterTileTag;
         const int32_t contextSlot = state.clusterQkContext;
         const uint64_t transferTag = attentionTransferTag();
-        if (!programAttentionClusterKPanelAsync(
+        if (!programAttentionClusterKTileAsync(
                 arrayIds, matrix, transferTag,
                 [this, generation, clusterTag, contextSlot, half, transferTag,
                  bytesCount = matrix.size() * sizeof(float)](
@@ -5165,29 +5177,29 @@ public:
                     if (!attentionCallbackGenerationMatches(generation)) return;
                     if (!ok || callbackTag != transferTag ||
                         !attentionWorker_ ||
-                        attentionWorker_->clusterQkMatrixPanel != half ||
+                        attentionWorker_->clusterQkReductionSlice != half ||
                         !attentionClusterCallbackMatches(
                             AttentionClusterContextKind::Qk, contextSlot,
                             clusterTag)) {
                         if (attentionWorker_) finishAttentionWorker(false);
                         return;
                     }
-                    statAttentionClusterKPanelBroadcasts_->addData(1);
-                    statAttentionClusterKPanelBytes_->addData(bytesCount);
+                    statAttentionClusterKTileBroadcasts_->addData(1);
+                    statAttentionClusterKTileBytes_->addData(bytesCount);
                     statAttentionQkMatrixBroadcasts_->addData(1);
-                    ++attentionWorker_->clusterQkMatrixPanel;
-                    if (attentionWorker_->clusterQkMatrixPanel ==
+                    ++attentionWorker_->clusterQkReductionSlice;
+                    if (attentionWorker_->clusterQkReductionSlice ==
                             attentionClusterHeadHalves(*attentionWorker_)) {
                         attentionWorker_->arrayPayload.clear();
                         recordAttentionKvOperandRelease(true);
                     }
-                    beginAttentionClusterKPanel();
+                    beginAttentionClusterKTile();
                 })) {
             scheduleAttentionClusterOwnerRetry(
                 [this, generation, clusterTag, contextSlot, half]() {
                     if (!attentionCallbackGenerationMatches(generation) ||
                         !attentionWorker_ ||
-                        attentionWorker_->clusterQkMatrixPanel != half ||
+                        attentionWorker_->clusterQkReductionSlice != half ||
                         !attentionClusterCallbackMatches(
                             AttentionClusterContextKind::Qk, contextSlot,
                             clusterTag)) return;
@@ -5219,7 +5231,7 @@ public:
         const uint32_t half = physical % halves;
         // Admission requires full Br=16 blocks; fail closed if a future
         // dispatch path reaches this slicer with a partial block.
-        if (query >= attentionQueryRowsForBlock(state, state.queryBlock)) {
+        if (query >= attentionQueryRowsForTile(state, state.queryTileIndex)) {
             finishAttentionWorker(false);
             return;
         }
@@ -5397,7 +5409,7 @@ public:
         }
     }
 
-    void loadAttentionKeyTile() {
+    void loadAttentionKvTile() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         if (attentionClusterEnable_) {
@@ -5405,20 +5417,20 @@ public:
         }
         beginAttentionTilePipeline();
         const DmaConsumerMetadata consumerProgress = attentionDmaConsumerMetadata(
-            state, state.queryBlock, state.keyTileOrdinal, DmaOperand::Unknown);
+            state, state.queryTileIndex, state.kvTileIndex, DmaOperand::Unknown);
         globalMem->dma_update_consumer_progress(
             attentionKvHostAddr(state, state.dispatch.kAddr),
             attentionKvHostAddr(state, state.dispatch.vAddr), consumerProgress);
         if (!attentionStreamKv(state)) {
             recordAttentionInterTilePhase(AttentionInterTilePhase::KvLoad);
-            beginAttentionKeyTile();
+            beginAttentionKvTile();
             return;
         }
         if (attentionKvDoubleBuffer_ &&
-            (state.keyTileOrdinal != 0 ||
-             (attentionKvCrossQueryPrefetch_ && state.queryBlock != 0))) {
+            (state.kvTileIndex != 0 ||
+             (attentionKvCrossQueryPrefetch_ && state.queryTileIndex != 0))) {
             const int32_t buffer = findAttentionKvBuffer(
-                state.keyTileOrdinal, state.keyTile);
+                state.kvTileIndex, state.physicalKvTileIndex);
             if (buffer < 0) {
                 finishAttentionWorker(false);
                 return;
@@ -5429,7 +5441,7 @@ public:
                 if (descriptor.ready) {
                     statAttentionKvPrefetchHits_->addData(1);
                     descriptor.pairUseRecorded = true;
-                    if (state.queryBlock != 0 && state.keyTileOrdinal == 0) {
+                    if (state.queryTileIndex != 0 && state.kvTileIndex == 0) {
                         statAttentionKvCrossQueryHits_->addData(1);
                     }
                     statAttentionKvPrefetchReadyLeadTicks_->addData(
@@ -5442,7 +5454,7 @@ public:
                 descriptor.consumeTick = getCurrentSimCycle();
                 statAttentionKvPrefetchWaits_->addData(1);
                 descriptor.pairUseRecorded = true;
-                if (state.queryBlock != 0 && state.keyTileOrdinal == 0) {
+                if (state.queryTileIndex != 0 && state.kvTileIndex == 0) {
                     statAttentionKvCrossQueryWaits_->addData(1);
                 }
                 state.attentionWaitingForPrefetch = true;
@@ -5454,8 +5466,8 @@ public:
         }
         state.attentionKvLoadsPending = 1;
         loadAttentionKvPairToLocal(
-            state, state.keyTile, attentionKvGroupOwnerQueryBlock(state),
-            state.keyTileOrdinal, state.kLocal, state.vLocal,
+            state, state.physicalKvTileIndex, attentionKvGroupOwnerQueryTile(state),
+            state.kvTileIndex, state.kLocal, state.vLocal,
             DmaRequestKind::AttentionKv,
             [this, generation = state.generation](bool ok) {
                 completeAttentionKvLoad(generation, ok);
@@ -5481,42 +5493,42 @@ public:
                 return;
             }
             launchAttentionKvPrefetch(
-                attentionWorker_->keyTileOrdinal + 1,
+                attentionWorker_->kvTileIndex + 1,
                 static_cast<uint32_t>(nextBuffer), false);
             recordAttentionInterTilePhase(AttentionInterTilePhase::KvLoad);
-            beginAttentionKeyTile();
+            beginAttentionKvTile();
         }
     }
 
     void launchAttentionKvPrefetch(
         uint32_t ordinal, uint32_t buffer, bool secondLookahead,
-        uint32_t queryBlock = UINT32_MAX) {
+        uint32_t queryTileIndex = UINT32_MAX) {
         if (!attentionWorker_ || !attentionKvDoubleBuffer_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t targetQueryBlock = queryBlock == UINT32_MAX
-            ? attentionKvGroupOwnerQueryBlock(state) : queryBlock;
-        if (ordinal >= attentionKeyTilesForQueryBlock(state)) return;
+        const uint32_t targetQueryTile = queryTileIndex == UINT32_MAX
+            ? attentionKvGroupOwnerQueryTile(state) : queryTileIndex;
+        if (ordinal >= attentionKvTileCountForQueryTile(state)) return;
         if (buffer >= state.kvBuffers.size()) {
             finishAttentionWorker(false);
             return;
         }
         AttentionKvBufferState& descriptor = state.kvBuffers[buffer];
-        if (descriptor.keyTileOrdinal != UINT32_MAX ||
+        if (descriptor.kvTileIndex != UINT32_MAX ||
             descriptor.loadsPending != 0 || descriptor.ready) {
             output->output(
                 "Attention KV failure core=%" PRIu64
                 " reason=launch_busy current=%" PRIu32 " target=%" PRIu32
                 " buffer=%" PRIu32 " desc_tile=%" PRIu32
                 " pending=%" PRIu32 " ready=%u\n",
-                coreID, state.keyTileOrdinal, ordinal, buffer,
-                descriptor.keyTileOrdinal, descriptor.loadsPending,
+                coreID, state.kvTileIndex, ordinal, buffer,
+                descriptor.kvTileIndex, descriptor.loadsPending,
                 descriptor.ready ? 1u : 0u);
             finishAttentionWorker(false);
             return;
         }
-        descriptor.queryBlockOrdinal = targetQueryBlock;
-        descriptor.keyTileOrdinal = ordinal;
-        descriptor.keyTile = attentionPhysicalKeyTileForOrdinal(state, ordinal);
+        descriptor.queryTileIndex = targetQueryTile;
+        descriptor.kvTileIndex = ordinal;
+        descriptor.physicalKvTileIndex = attentionPhysicalKvTileForIndex(state, ordinal);
         descriptor.loadsPending = 1;
         descriptor.issueTick = getCurrentSimCycle();
         descriptor.readyTick = 0;
@@ -5524,7 +5536,7 @@ public:
         descriptor.kReady = false;
         descriptor.ready = false;
         descriptor.crossQuery =
-            targetQueryBlock != attentionKvGroupOwnerQueryBlock(state);
+            targetQueryTile != attentionKvGroupOwnerQueryTile(state);
         statAttentionKvPrefetchTiles_->addData(1);
         if (secondLookahead) {
             statAttentionKvSecondLookaheadPrefetches_->addData(1);
@@ -5533,7 +5545,7 @@ public:
             statAttentionKvCrossQueryPrefetches_->addData(1);
         }
         loadAttentionKvPairToLocal(
-            state, descriptor.keyTile, targetQueryBlock, ordinal,
+            state, descriptor.physicalKvTileIndex, targetQueryTile, ordinal,
             state.kLocalBuffers[buffer], state.vLocalBuffers[buffer],
             DmaRequestKind::AttentionKvPrefetch,
             [this, generation = state.generation, buffer](bool ok) {
@@ -5546,7 +5558,7 @@ public:
                         "Attention KV failure core=%" PRIu64
                         " reason=k_ready_callback current=%" PRIu32
                         " buffer=%" PRIu32 " ok=%u\n",
-                        coreID, attentionWorker_->keyTileOrdinal, buffer,
+                        coreID, attentionWorker_->kvTileIndex, buffer,
                         ok ? 1u : 0u);
                     finishAttentionWorker(false);
                     return;
@@ -5557,10 +5569,10 @@ public:
                     static_cast<int32_t>(buffer));
                 if (callbackState.attentionWaitingForPrefetch &&
                     callbackState.attentionWaitingKvBuffer == buffer &&
-                    callbackState.kvBuffers[buffer].keyTileOrdinal ==
-                        callbackState.keyTileOrdinal &&
-                    callbackState.kvBuffers[buffer].keyTile ==
-                        callbackState.keyTile) {
+                    callbackState.kvBuffers[buffer].kvTileIndex ==
+                        callbackState.kvTileIndex &&
+                    callbackState.kvBuffers[buffer].physicalKvTileIndex ==
+                        callbackState.physicalKvTileIndex) {
                     const uint64_t waitTicks = getCurrentSimCycle() -
                         callbackState.kvBuffers[buffer].consumeTick;
                     statAttentionKvPrefetchWaitTicks_->addData(waitTicks);
@@ -5580,7 +5592,7 @@ public:
                 "Attention KV failure core=%" PRIu64
                 " reason=pair_callback current=%" PRIu32
                 " buffer=%" PRIu32 "\n",
-                coreID, attentionWorker_->keyTileOrdinal, buffer);
+                coreID, attentionWorker_->kvTileIndex, buffer);
             finishAttentionWorker(false);
             return;
         }
@@ -5595,8 +5607,8 @@ public:
                 "Attention KV failure core=%" PRIu64
                 " reason=completion_without_pending current=%" PRIu32
                 " buffer=%" PRIu32 " desc_tile=%" PRIu32 " ready=%u\n",
-                coreID, state.keyTileOrdinal, buffer,
-                descriptor.keyTileOrdinal, descriptor.ready ? 1u : 0u);
+                coreID, state.kvTileIndex, buffer,
+                descriptor.kvTileIndex, descriptor.ready ? 1u : 0u);
             finishAttentionWorker(false);
             return;
         }
@@ -5639,16 +5651,16 @@ public:
             return;
         }
         AttentionKvBufferState& descriptor = state.kvBuffers[buffer];
-        if (!descriptor.kReady || descriptor.keyTileOrdinal != state.keyTileOrdinal ||
-            descriptor.keyTile != state.keyTile) {
+        if (!descriptor.kReady || descriptor.kvTileIndex != state.kvTileIndex ||
+            descriptor.physicalKvTileIndex != state.physicalKvTileIndex) {
             output->output(
                 "Attention KV failure core=%" PRIu64
                 " reason=activate_mismatch current=%" PRIu32
                 " physical=%" PRIu32 " buffer=%" PRIu32
                 " desc_tile=%" PRIu32 " desc_physical=%" PRIu32
                 " pending=%" PRIu32 " ready=%u\n",
-                coreID, state.keyTileOrdinal, state.keyTile, buffer,
-                descriptor.keyTileOrdinal, descriptor.keyTile,
+                coreID, state.kvTileIndex, state.physicalKvTileIndex, buffer,
+                descriptor.kvTileIndex, descriptor.physicalKvTileIndex,
                 descriptor.loadsPending, descriptor.ready ? 1u : 0u);
             finishAttentionWorker(false);
             return;
@@ -5659,10 +5671,10 @@ public:
         descriptor.consuming = true;
         state.attentionWaitingForPrefetch = false;
         state.attentionWaitingKvBuffer = UINT32_MAX;
-        const uint32_t nextOrdinal = state.keyTileOrdinal + 1;
-        const uint32_t nextTile = nextOrdinal < attentionKeyTilesForQueryBlock(state)
-            ? attentionPhysicalKeyTileForOrdinal(state, nextOrdinal) : UINT32_MAX;
-        if (nextOrdinal < attentionKeyTilesForQueryBlock(state) &&
+        const uint32_t nextOrdinal = state.kvTileIndex + 1;
+        const uint32_t nextTile = nextOrdinal < attentionKvTileCountForQueryTile(state)
+            ? attentionPhysicalKvTileForIndex(state, nextOrdinal) : UINT32_MAX;
+        if (nextOrdinal < attentionKvTileCountForQueryTile(state) &&
             findAttentionKvBuffer(nextOrdinal, nextTile) < 0) {
             const int32_t nextBuffer = findFreeAttentionKvBuffer(state.activeKvBuffer);
             if (nextBuffer < 0) {
@@ -5672,15 +5684,15 @@ public:
             launchAttentionKvPrefetch(nextOrdinal, static_cast<uint32_t>(nextBuffer), false);
         }
         recordAttentionInterTilePhase(AttentionInterTilePhase::KvLoad);
-        beginAttentionKeyTile();
+        beginAttentionKvTile();
     }
 
-    void beginAttentionQkPanel() {
+    void beginAttentionQkKvSubtile() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         if (state.phase == AttentionWorkerPhase::QkProgramMatrix) {
             if (attentionQkMatrixBroadcast_ && state.index == 0) {
-                std::vector<uint32_t> arrayIDs(attentionPanelKeys(state));
+                std::vector<uint32_t> arrayIDs(attentionKvSubtileRows(state));
                 std::iota(arrayIDs.begin(), arrayIDs.end(), 0);
                 const uint64_t tag = attentionTransferTag();
                 if (!programAttentionGemmMatrixGroupAsync(
@@ -5690,12 +5702,12 @@ public:
                                 finishAttentionWorker(false); return;
                             }
                             statAttentionQkMatrixBroadcasts_->addData(1);
-                            attentionWorker_->index = attentionPanelKeys(*attentionWorker_);
-                            beginAttentionQkPanel();
+                            attentionWorker_->index = attentionKvSubtileRows(*attentionWorker_);
+                            beginAttentionQkKvSubtile();
                         })) finishAttentionWorker(false);
                 return;
             }
-            if (state.index == attentionPanelKeys(state)) {
+            if (state.index == attentionKvSubtileRows(state)) {
                 recordAttentionInterTilePhase(
                     AttentionInterTilePhase::QkMatrixProgram);
                 transitionAttentionTilePipeline(
@@ -5720,7 +5732,7 @@ public:
                             finishAttentionWorker(false); return;
                         }
                         attentionWorker_->index += 1;
-                        beginAttentionQkPanel();
+                        beginAttentionQkKvSubtile();
                     })) finishAttentionWorker(false);
             return;
         }
@@ -5732,36 +5744,36 @@ public:
             return;
         }
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t nextQueryBlock = state.queryBlock + 1;
-        if (nextQueryBlock >= attentionQueryBlocks(state)) return;
-        const uint32_t firstTile = attentionPhysicalKeyTileForOrdinal(state, 0);
-        if (findAttentionKvBuffer(0, firstTile, nextQueryBlock) >= 0) return;
+        const uint32_t nextQueryTile = state.queryTileIndex + 1;
+        if (nextQueryTile >= attentionQueryTileCount(state)) return;
+        const uint32_t firstTile = attentionPhysicalKvTileForIndex(state, 0);
+        if (findAttentionKvBuffer(0, firstTile, nextQueryTile) >= 0) return;
         const int32_t freeBuffer = findFreeAttentionKvBuffer(state.activeKvBuffer);
         if (freeBuffer < 0) return;
         const uint32_t buffer = static_cast<uint32_t>(freeBuffer);
         AttentionKvBufferState& candidate = state.kvBuffers[buffer];
-        if (candidate.queryBlockOrdinal != UINT32_MAX ||
+        if (candidate.queryTileIndex != UINT32_MAX ||
             candidate.loadsPending != 0 || candidate.ready) {
             return;
         }
-        launchAttentionKvPrefetch(0, buffer, false, nextQueryBlock);
+        launchAttentionKvPrefetch(0, buffer, false, nextQueryTile);
     }
 
-    void beginAttentionQkTransposedPanel() {
+    void beginAttentionQkTransposedKvSubtile() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         state.phase = AttentionWorkerPhase::QkProgramMatrix;
-        const uint32_t panelKeys = attentionPanelKeys(state);
-        const uint32_t firstKey = state.panel * 16;
+        const uint32_t kvSubtileRows = attentionKvSubtileRows(state);
+        const uint32_t firstKey = state.phaseSliceIndex * 16;
         attentionLocalRead(
             state.kLocal + static_cast<uint64_t>(attentionKvLocalKey(state, firstKey)) *
                 state.dispatch.headDim * sizeof(float),
-            static_cast<uint64_t>(panelKeys) * state.dispatch.headDim * sizeof(float),
-            [this, panelKeys](bool ok, const std::vector<uint8_t>& bytes) {
+            static_cast<uint64_t>(kvSubtileRows) * state.dispatch.headDim * sizeof(float),
+            [this, kvSubtileRows](bool ok, const std::vector<uint8_t>& bytes) {
                 if (!attentionWorker_ || !ok) { finishAttentionWorker(false); return; }
                 const std::vector<double> keys = attentionBytesToDoubles(bytes);
                 AttentionWorkerState& callbackState = *attentionWorker_;
-                if (callbackState.panel + 1 == attentionKeyPanels(callbackState)) {
+                if (callbackState.phaseSliceIndex + 1 == attentionKvSubtileCount(callbackState)) {
                     recordAttentionKvOperandRelease(true);
                 }
                 callbackState.arrayPayload.assign(
@@ -5777,7 +5789,7 @@ public:
                                 finishAttentionWorker(false); return;
                             }
                             statAttentionQkMatrixBroadcasts_->addData(1);
-                            if (attentionWorker_->panel == 0) {
+                            if (attentionWorker_->phaseSliceIndex == 0) {
                                 attentionWorker_->arraysPending = 0;
                                 attentionWorker_->attentionQkInputProgrammingComplete = false;
                                 recordAttentionInterTilePhase(
@@ -5852,7 +5864,7 @@ public:
                 if (!workerCommandProcessor ||
                     !workerCommandProcessor->launchGemmArrayGroupActiveBank(
                     arrayIds, state.activeOperandBank,
-                    (state.qkReductionHalf == 0 ? 0 : 1), 0, LastTickCycle,
+                    (state.qkReductionSlice == 0 ? 0 : 1), 0, LastTickCycle,
                         [this, generation](uint32_t arrayId, uint64_t) {
                             if (!attentionCallbackGenerationMatches(generation)) return;
                             handleAttentionArrayDone(arrayId);
@@ -5936,7 +5948,7 @@ public:
         }
         if (qkOperation && state.clusterQkWave == 0) {
             recordAttentionClusterQkTileStart(
-                LastTickCycle, state.keyTileOrdinal, state.queryBlock);
+                LastTickCycle, state.kvTileIndex, state.queryTileIndex);
         }
         BusyActivityTracker& activity = qkOperation
             ? attentionClusterQkArrayActivity_
@@ -5984,7 +5996,7 @@ public:
     void programAttentionQkInput() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t activeArrays = attentionPanelKeys(state);
+        const uint32_t activeArrays = attentionKvSubtileRows(state);
         if (attentionSequential64Enable_ && state.index != activeArrays) {
             const uint32_t rows = attentionKeyCols(state);
             const size_t tileElements =
@@ -5997,7 +6009,7 @@ public:
                 std::vector<double> inputs(
                     static_cast<size_t>(rows) * arrayInputSize);
                 const size_t halfOffset =
-                    static_cast<size_t>(current.qkReductionHalf) * arrayInputSize;
+                    static_cast<size_t>(current.qkReductionSlice) * arrayInputSize;
                 for (uint32_t key = 0; key < rows; ++key) {
                     std::copy_n(
                         current.sequentialKTilePayload.begin() +
@@ -6019,7 +6031,7 @@ public:
                                 return;
                             }
                             AttentionWorkerState& completed = *attentionWorker_;
-                            completed.index = attentionPanelKeys(completed);
+                            completed.index = attentionKvSubtileRows(completed);
                             programAttentionQkInput();
                         })) finishAttentionWorker(false);
             };
@@ -6046,8 +6058,8 @@ public:
             return;
         }
         if (state.index == activeArrays) {
-            if (state.panel + 1 == attentionKeyPanels(state) &&
-                (!attentionSequential64Enable_ || state.qkReductionHalf == 1)) {
+            if (state.phaseSliceIndex + 1 == attentionKvSubtileCount(state) &&
+                (!attentionSequential64Enable_ || state.qkReductionSlice == 1)) {
                 recordAttentionKvOperandRelease(true);
             }
             recordAttentionInterTilePhase(AttentionInterTilePhase::QkInputProgram);
@@ -6069,7 +6081,7 @@ public:
         const uint32_t key = attentionKvLocalKey(state, arrayId);
         attentionLocalRead(state.kLocal + static_cast<uint64_t>(key) *
                 state.dispatch.headDim * sizeof(float) +
-                static_cast<uint64_t>(state.qkReductionHalf) * arrayInputSize * sizeof(float),
+                static_cast<uint64_t>(state.qkReductionSlice) * arrayInputSize * sizeof(float),
             arrayInputSize * sizeof(float),
             [this, arrayId](bool ok, const std::vector<uint8_t>& bytes) {
                 if (!attentionWorker_ || !ok) { finishAttentionWorker(false); return; }
@@ -6094,9 +6106,9 @@ public:
         const AttentionWorkerState& state, const AttentionQkInputSlot& slot,
         uint32_t arrayId, uint64_t tag) const {
         return slot.generation == state.generation &&
-            slot.queryBlock == state.queryBlock &&
-            slot.keyTileOrdinal == state.keyTileOrdinal &&
-            slot.panel == state.panel && slot.arrayId == arrayId &&
+            slot.queryTileIndex == state.queryTileIndex &&
+            slot.kvTileIndex == state.kvTileIndex &&
+            slot.phaseSliceIndex == state.phaseSliceIndex && slot.arrayId == arrayId &&
             slot.transferTag == tag;
     }
 
@@ -6146,7 +6158,7 @@ public:
             finishAttentionWorker(false);
             return;
         }
-        const uint32_t activeArrays = attentionPanelKeys(state);
+        const uint32_t activeArrays = attentionKvSubtileRows(state);
         if (state.qkInputNextProgram == activeArrays &&
             !state.qkInputReadInFlight && !state.qkInputProgramInFlight) {
             if (attentionQkInputPipelineDepth(state) != 0) {
@@ -6231,15 +6243,15 @@ public:
                 std::distance(current.qkInputSlots.begin(), slotIt));
             const uint32_t arrayId = current.qkInputNextFetch++;
             const uint32_t key = attentionKvLocalKey(
-                current, current.panel * 16 + arrayId);
+                current, current.phaseSliceIndex * 16 + arrayId);
             const uint64_t generation = current.generation;
             const uint64_t tag = attentionTransferTag();
             AttentionQkInputSlot& slot = *slotIt;
             slot.state = AttentionQkInputSlotState::Reading;
             slot.generation = current.generation;
-            slot.queryBlock = current.queryBlock;
-            slot.keyTileOrdinal = current.keyTileOrdinal;
-            slot.panel = current.panel;
+            slot.queryTileIndex = current.queryTileIndex;
+            slot.kvTileIndex = current.kvTileIndex;
+            slot.phaseSliceIndex = current.phaseSliceIndex;
             slot.arrayId = arrayId;
             slot.transferTag = tag;
             slot.payload.clear();
@@ -6292,31 +6304,31 @@ public:
                 return;
             }
             state.qkRowBurstStorageActive = false;
-            state.qkRowBurstPanel = UINT32_MAX;
-            finishAttentionQkReadoutPanel();
+            state.qkRowBurstKvSubtile = UINT32_MAX;
+            finishAttentionQkReadoutKvSubtile();
             return;
         }
         const uint32_t query = state.lane;
-        const uint32_t panel = state.panel;
-        const uint32_t panelKeys = attentionPanelKeys(state);
+        const uint32_t phaseSliceIndex = state.phaseSliceIndex;
+        const uint32_t kvSubtileRows = attentionKvSubtileRows(state);
         const uint64_t generation = state.generation;
         const uint64_t tag = attentionTransferTag();
         if (!workerCommandProcessor->readAttentionTileRowAsync(
                 query, generation, tag, LastTickCycle,
-                [this, query, panel, panelKeys, generation, tag](
+                [this, query, phaseSliceIndex, kvSubtileRows, generation, tag](
                     bool ok, uint64_t callbackTag,
                     const std::vector<uint8_t>& bytes) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
                     if (!ok || callbackTag != tag ||
-                        attentionWorker_->panel != panel ||
-                        bytes.size() != static_cast<size_t>(panelKeys) * sizeof(float)) {
+                        attentionWorker_->phaseSliceIndex != phaseSliceIndex ||
+                        bytes.size() != static_cast<size_t>(kvSubtileRows) * sizeof(float)) {
                         finishAttentionWorker(false);
                         return;
                     }
                     const uint64_t addr = attentionWorker_->spLocal +
                         (static_cast<uint64_t>(query) *
                              attentionKeyCols(*attentionWorker_) +
-                         static_cast<uint64_t>(panel) * 16) * sizeof(float);
+                         static_cast<uint64_t>(phaseSliceIndex) * 16) * sizeof(float);
                     attentionLocalWrite(addr, bytes, [this, generation](bool writeOk) {
                         if (!attentionCallbackGenerationMatches(generation)) return;
                         if (!writeOk) {
@@ -6334,36 +6346,36 @@ public:
     void readAttentionQkOutputRowBurst() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t panelKeys = attentionPanelKeys(state);
-        if (state.qkRowBurstPanel != state.panel) {
+        const uint32_t kvSubtileRows = attentionKvSubtileRows(state);
+        if (state.qkRowBurstKvSubtile != state.phaseSliceIndex) {
             if (!workerCommandProcessor->beginAttentionTileStorage(
-                    attentionQueryRows(state), panelKeys, sizeof(float),
+                    attentionQueryRows(state), kvSubtileRows, sizeof(float),
                     state.generation)) {
                 finishAttentionWorker(false);
                 return;
             }
-            state.qkRowBurstPanel = state.panel;
+            state.qkRowBurstKvSubtile = state.phaseSliceIndex;
             state.qkRowBurstStorageActive = true;
             state.index = attentionClusterWaveRowBegin(
                 state.clusterPvWave, attentionClusterPvLanes(state));
             state.lane = 0;
         }
-        if (state.index == panelKeys) {
+        if (state.index == kvSubtileRows) {
             writeAttentionQkRowBurst();
             return;
         }
         const uint32_t arrayId = state.index;
-        const uint32_t panel = state.panel;
+        const uint32_t phaseSliceIndex = state.phaseSliceIndex;
         const uint64_t generation = state.generation;
         const uint64_t readTag = attentionTransferTag();
         if (!readAttentionGemmOutputAsync(
                 arrayId, sizeof(float), readTag,
-                [this, arrayId, panel, generation, readTag](
+                [this, arrayId, phaseSliceIndex, generation, readTag](
                     bool ok, uint64_t callbackTag,
                     const std::vector<double>& values) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
                     if (!ok || callbackTag != readTag ||
-                        attentionWorker_->panel != panel ||
+                        attentionWorker_->phaseSliceIndex != phaseSliceIndex ||
                         values.size() != attentionQueryRows(*attentionWorker_)) {
                         finishAttentionWorker(false);
                         return;
@@ -6373,11 +6385,11 @@ public:
                     const uint64_t writeTag = attentionTransferTag();
                     if (!workerCommandProcessor->writeAttentionTileColumnAsync(
                             arrayId, bytes, generation, writeTag, LastTickCycle,
-                            [this, arrayId, panel, generation, writeTag](
+                            [this, arrayId, phaseSliceIndex, generation, writeTag](
                                 bool writeOk, uint64_t callbackWriteTag) {
                                 if (!attentionCallbackGenerationMatches(generation)) return;
                                 if (!writeOk || callbackWriteTag != writeTag ||
-                                    attentionWorker_->panel != panel ||
+                                    attentionWorker_->phaseSliceIndex != phaseSliceIndex ||
                                     attentionWorker_->index != arrayId) {
                                     finishAttentionWorker(false);
                                     return;
@@ -6398,16 +6410,16 @@ public:
             return;
         }
         AttentionWorkerState& state = *attentionWorker_;
-        if (state.qkReductionHalf == 0) {
-            state.qkReductionHalf = 1;
+        if (state.qkReductionSlice == 0) {
+            state.qkReductionSlice = 1;
             state.index = 0;
-            state.panel = 0;
+            state.phaseSliceIndex = 0;
             if (!buildAttentionSequentialQkMatrix(state)) {
                 finishAttentionWorker(false);
                 return;
             }
             state.phase = AttentionWorkerPhase::QkProgramMatrix;
-            beginAttentionQkPanel();
+            beginAttentionQkKvSubtile();
             return;
         }
         state.phase = AttentionWorkerPhase::QkReadOutputs;
@@ -6416,14 +6428,14 @@ public:
 
     void readAttentionSequentialQkTile() {
         if (!attentionWorker_ || !attentionSequential64Enable_ ||
-            attentionWorker_->qkReductionHalf != 1) {
+            attentionWorker_->qkReductionSlice != 1) {
             finishAttentionWorker(false);
             return;
         }
         AttentionWorkerState& state = *attentionWorker_;
         const uint32_t rows = attentionQueryRows(state);
-        const uint32_t keys = attentionPanelKeys(state);
-        if (rows != 64 || keys != 64) {
+        const uint32_t keys = attentionKvSubtileRows(state);
+        if (rows == 0 || rows > arrayOutputSize || keys != 64) {
             finishAttentionWorker(false);
             return;
         }
@@ -6438,7 +6450,8 @@ public:
                     const std::vector<double>& values) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
                     if (!ok || callbackTag != tag ||
-                        values.size() != static_cast<size_t>(rows) * keys) {
+                        values.size() !=
+                            static_cast<size_t>(arrayOutputSize) * keys) {
                         finishAttentionWorker(false);
                         return;
                     }
@@ -6448,7 +6461,8 @@ public:
                         for (uint32_t query = 0; query < rows; ++query) {
                             scores[static_cast<size_t>(query) * keys + key] =
                                 static_cast<float>(
-                                    values[static_cast<size_t>(key) * rows + query]);
+                                    values[static_cast<size_t>(key) *
+                                        arrayOutputSize + query]);
                         }
                     }
                     const std::vector<uint8_t> bytes =
@@ -6488,7 +6502,7 @@ public:
             readAttentionQkTransposedOutput();
             return;
         }
-        if (attentionQkPanelRowBurst_) {
+        if (attentionQkScoreRowBurst_) {
             readAttentionQkOutputRowBurst();
             return;
         }
@@ -6497,20 +6511,20 @@ public:
             return;
         }
         AttentionWorkerState& state = *attentionWorker_;
-        if (state.index == attentionPanelKeys(state)) {
+        if (state.index == attentionKvSubtileRows(state)) {
             recordAttentionInterTilePhase(
                 AttentionInterTilePhase::QkComputeReadout);
-            if (attentionSequential64Enable_ && state.qkReductionHalf == 0) {
-                state.qkReductionHalf = 1;
+            if (attentionSequential64Enable_ && state.qkReductionSlice == 0) {
+                state.qkReductionSlice = 1;
                 state.index = 0;
-                state.panel = 0;
+                state.phaseSliceIndex = 0;
                 if (!buildAttentionSequentialQkMatrix(state)) {
                     finishAttentionWorker(false);
                     return;
                 }
                 state.phase = AttentionWorkerPhase::QkProgramMatrix;
-                beginAttentionQkPanel();
-            } else if (++state.panel < attentionKeyPanels(state)) {
+                beginAttentionQkKvSubtile();
+            } else if (++state.phaseSliceIndex < attentionKvSubtileCount(state)) {
                 transitionAttentionTilePipeline(
                     AttentionTilePipelinePhase::QkInputProgram);
                 state.phase = AttentionWorkerPhase::QkProgramInputs;
@@ -6569,14 +6583,14 @@ public:
                 })) finishAttentionWorker(false);
     }
 
-    void finishAttentionQkReadoutPanel() {
+    void finishAttentionQkReadoutKvSubtile() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        state.qkReadPanel = UINT32_MAX;
+        state.qkReadKvSubtile = UINT32_MAX;
         state.qkReadBuffers.clear();
         state.qkReadReady.clear();
         recordAttentionInterTilePhase(AttentionInterTilePhase::QkComputeReadout);
-        if (++state.panel < attentionKeyPanels(state)) {
+        if (++state.phaseSliceIndex < attentionKvSubtileCount(state)) {
             transitionAttentionTilePipeline(AttentionTilePipelinePhase::QkInputProgram);
             state.phase = AttentionWorkerPhase::QkProgramInputs;
             state.index = 0;
@@ -6611,7 +6625,7 @@ public:
             return;
         }
         const uint32_t query = state.qkReadCommitLane;
-        const uint32_t key = state.panel * 16 + arrayId;
+        const uint32_t key = state.phaseSliceIndex * 16 + arrayId;
         const auto& bytes = state.qkReadBuffers[arrayId];
         if (bytes.size() != 16 * sizeof(float)) {
             finishAttentionWorker(false);
@@ -6637,11 +6651,11 @@ public:
     void commitAttentionQkReadout() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t panelKeys = attentionPanelKeys(state);
+        const uint32_t kvSubtileRows = attentionKvSubtileRows(state);
         if (state.qkReadCommitInFlight) return;
-        if (state.qkReadCommitIndex == panelKeys) {
-            if (state.qkReadInFlight == 0 && state.qkReadIssueIndex == panelKeys) {
-                finishAttentionQkReadoutPanel();
+        if (state.qkReadCommitIndex == kvSubtileRows) {
+            if (state.qkReadInFlight == 0 && state.qkReadIssueIndex == kvSubtileRows) {
+                finishAttentionQkReadoutKvSubtile();
             }
             return;
         }
@@ -6657,26 +6671,26 @@ public:
     void issueAttentionQkReadAhead() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t panelKeys = attentionPanelKeys(state);
-        while (state.qkReadIssueIndex < panelKeys &&
+        const uint32_t kvSubtileRows = attentionKvSubtileRows(state);
+        while (state.qkReadIssueIndex < kvSubtileRows &&
                state.qkReadIssueIndex - state.qkReadCommitIndex <
                    attentionQkReadoutWindow_) {
             const uint32_t arrayId = state.qkReadIssueIndex++;
             statAttentionQkReadoutAheadDepth_->addData(
                 state.qkReadIssueIndex - state.qkReadCommitIndex);
-            const uint32_t panel = state.panel;
+            const uint32_t phaseSliceIndex = state.phaseSliceIndex;
             const uint64_t generation = state.generation;
             const uint64_t tag = attentionTransferTag();
             state.qkReadInFlight += 1;
             if (!readAttentionGemmOutputAsync(arrayId, sizeof(float), tag,
-                    [this, tag, arrayId, panel, generation](
+                    [this, tag, arrayId, phaseSliceIndex, generation](
                         bool ok, uint64_t callbackTag,
                         const std::vector<double>& values) {
                         if (!attentionCallbackGenerationMatches(generation)) {
                             return;
                         }
                         if (!ok || callbackTag != tag ||
-                            attentionWorker_->panel != panel || values.size() != 16 ||
+                            attentionWorker_->phaseSliceIndex != phaseSliceIndex || values.size() != 16 ||
                             arrayId >= attentionWorker_->qkReadBuffers.size()) {
                             finishAttentionWorker(false);
                             return;
@@ -6700,16 +6714,16 @@ public:
     void readAttentionQkOutputPipelined() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        if (state.qkReadPanel != state.panel) {
-            const uint32_t panelKeys = attentionPanelKeys(state);
-            state.qkReadPanel = state.panel;
+        if (state.qkReadKvSubtile != state.phaseSliceIndex) {
+            const uint32_t kvSubtileRows = attentionKvSubtileRows(state);
+            state.qkReadKvSubtile = state.phaseSliceIndex;
             state.qkReadIssueIndex = 0;
             state.qkReadCommitIndex = 0;
             state.qkReadInFlight = 0;
             state.qkReadCommitLane = 0;
             state.qkReadCommitInFlight = false;
-            state.qkReadBuffers.assign(panelKeys, {});
-            state.qkReadReady.assign(panelKeys, 0);
+            state.qkReadBuffers.assign(kvSubtileRows, {});
+            state.qkReadReady.assign(kvSubtileRows, 0);
         }
         issueAttentionQkReadAhead();
         commitAttentionQkReadout();
@@ -6719,11 +6733,11 @@ public:
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         if (state.index == attentionQueryRows(state)) {
-            if (++state.panel < attentionKeyPanels(state)) {
+            if (++state.phaseSliceIndex < attentionKvSubtileCount(state)) {
                 transitionAttentionTilePipeline(
                     AttentionTilePipelinePhase::QkMatrixProgram);
                 state.index = 0;
-                beginAttentionQkTransposedPanel();
+                beginAttentionQkTransposedKvSubtile();
             } else {
                 recordAttentionInterTilePhase(
                     AttentionInterTilePhase::QkComputeReadout);
@@ -6746,11 +6760,11 @@ public:
                         finishAttentionWorker(false); return;
                     }
                     std::vector<uint8_t> bytes = attentionDoublesToBytes(values);
-                    bytes.resize(attentionPanelKeys(*attentionWorker_) * sizeof(float));
+                    bytes.resize(attentionKvSubtileRows(*attentionWorker_) * sizeof(float));
                     const uint64_t addr = attentionWorker_->spLocal +
                         (static_cast<uint64_t>(arrayId) *
                              attentionKeyCols(*attentionWorker_) +
-                         attentionWorker_->panel * 16) * sizeof(float);
+                         attentionWorker_->phaseSliceIndex * 16) * sizeof(float);
                     attentionLocalWrite(addr, bytes, [this](bool writeOk) {
                         if (!attentionWorker_ || !writeOk) {
                             finishAttentionWorker(false); return;
@@ -6769,16 +6783,22 @@ public:
             AttentionKvBufferState& descriptor =
                 state.kvBuffers[state.activeKvBuffer];
             if (descriptor.consuming &&
-                descriptor.keyTileOrdinal == state.keyTileOrdinal &&
-                descriptor.keyTile == state.keyTile) {
+                descriptor.kvTileIndex == state.kvTileIndex &&
+                descriptor.physicalKvTileIndex == state.physicalKvTileIndex) {
                 if (!descriptor.pairUseRecorded) {
                     descriptor.pairUseRecorded = true;
                     if (descriptor.ready) {
                         statAttentionKvPrefetchHits_->addData(1);
+                        if (descriptor.crossQuery) {
+                            statAttentionKvCrossQueryHits_->addData(1);
+                        }
                         statAttentionKvPrefetchReadyLeadTicks_->addData(
                             getCurrentSimCycle() - descriptor.readyTick);
                     } else {
                         statAttentionKvPrefetchWaits_->addData(1);
+                        if (descriptor.crossQuery) {
+                            statAttentionKvCrossQueryWaits_->addData(1);
+                        }
                     }
                 }
                 if (!descriptor.ready) {
@@ -6799,7 +6819,7 @@ public:
         }
         transitionAttentionTilePipeline(
             AttentionTilePipelinePhase::PvMatrixProgram);
-        beginAttentionPvPanel();
+        beginAttentionPvOutputSlice();
     }
 
     void beginAttentionSoftmax() {
@@ -6811,21 +6831,21 @@ public:
         maybeStartAttentionAheadOperands();
         AttentionTileRequest request;
         request.tag = state.dispatch.tag +
-            state.queryBlock * ((state.dispatch.expectedCols +
-                state.dispatch.keyBlockRows - 1) / state.dispatch.keyBlockRows) +
-            state.keyTileOrdinal + 1;
+            state.queryTileIndex * ((state.dispatch.expectedCols +
+                state.dispatch.kvTileRows - 1) / state.dispatch.kvTileRows) +
+            state.kvTileIndex + 1;
         request.jobId = state.dispatch.jobId;
         request.localScoreAddr = state.spLocal;
         request.globalRowBegin = state.dispatch.row +
-            state.queryBlock * state.dispatch.queryBlockRows;
-        request.keyBegin = state.keyTile * state.dispatch.keyBlockRows;
+            state.queryTileIndex * state.dispatch.queryTileRows;
+        request.keyBegin = state.physicalKvTileIndex * state.dispatch.kvTileRows;
         request.rows = attentionQueryRows(state);
         request.cols = attentionKeyCols(state);
         request.headDim = state.dispatch.headDim;
-        request.keyTile = state.keyTileOrdinal;
-        request.keyTiles = attentionKeyTilesForQueryBlock(state);
+        request.kvTileIndex = state.kvTileIndex;
+        request.numKvTiles = attentionKvTileCountForQueryTile(state);
         request.causal = attentionCausal(state);
-        request.firstTileForJob = state.queryBlock == 0 && state.keyTileOrdinal == 0;
+        request.firstTileForJob = state.queryTileIndex == 0 && state.kvTileIndex == 0;
         if (attentionClusterEnable_) {
             if (state.clusterScoreContext < 0) {
                 finishAttentionWorker(false);
@@ -6907,7 +6927,7 @@ public:
                     attentionWorker_->outputScales.assign(
                         result.oldOutputScale.begin(),
                         result.oldOutputScale.begin() + result.rows);
-                    attentionWorker_->panel = 0;
+                    attentionWorker_->phaseSliceIndex = 0;
                     attentionWorker_->clusterPvWave = 0;
                     attentionWorker_->attentionSoftmaxComplete = true;
                     continueAttentionAfterVReady();
@@ -6924,8 +6944,8 @@ public:
             })) {
             output->output(
                 "Attention SFU issue rejected core=%" PRIu64
-                " key_tile=%" PRIu32 " rows=%" PRIu32 " cols=%" PRIu32 "\n",
-                coreID, request.keyTile, request.rows, request.cols);
+                " kv_tile=%" PRIu32 " rows=%" PRIu32 " cols=%" PRIu32 "\n",
+                coreID, request.kvTileIndex, request.rows, request.cols);
             if (attentionClusterEnable_) {
                 finishAttentionWorker(false);
             } else {
@@ -6935,16 +6955,16 @@ public:
         }
         if (attentionPvMatrixSoftmaxOverlap_ && !attentionClusterEnable_) {
             statAttentionPvMatrixOverlapTiles_->addData(1);
-            state.panel = 0;
-            beginAttentionPvPanel();
+            state.phaseSliceIndex = 0;
+            beginAttentionPvOutputSlice();
         }
         if (attentionClusterEnable_) pumpAttentionClusterAhead();
     }
 
-    void beginAttentionPvPanel() {
+    void beginAttentionPvOutputSlice() {
         if (!attentionWorker_) return;
         if (attentionClusterEnable_) {
-            beginAttentionClusterPvPanel();
+            beginAttentionClusterPvOutputSlice();
             return;
         }
         if (attentionSequential64Enable_) {
@@ -6953,7 +6973,7 @@ public:
         }
         AttentionWorkerState& state = *attentionWorker_;
         state.attentionPvMatrixComplete = false;
-        if (!attentionPvMatrixSoftmaxOverlap_ || state.panel != 0 ||
+        if (!attentionPvMatrixSoftmaxOverlap_ || state.phaseSliceIndex != 0 ||
             state.attentionSoftmaxComplete) {
             state.phase = AttentionWorkerPhase::PvProgramMatrix;
         }
@@ -6971,7 +6991,7 @@ public:
                     for (uint32_t key = 0; key < keyCols; ++key) {
                         callbackState.arrayPayload[dim * matrixColumns + key] =
                             v[key * callbackState.dispatch.headDim +
-                              callbackState.panel * arrayOutputSize + dim];
+                              callbackState.phaseSliceIndex * arrayOutputSize + dim];
                     }
                 }
                 if (attentionPvMatrixBroadcast_) {
@@ -7057,18 +7077,18 @@ public:
         const uint32_t keyCols = attentionKeyCols(state);
         const uint64_t tileBytes = static_cast<uint64_t>(keyCols) *
             state.dispatch.headDim * sizeof(float);
-        const uint64_t panelBytes = static_cast<uint64_t>(keyCols) *
+        const uint64_t vTileBytes = static_cast<uint64_t>(keyCols) *
             arrayOutputSize * sizeof(float);
         const bool bufferFits = tileBytes <= attentionPvVTileBufferBytes_;
         const bool groupFollowerHit = attentionPvVTileGroupRetention_ &&
-            state.panel == 0 &&
-            state.queryBlock != attentionKvGroupOwnerQueryBlock(state);
-        if (attentionPvVTileReuse_ && (state.panel != 0 || groupFollowerHit) &&
+            state.phaseSliceIndex == 0 &&
+            state.queryTileIndex != attentionKvGroupOwnerQueryTile(state);
+        if (attentionPvVTileReuse_ && (state.phaseSliceIndex != 0 || groupFollowerHit) &&
             bufferFits && attentionVTileMatchesCurrentGroup(state) &&
             state.vPayload.size() == static_cast<size_t>(keyCols) * state.dispatch.headDim) {
             if (state.vTileBufferWaiting) return;
             const uint64_t accessTicks = attentionPvVTileBufferHitTicks_ +
-                (panelBytes + attentionPvVTileBufferBytesPerCycle_ - 1) /
+                (vTileBytes + attentionPvVTileBufferBytesPerCycle_ - 1) /
                     attentionPvVTileBufferBytesPerCycle_;
             if (!state.vTileBufferBypassWait) {
                 state.vTileBufferWaiting = true;
@@ -7079,7 +7099,7 @@ public:
             }
             state.vTileBufferBypassWait = false;
             statAttentionPvVTileBufferHits_->addData(1);
-            statAttentionPvVTileBufferBytesReused_->addData(panelBytes);
+            statAttentionPvVTileBufferBytesReused_->addData(vTileBytes);
             if (groupFollowerHit) {
                 statAttentionPvVTileBufferGroupHits_->addData(1);
                 recordAttentionKvOperandRelease(false);
@@ -7095,8 +7115,8 @@ public:
         }
         attentionLocalRead(
             state.vLocal + (attentionStreamKv(state) ? 0 :
-                static_cast<uint64_t>(state.keyTile) *
-                    state.dispatch.keyBlockRows * state.dispatch.headDim * sizeof(float)),
+                static_cast<uint64_t>(state.physicalKvTileIndex) *
+                    state.dispatch.kvTileRows * state.dispatch.headDim * sizeof(float)),
             static_cast<uint64_t>(keyCols) * state.dispatch.headDim * sizeof(float),
             [this, programMatrix](bool ok, const std::vector<uint8_t>& bytes) {
                 if (!attentionWorker_ || !ok) { finishAttentionWorker(false); return; }
@@ -7112,12 +7132,12 @@ public:
                 attentionWorker_->vTileValid = attentionPvVTileReuse_ &&
                     static_cast<uint64_t>(bytes.size()) <= attentionPvVTileBufferBytes_;
                 attentionWorker_->vTileTag = attentionWorker_->vTileValid ?
-                    attentionWorker_->keyTileOrdinal : UINT32_MAX;
+                    attentionWorker_->kvTileIndex : UINT32_MAX;
                 attentionWorker_->vTileGeneration = attentionWorker_->vTileValid ?
                     attentionWorker_->generation : 0;
                 attentionWorker_->vTileGroupOwner = attentionWorker_->vTileValid ?
-                    attentionKvGroupOwnerQueryBlock(*attentionWorker_) : UINT32_MAX;
-                if (attentionPvVTileReuse_ && attentionWorker_->panel == 0 &&
+                    attentionKvGroupOwnerQueryTile(*attentionWorker_) : UINT32_MAX;
+                if (attentionPvVTileReuse_ && attentionWorker_->phaseSliceIndex == 0 &&
                     attentionWorker_->vTileValid) {
                     // Keep the staging path's explicit release marker; the
                     // release operation is idempotent after the early V read.
@@ -7141,19 +7161,19 @@ public:
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         state.phase = AttentionWorkerPhase::PvProgramMatrix;
-        state.sequentialPvProgramPanel = 0;
+        state.pvOutputSliceToProgram = 0;
         const uint32_t keyCols = attentionKeyCols(state);
         const size_t tileValues = static_cast<size_t>(keyCols) *
             state.dispatch.headDim;
-        if (state.panel != 0 && state.vPayload.size() == tileValues) {
+        if (state.phaseSliceIndex != 0 && state.vPayload.size() == tileValues) {
             programAttentionSequentialPvMatrices();
             return;
         }
         const uint64_t generation = state.generation;
         attentionLocalRead(
             state.vLocal + (attentionStreamKv(state) ? 0 :
-                static_cast<uint64_t>(state.keyTile) *
-                    state.dispatch.keyBlockRows * state.dispatch.headDim * sizeof(float)),
+                static_cast<uint64_t>(state.physicalKvTileIndex) *
+                    state.dispatch.kvTileRows * state.dispatch.headDim * sizeof(float)),
             static_cast<uint64_t>(keyCols) * state.dispatch.headDim * sizeof(float),
             [this, generation](bool ok, const std::vector<uint8_t>& bytes) {
                 if (!attentionCallbackGenerationMatches(generation)) return;
@@ -7173,16 +7193,16 @@ public:
     void programAttentionSequentialPvMatrices() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        const uint32_t wavePanels = attentionSequentialPvPanels(state);
-        if (state.sequentialPvProgramPanel == wavePanels) {
+        const uint32_t numWaveOutputSlices = attentionSequentialPvOutputSliceCount(state);
+        if (state.pvOutputSliceToProgram == numWaveOutputSlices) {
             transitionAttentionTilePipeline(
                 AttentionTilePipelinePhase::PvInputProgram);
             state.phase = AttentionWorkerPhase::PvProgramInputs;
             programAttentionSequentialPvInputs();
             return;
         }
-        const uint32_t localPanel = state.sequentialPvProgramPanel;
-        const uint32_t globalPanel = state.panel + localPanel;
+        const uint32_t localOutputSlice = state.pvOutputSliceToProgram;
+        const uint32_t outputSlice = state.phaseSliceIndex + localOutputSlice;
         const uint32_t keyCols = attentionKeyCols(state);
         std::vector<double> matrix(
             static_cast<size_t>(arrayOutputSize) * keyCols, 0.0);
@@ -7190,7 +7210,7 @@ public:
             for (uint32_t key = 0; key < keyCols; ++key) {
                 matrix[static_cast<size_t>(dim) * keyCols + key] =
                     state.vPayload[static_cast<size_t>(key) *
-                        state.dispatch.headDim + globalPanel * arrayOutputSize + dim];
+                        state.dispatch.headDim + outputSlice * arrayOutputSize + dim];
             }
         }
         std::vector<uint32_t> arrays(attentionQueryRows(state));
@@ -7206,7 +7226,7 @@ public:
                     if (!ok || callbackTag != tag) {
                         finishAttentionWorker(false); return;
                     }
-                    ++attentionWorker_->sequentialPvProgramPanel;
+                    ++attentionWorker_->pvOutputSliceToProgram;
                     programAttentionSequentialPvMatrices();
                 }) :
             programAttentionGemmMatrixGroupAsync(
@@ -7216,7 +7236,7 @@ public:
                     if (!ok || callbackTag != tag) {
                         finishAttentionWorker(false); return;
                     }
-                    ++attentionWorker_->sequentialPvProgramPanel;
+                    ++attentionWorker_->pvOutputSliceToProgram;
                     programAttentionSequentialPvMatrices();
                 });
         if (!accepted) finishAttentionWorker(false);
@@ -7238,13 +7258,13 @@ public:
         auto completeInputProgramming = [this]() {
             if (!attentionWorker_) return;
             attentionWorker_->index = 0;
-            if (attentionWorker_->keyTileOrdinal != 0) {
+            if (attentionWorker_->kvTileIndex != 0) {
                 transitionAttentionTilePipeline(
                     AttentionTilePipelinePhase::PvRestoreOutput);
             }
             prepareAttentionSequentialPvOutputs();
         };
-        if (state.panel != 0 &&
+        if (state.phaseSliceIndex != 0 &&
             state.sequentialPPayload.size() == tileElements) {
             completeInputProgramming();
             return;
@@ -7295,7 +7315,7 @@ public:
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         const uint32_t activeArrays = attentionQueryRows(state);
-        if (state.keyTileOrdinal == 0) {
+        if (state.kvTileIndex == 0) {
             launchAttentionSequentialPvComputation();
             return;
         }
@@ -7346,7 +7366,7 @@ public:
                 outputs[static_cast<size_t>(row) * arrayOutputSize + dim] =
                     state.sequentialOPayload[
                         static_cast<size_t>(row) * state.dispatch.headDim +
-                        state.panel * arrayOutputSize + dim] * scale;
+                        state.phaseSliceIndex * arrayOutputSize + dim] * scale;
             }
         }
         const uint64_t tag = attentionTransferTag();
@@ -7377,7 +7397,7 @@ public:
         const bool accepted = workerCommandProcessor &&
             workerCommandProcessor->launchGemmArrayGroupActiveBank(
                 arrayIds, state.activeOperandBank,
-                state.keyTileOrdinal == 0 ? 0 : 1, activeColumns,
+                state.kvTileIndex == 0 ? 0 : 1, activeColumns,
                 LastTickCycle,
                 [this, generation](uint32_t arrayId, uint64_t) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
@@ -7415,10 +7435,10 @@ public:
                     bool ok, uint64_t callbackTag,
                     const std::vector<double>& values) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
-                    const size_t panelElements =
+                    const size_t outputSliceElements =
                         static_cast<size_t>(rows) * arrayOutputSize;
                     if (!ok || callbackTag != tag ||
-                        values.size() != panelElements) {
+                        values.size() != outputSliceElements) {
                         finishAttentionWorker(false); return;
                     }
                     const size_t oElements = static_cast<size_t>(rows) *
@@ -7431,14 +7451,14 @@ public:
                             attentionWorker_->sequentialOPayload[
                                 static_cast<size_t>(row) *
                                     attentionWorker_->dispatch.headDim +
-                                attentionWorker_->panel * arrayOutputSize + dim] =
+                                attentionWorker_->phaseSliceIndex * arrayOutputSize + dim] =
                                 values[static_cast<size_t>(row) *
                                     arrayOutputSize + dim];
                         }
                     }
-                    if (attentionWorker_->panel + 1 <
-                        attentionDimensionPanels(*attentionWorker_)) {
-                        completeAttentionPvOutputPanel();
+                    if (attentionWorker_->phaseSliceIndex + 1 <
+                        attentionOutputSliceCount(*attentionWorker_)) {
+                        completeAttentionPvOutputSlice();
                         return;
                     }
                     const std::vector<uint8_t> bytes = attentionDoublesToBytes(
@@ -7458,7 +7478,7 @@ public:
                                         finishAttentionWorker(false);
                                         return;
                                     }
-                                    completeAttentionPvOutputPanel();
+                                    completeAttentionPvOutputSlice();
                                 });
                         });
                 })) finishAttentionWorker(false);
@@ -7467,26 +7487,26 @@ public:
     bool attentionClusterPvMatrixMatches(
             const AttentionWorkerState& state) const {
         return state.clusterPvMatrixResident &&
-            state.clusterPvMatrixKeyTile == state.keyTileOrdinal &&
+            state.clusterPvMatrixKvTile == state.kvTileIndex &&
             state.clusterPvMatrixGroupOwner ==
-                attentionKvGroupOwnerQueryBlock(state);
+                attentionKvGroupOwnerQueryTile(state);
     }
 
     void programAttentionClusterPvMatrices() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         const uint32_t halves = attentionClusterHeadHalves(state);
-        if (state.panel == halves) {
+        if (state.phaseSliceIndex == halves) {
             state.clusterPvMatrixResident = true;
-            state.clusterPvMatrixKeyTile = state.keyTileOrdinal;
+            state.clusterPvMatrixKvTile = state.kvTileIndex;
             state.clusterPvMatrixGroupOwner =
-                attentionKvGroupOwnerQueryBlock(state);
-            state.panel = 0;
+                attentionKvGroupOwnerQueryTile(state);
+            state.phaseSliceIndex = 0;
             state.index = 0;
             beginAttentionClusterPvInputProgram();
             return;
         }
-        const uint32_t half = state.panel;
+        const uint32_t half = state.phaseSliceIndex;
         const uint32_t keyCols = attentionKeyCols(state);
         const uint32_t activeColumns = attentionPvActiveColumns(state);
         const uint32_t matrixColumns = activeColumns != 0
@@ -7522,11 +7542,11 @@ public:
                     bool ok, uint64_t callbackTag) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
                     if (!ok || callbackTag != transferTag ||
-                        attentionWorker_->panel != half) {
+                        attentionWorker_->phaseSliceIndex != half) {
                         if (attentionWorker_) finishAttentionWorker(false);
                         return;
                     }
-                    ++attentionWorker_->panel;
+                    ++attentionWorker_->phaseSliceIndex;
                     programAttentionClusterPvMatrices();
                 })
             : workerCommandProcessor->programGemmMatrixGroupBankAsync(
@@ -7536,18 +7556,18 @@ public:
                     bool ok, uint64_t callbackTag) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
                     if (!ok || callbackTag != transferTag ||
-                        attentionWorker_->panel != half) {
+                        attentionWorker_->phaseSliceIndex != half) {
                         if (attentionWorker_) finishAttentionWorker(false);
                         return;
                     }
-                    ++attentionWorker_->panel;
+                    ++attentionWorker_->phaseSliceIndex;
                     programAttentionClusterPvMatrices();
                 });
         if (!accepted) {
             scheduleAttentionClusterOwnerRetry(
                 [this, generation, half, clusterTag, contextSlot]() {
                     if (!attentionCallbackGenerationMatches(generation) ||
-                        !attentionWorker_ || attentionWorker_->panel != half ||
+                        !attentionWorker_ || attentionWorker_->phaseSliceIndex != half ||
                         !attentionClusterCallbackMatches(
                             AttentionClusterContextKind::Pv,
                             contextSlot, clusterTag)) return;
@@ -7558,7 +7578,7 @@ public:
         }
     }
 
-    void beginAttentionClusterPvPanel() {
+    void beginAttentionClusterPvOutputSlice() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         state.phase = AttentionWorkerPhase::PvProgramMatrix;
@@ -7570,7 +7590,7 @@ public:
             state.dispatch.headDim * sizeof(float);
         if (attentionClusterPvMatrixMatches(state)) {
             recordAttentionKvOperandRelease(false);
-            state.panel = 0;
+            state.phaseSliceIndex = 0;
             state.index = attentionClusterWaveRowBegin(
                 state.clusterPvWave, attentionClusterPvLanes(state));
             beginAttentionClusterPvInputProgram();
@@ -7584,8 +7604,8 @@ public:
         }
         attentionLocalRead(
             state.vLocal + (attentionStreamKv(state) ? 0 :
-                static_cast<uint64_t>(state.keyTile) *
-                    state.dispatch.keyBlockRows * state.dispatch.headDim *
+                static_cast<uint64_t>(state.physicalKvTileIndex) *
+                    state.dispatch.kvTileRows * state.dispatch.headDim *
                     sizeof(float)),
             tileBytes,
             [this, generation, clusterTag, contextSlot](
@@ -7603,18 +7623,18 @@ public:
                     statAttentionPvVTileBufferBytesRead_->addData(bytes.size());
                     attentionWorker_->vPayload = v;
                     attentionWorker_->vTileValid = true;
-                    attentionWorker_->vTileTag = attentionWorker_->keyTileOrdinal;
+                    attentionWorker_->vTileTag = attentionWorker_->kvTileIndex;
                     attentionWorker_->vTileGeneration = attentionWorker_->generation;
                     attentionWorker_->vTileGroupOwner =
-                        attentionKvGroupOwnerQueryBlock(*attentionWorker_);
+                        attentionKvGroupOwnerQueryTile(*attentionWorker_);
                     recordAttentionKvOperandRelease(false);
-                    attentionWorker_->panel = 0;
+                    attentionWorker_->phaseSliceIndex = 0;
                     programAttentionClusterPvMatrices();
                     return;
                 }
                 attentionWorker_->vPayload = v;
                 recordAttentionKvOperandRelease(false);
-                attentionWorker_->panel = 0;
+                attentionWorker_->phaseSliceIndex = 0;
                 programAttentionClusterPvMatrices();
             });
     }
@@ -7910,12 +7930,12 @@ public:
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         if (state.phase != AttentionWorkerPhase::PvReadOutputs) return;
-        const uint32_t panels = attentionDimensionPanels(state);
-        if (state.clusterPvOutputCompleted == panels &&
+        const uint32_t phaseSliceCount = attentionOutputSliceCount(state);
+        if (state.clusterPvOutputCompleted == phaseSliceCount &&
             state.clusterPvOutputInFlight == 0) {
             if (state.index + 1 == attentionQueryRows(state) &&
                 state.attentionClusterOCommitsPending != 0) return;
-            state.panel = 0;
+            state.phaseSliceIndex = 0;
             ++state.index;
             const uint32_t lanes = attentionClusterPvLanes(state);
             const uint32_t waveEnd = attentionClusterWaveRowBegin(
@@ -7932,7 +7952,7 @@ public:
                 return;
             }
             if (state.index == attentionQueryRows(state)) {
-                completeAttentionPvOutputPanel();
+                completeAttentionPvOutputSlice();
                 return;
             }
             state.clusterPvOutputIssued = 0;
@@ -7953,18 +7973,18 @@ public:
         state.clusterPvOutputInFlight = 1;
         if (!readAttentionClusterPvGroupAsync(
                 arrays, tag,
-                [this, generation, logicalRow, panels, tag](
+                [this, generation, logicalRow, phaseSliceCount, tag](
                     bool ok, uint64_t callbackTag,
                     const std::vector<double>& values) {
                     if (!attentionCallbackGenerationMatches(generation)) return;
                     if (!ok || callbackTag != tag || !attentionWorker_ ||
                         attentionWorker_->index != logicalRow ||
-                        values.size() != static_cast<size_t>(panels) * 16) {
+                        values.size() != static_cast<size_t>(phaseSliceCount) * 16) {
                         if (attentionWorker_) finishAttentionWorker(false);
                         return;
                     }
                     AttentionWorkerState& callbackState = *attentionWorker_;
-                    const uint32_t queryContext = callbackState.queryBlock %
+                    const uint32_t queryContext = callbackState.queryTileIndex %
                         attentionClusterConfig_.groupSize;
                     const int32_t oSlot =
                         callbackState.clusterOContextSlots[queryContext];
@@ -7983,25 +8003,25 @@ public:
                         if (!attentionOAccumulator_.submitRow(
                                 static_cast<uint32_t>(oSlot),
                                 callbackState.clusterOTags[queryContext],
-                                callbackState.keyTileOrdinal, logicalRow,
+                                callbackState.kvTileIndex, logicalRow,
                                 callbackState.outputScales[logicalRow], row,
                                 LastTickCycle, &operation, &readyCycle)) {
                             finishAttentionWorker(false);
                             return;
                         }
                         ++callbackState.attentionClusterOCommitsPending;
-                        statAttentionClusterOAccumulateSegments_->addData(panels);
+                        statAttentionClusterOAccumulateSegments_->addData(phaseSliceCount);
                         statAttentionClusterOFusedRows_->addData(1);
                         statAttentionClusterOFusedBytes_->addData(
                             row.size() * sizeof(float));
-                        if (callbackState.keyTileOrdinal != 0)
-                            statAttentionClusterOScaleSegments_->addData(panels);
+                        if (callbackState.kvTileIndex != 0)
+                            statAttentionClusterOScaleSegments_->addData(phaseSliceCount);
                     } else {
-                        for (uint32_t panel = 0; panel < panels; ++panel) {
+                        for (uint32_t phaseSliceIndex = 0; phaseSliceIndex < phaseSliceCount; ++phaseSliceIndex) {
                             std::vector<float> segment(16);
                             std::transform(
-                                values.begin() + static_cast<size_t>(panel) * 16,
-                                values.begin() + static_cast<size_t>(panel + 1) * 16,
+                                values.begin() + static_cast<size_t>(phaseSliceIndex) * 16,
+                                values.begin() + static_cast<size_t>(phaseSliceIndex + 1) * 16,
                                 segment.begin(),
                                 [](double value) { return static_cast<float>(value); });
                             uint64_t operation = 0;
@@ -8009,7 +8029,7 @@ public:
                             if (!attentionOAccumulator_.submitSegment(
                                     static_cast<uint32_t>(oSlot),
                                     callbackState.clusterOTags[queryContext],
-                                    callbackState.keyTileOrdinal, logicalRow, panel,
+                                    callbackState.kvTileIndex, logicalRow, phaseSliceIndex,
                                     callbackState.outputScales[logicalRow], segment,
                                     LastTickCycle, &operation, &readyCycle)) {
                                 finishAttentionWorker(false);
@@ -8017,12 +8037,12 @@ public:
                             }
                             ++callbackState.attentionClusterOCommitsPending;
                             statAttentionClusterOAccumulateSegments_->addData(1);
-                            if (callbackState.keyTileOrdinal != 0)
+                            if (callbackState.kvTileIndex != 0)
                                 statAttentionClusterOScaleSegments_->addData(1);
                         }
                     }
                     callbackState.clusterPvOutputInFlight = 0;
-                    callbackState.clusterPvOutputCompleted = panels;
+                    callbackState.clusterPvOutputCompleted = phaseSliceCount;
                     readAttentionClusterPvOutput();
                 })) {
             state.clusterPvOutputIssued = 0;
@@ -8064,12 +8084,12 @@ public:
         transitionAttentionTilePipeline(AttentionTilePipelinePhase::PvInputProgram);
         state.phase = AttentionWorkerPhase::PvProgramInputs;
         state.index = 0;
-        if (state.panel != 0 && attentionPvInputResidentForCurrentTile(state)) {
+        if (state.phaseSliceIndex != 0 && attentionPvInputResidentForCurrentTile(state)) {
             statAttentionPvInputResidencyHits_->addData(1);
             statAttentionPvInputResidencyRowsReused_->addData(
                 attentionQueryRows(state));
             state.index = attentionQueryRows(state);
-            if (attentionPvEarlyCompute_ && state.keyTileOrdinal == 0) {
+            if (attentionPvEarlyCompute_ && state.kvTileIndex == 0) {
                 state.attentionPvPreparationComplete = false;
                 state.arraysPending = 0;
                 std::fill(
@@ -8098,7 +8118,7 @@ public:
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         state.attentionPvMatrixComplete = true;
-        if (attentionPvMatrixSoftmaxOverlap_ && state.panel == 0) {
+        if (attentionPvMatrixSoftmaxOverlap_ && state.phaseSliceIndex == 0) {
             continueAttentionAfterSoftmaxAndPvMatrix();
             return;
         }
@@ -8114,7 +8134,7 @@ public:
         attentionArrayPending_[arrayId] = 1;
         arrayStates[arrayId] = 1;
         attentionWorker_->arraysPending += 1;
-        const uint64_t outputMode = attentionWorker_->keyTileOrdinal == 0 ? 0 : 1;
+        const uint64_t outputMode = attentionWorker_->kvTileIndex == 0 ? 0 : 1;
         const uint32_t activeColumns =
             attentionPvActiveColumns(*attentionWorker_);
         if (!launchAttentionGemmArray(
@@ -8162,7 +8182,7 @@ public:
                                 finishAttentionWorker(false); return;
                             }
                             if (attentionPvEarlyCompute_ &&
-                                attentionWorker_->keyTileOrdinal == 0) {
+                                attentionWorker_->kvTileIndex == 0) {
                                 startAttentionPvArrayComputation(arrayId);
                                 if (!attentionWorker_) return;
                             }
@@ -8187,7 +8207,7 @@ public:
                                 finishAttentionWorker(false); return;
                             }
                             if (attentionPvEarlyCompute_ &&
-                                attentionWorker_->keyTileOrdinal == 0) {
+                                attentionWorker_->kvTileIndex == 0) {
                                 startAttentionPvArrayComputation(arrayId);
                                 if (!attentionWorker_) return;
                             }
@@ -8224,12 +8244,12 @@ public:
             finishAttentionWorker(false);
             return;
         }
-        if (attentionPvInputResidency_ && state.panel == 0) {
+        if (attentionPvInputResidency_ && state.phaseSliceIndex == 0) {
             state.attentionPvInputResidentValid = true;
-            state.attentionPvInputResidentQueryBlock = state.queryBlock;
-            state.attentionPvInputResidentKeyTile = state.keyTileOrdinal;
+            state.attentionPvInputResidentQueryTile = state.queryTileIndex;
+            state.attentionPvInputResidentKvTile = state.kvTileIndex;
         }
-        if (attentionPvEarlyCompute_ && state.keyTileOrdinal == 0) {
+        if (attentionPvEarlyCompute_ && state.kvTileIndex == 0) {
             completeAttentionPvPreparation();
             return;
         }
@@ -8268,7 +8288,7 @@ public:
         for (uint32_t arrayId = 0; arrayId < activeArrays; ++arrayId) {
             attentionArrayPending_[arrayId] = 1;
             arrayStates[arrayId] = 1;
-            const uint64_t outputMode = state.keyTileOrdinal == 0 ? 0 : 1;
+            const uint64_t outputMode = state.kvTileIndex == 0 ? 0 : 1;
             const uint32_t activeColumns = attentionPvActiveColumns(state);
             if (!launchAttentionGemmArray(
                     arrayId, outputMode, false, activeColumns)) {
@@ -8327,7 +8347,7 @@ public:
     void prepareAttentionPvOutput() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
-        if (state.keyTileOrdinal == 0) {
+        if (state.kvTileIndex == 0) {
             if (attentionPvEarlyCompute_) {
                 completeAttentionPvPreparation();
                 return;
@@ -8377,7 +8397,7 @@ public:
         }
         const uint64_t addr = state.oLocal +
             (static_cast<uint64_t>(arrayId) * state.dispatch.headDim +
-             state.panel * 16) * sizeof(float);
+             state.phaseSliceIndex * 16) * sizeof(float);
         attentionLocalRead(
             addr, 16 * sizeof(float),
             [this, arrayId](bool ok, const std::vector<uint8_t>& bytes) {
@@ -8405,12 +8425,12 @@ public:
         AttentionWorkerState& state = *attentionWorker_;
         beginAttentionTilePipeline();
         const DmaConsumerMetadata consumerProgress = attentionDmaConsumerMetadata(
-            state, state.queryBlock, state.keyTileOrdinal, DmaOperand::Unknown);
+            state, state.queryTileIndex, state.kvTileIndex, DmaOperand::Unknown);
         globalMem->dma_update_consumer_progress(
             attentionKvHostAddr(state, state.dispatch.kAddr),
             attentionKvHostAddr(state, state.dispatch.vAddr), consumerProgress);
         recordAttentionInterTilePhase(AttentionInterTilePhase::KvLoad);
-        beginAttentionKeyTile();
+        beginAttentionKvTile();
     }
 
     void beginAttentionNextGroupedQueryTile() {
@@ -8422,13 +8442,13 @@ public:
         AttentionWorkerState& state = *attentionWorker_;
         const bool hasAheadOperands = attentionCrossTileOperandPipeline_ &&
             state.aheadOperands.phase != AttentionAheadOperandPhase::Idle;
-        state.queryBlock += 1;
+        state.queryTileIndex += 1;
         if (!selectAttentionQueryStorage(state)) {
             finishAttentionWorker(false);
             return;
         }
-        state.panel = 0;
-        state.keyTile = attentionPhysicalKeyTile(state);
+        state.phaseSliceIndex = 0;
+        state.physicalKvTileIndex = attentionPhysicalKvTile(state);
         state.attentionWaitingKvBuffer = UINT32_MAX;
         state.attentionWaitingForPrefetch = false;
         statAttentionKvPairReuseTiles_->addData(1);
@@ -8442,12 +8462,12 @@ public:
             pumpAttentionClusterAhead();
             return;
         }
-        if (state.keyTileOrdinal != 0 && hasAheadOperands) {
+        if (state.kvTileIndex != 0 && hasAheadOperands) {
             AttentionAheadOperandContext& ahead = state.aheadOperands;
             if (ahead.generation != state.generation ||
-                ahead.queryBlock != state.queryBlock ||
-                ahead.keyTileOrdinal != state.keyTileOrdinal ||
-                ahead.keyTile != state.keyTile) {
+                ahead.queryTileIndex != state.queryTileIndex ||
+                ahead.kvTileIndex != state.kvTileIndex ||
+                ahead.physicalKvTileIndex != state.physicalKvTileIndex) {
                 statAttentionCrossTileOperandTagMismatches_->addData(1);
                 finishAttentionWorker(false);
                 return;
@@ -8462,15 +8482,15 @@ public:
             pumpAttentionAheadOperands();
             return;
         }
-        if (state.keyTileOrdinal != 0) {
+        if (state.kvTileIndex != 0) {
             beginAttentionGroupedQueryTileAfterQueryLoad();
             return;
         }
         state.phase = AttentionWorkerPhase::LoadingQ;
         const uint64_t generation = state.generation;
         globalMem->dma_read_from_host_to_globalmem(
-            state.dispatch.qAddr + static_cast<uint64_t>(state.queryBlock) *
-                state.dispatch.queryBlockRows * state.dispatch.headDim * sizeof(float),
+            state.dispatch.qAddr + static_cast<uint64_t>(state.queryTileIndex) *
+                state.dispatch.queryTileRows * state.dispatch.headDim * sizeof(float),
             static_cast<uint64_t>(attentionQueryRows(state)) *
                 state.dispatch.headDim * sizeof(float),
             state.qLocal, [this, generation](bool ok) {
@@ -8484,16 +8504,16 @@ public:
             }, DmaRequestKind::AttentionQuery);
     }
 
-    void writeAttentionQueryBlockOutput() {
+    void writeAttentionQueryTileOutput() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         state.phase = AttentionWorkerPhase::OutputDma;
         if (!attentionClusterEnable_) {
-            dmaAttentionQueryBlockOutput();
+            dmaAttentionQueryTileOutput();
             return;
         }
         const uint32_t queryContext =
-            state.queryBlock % attentionClusterConfig_.groupSize;
+            state.queryTileIndex % attentionClusterConfig_.groupSize;
         const int32_t slot = state.clusterOContextSlots[queryContext];
         uint64_t drainId = 0;
         uint64_t readyCycle = 0;
@@ -8510,73 +8530,136 @@ public:
         statAttentionClusterODrainRequests_->addData(1);
     }
 
-    void dmaAttentionQueryBlockOutput() {
+    void completeAttentionQueryTileOutputDma(uint64_t generation) {
+        if (!attentionCallbackGenerationMatches(generation)) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        if (attentionClusterEnable_ && !releaseAttentionClusterOContext()) {
+            statAttentionClusterIllegalTransitions_->addData(1);
+            finishAttentionWorker(false);
+            return;
+        }
+        recordAttentionInterTilePhase(AttentionInterTilePhase::OutputDma);
+        statAttentionWorkerOutputDmaAckTick_->addData(getCurrentSimCycle());
+        const bool finalOutput = state.queryTileIndex + 1 == attentionQueryTileCount(state);
+        if (attentionTileTrace_ || finalOutput) {
+            const uint32_t numKvTiles = attentionKvTileCountForQueryTile(state);
+            const uint32_t completedKvTile = state.kvTileIndex < numKvTiles
+                ? state.kvTileIndex : numKvTiles - 1;
+            traceAttentionMilestone(
+                "worker", finalOutput ? "final_output_dma_ack" : "output_dma_ack",
+                "done", state.dispatch.jobId, state.dispatch.tag,
+                state.queryTileIndex, completedKvTile);
+        }
+        if (attentionHasNextGroupedQuery(state)) {
+            beginAttentionNextGroupedQueryTile();
+            return;
+        }
+        const uint32_t numQueryTiles = attentionQueryTileCount(state);
+        if (++state.queryTileIndex < numQueryTiles) beginAttentionQueryTile();
+        else finishAttentionWorker(true);
+    }
+
+    void issueAttentionOutputDmaRows(uint64_t generation) {
+        if (!attentionCallbackGenerationMatches(generation)) return;
+        AttentionWorkerState& state = *attentionWorker_;
+        constexpr uint32_t kScatterDmaWindow = 16;
+        const uint32_t rows = attentionQueryRows(state);
+        const uint64_t rowBytes =
+            static_cast<uint64_t>(state.dispatch.headDim) * sizeof(float);
+        const uint32_t groupSize =
+            state.dispatch.numQueryHeads / state.dispatch.numKvHeads;
+        const uint32_t groupRowBegin = state.dispatch.groupQueryRowBegin +
+            state.queryTileIndex * state.dispatch.queryTileRows;
+        const uint32_t queryHead = state.dispatch.kvHeadIndex * groupSize +
+            groupRowBegin / state.dispatch.queryLength;
+        const uint32_t queryRow = groupRowBegin % state.dispatch.queryLength;
+
+        while (state.attentionOutputDmaRowsInFlight < kScatterDmaWindow &&
+               state.attentionOutputDmaNextRow < rows) {
+            const uint32_t row = state.attentionOutputDmaNextRow++;
+            ++state.attentionOutputDmaRowsInFlight;
+            const uint64_t source =
+                state.oLocal + static_cast<uint64_t>(row) * rowBytes;
+            const uint64_t destination = state.dispatch.oAddr +
+                (static_cast<uint64_t>(queryRow + row) *
+                     state.dispatch.numQueryHeads + queryHead) * rowBytes;
+            globalMem->dma_write_from_globalmem_to_host(
+                source, destination, rowBytes,
+                [this, generation](bool ok) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    AttentionWorkerState& callbackState = *attentionWorker_;
+                    if (!ok || callbackState.attentionOutputDmaRowsPending == 0 ||
+                        callbackState.attentionOutputDmaRowsInFlight == 0) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    --callbackState.attentionOutputDmaRowsInFlight;
+                    if (--callbackState.attentionOutputDmaRowsPending == 0) {
+                        completeAttentionQueryTileOutputDma(generation);
+                        return;
+                    }
+                    issueAttentionOutputDmaRows(generation);
+                }, DmaRequestKind::AttentionOutput);
+        }
+    }
+
+    void dmaAttentionQueryTileOutput() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         state.phase = AttentionWorkerPhase::OutputDma;
-        const uint64_t blockBytes = static_cast<uint64_t>(attentionQueryRows(state)) *
-            state.dispatch.headDim * sizeof(float);
+        const uint32_t rows = attentionQueryRows(state);
+        const uint64_t rowBytes =
+            static_cast<uint64_t>(state.dispatch.headDim) * sizeof(float);
         const uint64_t generation = state.generation;
-        globalMem->dma_write_from_globalmem_to_host(
-            state.oLocal, state.dispatch.oAddr +
-                static_cast<uint64_t>(state.queryBlock) *
-                    state.dispatch.queryBlockRows * state.dispatch.headDim * sizeof(float),
-            blockBytes, [this, generation](bool ok) {
-                if (!attentionCallbackGenerationMatches(generation)) return;
-                if (!ok) {
-                    finishAttentionWorker(false);
-                    return;
-                }
-                if (attentionClusterEnable_ &&
-                    !releaseAttentionClusterOContext()) {
-                    statAttentionClusterIllegalTransitions_->addData(1);
-                    finishAttentionWorker(false);
-                    return;
-                }
-                recordAttentionInterTilePhase(AttentionInterTilePhase::OutputDma);
-                statAttentionWorkerOutputDmaAckTick_->addData(getCurrentSimCycle());
-                AttentionWorkerState& callbackState = *attentionWorker_;
-                const bool finalOutput =
-                    callbackState.queryBlock + 1 == attentionQueryBlocks(callbackState);
-                if (attentionTileTrace_ || finalOutput) {
-                    const uint32_t keyTiles =
-                        attentionKeyTilesForQueryBlock(callbackState);
-                    const uint32_t completedKeyTile =
-                        callbackState.keyTileOrdinal < keyTiles
-                            ? callbackState.keyTileOrdinal
-                            : keyTiles - 1;
-                    traceAttentionMilestone(
-                        "worker",
-                        finalOutput ? "final_output_dma_ack" : "output_dma_ack",
-                        "done", callbackState.dispatch.jobId,
-                        callbackState.dispatch.tag, callbackState.queryBlock,
-                        completedKeyTile);
-                }
-                if (attentionHasNextGroupedQuery(callbackState)) {
-                    beginAttentionNextGroupedQueryTile();
-                    return;
-                }
-                const uint32_t queryBlocks = attentionQueryBlocks(callbackState);
-                if (++callbackState.queryBlock < queryBlocks) beginAttentionQueryBlock();
-                else finishAttentionWorker(true);
-            }, DmaRequestKind::AttentionOutput);
+        if (state.dispatch.numQueryHeads <= 1 ||
+            state.dispatch.queryLength == 0) {
+            globalMem->dma_write_from_globalmem_to_host(
+                state.oLocal, state.dispatch.oAddr +
+                    (static_cast<uint64_t>(state.dispatch.groupQueryRowBegin) +
+                     static_cast<uint64_t>(state.queryTileIndex) *
+                        state.dispatch.queryTileRows) * rowBytes,
+                static_cast<uint64_t>(rows) * rowBytes,
+                [this, generation](bool ok) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok) { finishAttentionWorker(false); return; }
+                    completeAttentionQueryTileOutputDma(generation);
+                }, DmaRequestKind::AttentionOutput);
+            return;
+        }
+
+        const uint32_t groupSize =
+            state.dispatch.numQueryHeads / state.dispatch.numKvHeads;
+        const uint32_t groupRowBegin = state.dispatch.groupQueryRowBegin +
+            state.queryTileIndex * state.dispatch.queryTileRows;
+        const uint32_t queryHead = state.dispatch.kvHeadIndex * groupSize +
+            groupRowBegin / state.dispatch.queryLength;
+        const uint32_t queryRow = groupRowBegin % state.dispatch.queryLength;
+        if (queryHead >= state.dispatch.numQueryHeads ||
+            queryRow + rows > state.dispatch.queryLength) {
+            finishAttentionWorker(false);
+            return;
+        }
+        state.attentionOutputDmaRowsPending = rows;
+        state.attentionOutputDmaNextRow = 0;
+        state.attentionOutputDmaRowsInFlight = 0;
+        issueAttentionOutputDmaRows(generation);
     }
 
-    void completeAttentionPvOutputPanel() {
+    void completeAttentionPvOutputSlice() {
         if (!attentionWorker_) return;
         AttentionWorkerState& state = *attentionWorker_;
         if (attentionClusterEnable_) {
             state.clusterPvWave = 0;
-            state.panel = attentionDimensionPanels(state);
+            state.phaseSliceIndex = attentionOutputSliceCount(state);
         } else if (attentionSequential64Enable_) {
-            state.panel += attentionSequentialPvPanels(state);
+            state.phaseSliceIndex += attentionSequentialPvOutputSliceCount(state);
         } else {
-            ++state.panel;
+            ++state.phaseSliceIndex;
         }
-        if (state.panel < attentionDimensionPanels(state)) {
+        if (state.phaseSliceIndex < attentionOutputSliceCount(state)) {
                 transitionAttentionTilePipeline(
                     AttentionTilePipelinePhase::PvMatrixProgram);
-                beginAttentionPvPanel();
+                beginAttentionPvOutputSlice();
         } else {
                 if (attentionClusterEnable_ && !releaseAttentionClusterPv()) {
                     statAttentionClusterIllegalTransitions_->addData(1);
@@ -8589,17 +8672,17 @@ public:
                     AttentionKvBufferState& completed =
                         state.kvBuffers[state.activeKvBuffer];
                     if (completed.consuming &&
-                        completed.keyTileOrdinal == state.keyTileOrdinal &&
-                        completed.keyTile == state.keyTile) {
+                        completed.kvTileIndex == state.kvTileIndex &&
+                        completed.physicalKvTileIndex == state.physicalKvTileIndex) {
                         completed = {};
                     }
                 }
                 statAttentionWorkerPvTileCompleteTick_->addData(getCurrentSimCycle());
                 traceAttentionTileCompletion(
                     "pv_tile_complete", "final_pv_tile_complete", state);
-                const uint32_t keyTiles = attentionKeyTilesForQueryBlock(state);
-                const bool hasNextKeyTile = state.keyTileOrdinal + 1 < keyTiles;
-                if (attentionOAccumulatorCBuffer_ && !hasNextKeyTile) {
+                const uint32_t numKvTiles = attentionKvTileCountForQueryTile(state);
+                const bool hasNextKvTile = state.kvTileIndex + 1 < numKvTiles;
+                if (attentionOAccumulatorCBuffer_ && !hasNextKvTile) {
                     if (!workerCommandProcessor->endAttentionStorageSession(
                             state.generation)) {
                         finishAttentionWorker(false);
@@ -8607,40 +8690,40 @@ public:
                     }
                     state.attentionOAccumulatorStorageActive = false;
                 }
-                const bool hasNextQueryBlock =
-                    !hasNextKeyTile && state.queryBlock + 1 < attentionQueryBlocks(state);
+                const bool hasNextQueryTile =
+                    !hasNextKvTile && state.queryTileIndex + 1 < attentionQueryTileCount(state);
                 if (attentionHasNextGroupedQuery(state)) {
                     beginAttentionInterTile();
-                    if (hasNextKeyTile) beginAttentionNextGroupedQueryTile();
-                    else writeAttentionQueryBlockOutput();
+                    if (hasNextKvTile) beginAttentionNextGroupedQueryTile();
+                    else writeAttentionQueryTileOutput();
                     return;
                 }
                 if (attentionKvPairReuseActive(state) &&
-                    state.queryBlock != attentionKvGroupOwnerQueryBlock(state) &&
-                    hasNextKeyTile) {
+                    state.queryTileIndex != attentionKvGroupOwnerQueryTile(state) &&
+                    hasNextKvTile) {
                     beginAttentionInterTile();
-                    state.queryBlock = attentionKvGroupOwnerQueryBlock(state);
+                    state.queryTileIndex = attentionKvGroupOwnerQueryTile(state);
                     if (!selectAttentionQueryStorage(state)) {
                         finishAttentionWorker(false);
                         return;
                     }
-                    state.keyTileOrdinal += 1;
-                    state.keyTile = attentionPhysicalKeyTile(state);
-                    loadAttentionKeyTile();
+                    state.kvTileIndex += 1;
+                    state.physicalKvTileIndex = attentionPhysicalKvTile(state);
+                    loadAttentionKvTile();
                     return;
                 }
-                if (hasNextKeyTile || hasNextQueryBlock) beginAttentionInterTile();
-                if (hasNextQueryBlock &&
+                if (hasNextKvTile || hasNextQueryTile) beginAttentionInterTile();
+                if (hasNextQueryTile &&
                     (!attentionKvPairReuseActive(state) ||
                      !attentionHasNextGroupedQuery(state))) {
                     launchAttentionCrossQueryPrefetch();
                 }
-                if (++state.keyTileOrdinal < keyTiles) {
-                    state.keyTile = attentionPhysicalKeyTile(state);
-                    loadAttentionKeyTile();
+                if (++state.kvTileIndex < numKvTiles) {
+                    state.physicalKvTileIndex = attentionPhysicalKvTile(state);
+                    loadAttentionKvTile();
                     return;
                 }
-                writeAttentionQueryBlockOutput();
+                writeAttentionQueryTileOutput();
         }
     }
 
@@ -8648,7 +8731,7 @@ public:
         if (!attentionWorker_ || !attentionWorker_->attentionPvOutputWriteRetry) return;
         AttentionWorkerState& state = *attentionWorker_;
         const uint64_t jobId = state.dispatch.jobId;
-        const uint32_t panel = state.panel;
+        const uint32_t phaseSliceIndex = state.phaseSliceIndex;
         const uint32_t issuedIndex = state.index;
         const uint64_t addr = state.attentionPvOutputWriteAddr;
         const uint32_t accumulatorRow =
@@ -8677,7 +8760,7 @@ public:
                 if (callbackState.index == attentionQueryRows(callbackState) &&
                     callbackState.attentionPvOutputWritesPending == 0 &&
                     !callbackState.attentionPvOutputWriteRetry) {
-                    completeAttentionPvOutputPanel();
+                    completeAttentionPvOutputSlice();
                 }
             };
         const bool accepted = toCBuffer ?
@@ -8689,7 +8772,7 @@ public:
         if (!accepted) {
             if (!attentionWorker_ || attentionWorker_->dispatch.jobId != jobId ||
                 attentionWorker_->phase != AttentionWorkerPhase::PvReadOutputs ||
-                attentionWorker_->panel != panel || attentionWorker_->index != issuedIndex + 1 ||
+                attentionWorker_->phaseSliceIndex != phaseSliceIndex || attentionWorker_->index != issuedIndex + 1 ||
                 attentionWorker_->attentionPvOutputWritesPending == 0) {
                 if (attentionWorker_) finishAttentionWorker(false);
                 return;
@@ -8702,7 +8785,7 @@ public:
         statAttentionPvOutputPipelineRows_->addData(1);
         if (attentionWorker_ && attentionWorker_->dispatch.jobId == jobId &&
             attentionWorker_->phase == AttentionWorkerPhase::PvReadOutputs &&
-            attentionWorker_->panel == panel) {
+            attentionWorker_->phaseSliceIndex == phaseSliceIndex) {
             attentionWorker_->attentionPvOutputWriteBytes.clear();
             attentionWorker_->attentionPvOutputWriteToCBuffer = false;
             attentionWorker_->attentionPvOutputWriteAccumulatorRow = UINT32_MAX;
@@ -8725,7 +8808,7 @@ public:
             if (attentionPvOutputPipeline_ &&
                 (state.attentionPvOutputWritesPending != 0 ||
                  state.attentionPvOutputWriteRetry)) return;
-            completeAttentionPvOutputPanel();
+            completeAttentionPvOutputSlice();
             return;
         }
         if (attentionPvEarlyCompute_ &&
@@ -8740,12 +8823,12 @@ public:
                     }
                     const std::vector<uint8_t> bytes = attentionDoublesToBytes(values);
                     const bool storeInCBuffer = attentionOAccumulatorCBuffer_ &&
-                        attentionWorker_->keyTileOrdinal + 1 <
-                            attentionKeyTilesForQueryBlock(*attentionWorker_);
+                        attentionWorker_->kvTileIndex + 1 <
+                            attentionKvTileCountForQueryTile(*attentionWorker_);
                     const uint64_t addr = attentionWorker_->oLocal +
                         (static_cast<uint64_t>(arrayId) *
                              attentionWorker_->dispatch.headDim +
-                         attentionWorker_->panel * 16) * sizeof(float);
+                         attentionWorker_->phaseSliceIndex * 16) * sizeof(float);
                     if (attentionPvOutputPipeline_) {
                         AttentionWorkerState& callbackState = *attentionWorker_;
                         callbackState.attentionPvOutputWriteAddr = addr;
@@ -8858,7 +8941,7 @@ public:
                     AttentionTilePipelinePhase::PvOutputReadwrite);
                 state.phase = AttentionWorkerPhase::PvReadOutputs;
                 if (attentionClusterEnable_) {
-                    state.panel = 0;
+                    state.phaseSliceIndex = 0;
                 }
                 state.attentionPvOutputWritesPending = 0;
                 state.attentionPvOutputWriteRetry = false;
@@ -8872,7 +8955,7 @@ public:
     }
 
     bool isStreamingAttentionWorkerShape(
-        const ReductionTransportMessage& message) const {
+        const ControlTransportMessage& message) const {
         return message.expectedWorkers == 4 && message.expectedRows != 0 &&
             message.expectedRows % 16 == 0 && message.expectedCols != 0 &&
             message.expectedCols % 128 == 0 && message.rowsPerBand != 0 &&
@@ -8882,32 +8965,42 @@ public:
     }
 
     uint64_t streamingAttentionWindowBytes(
-        uint32_t queryBlockRows, uint32_t keyBlockRows,
+        uint32_t queryTileRows, uint32_t kvTileRows,
         uint32_t headDim) const {
-        const uint64_t qTileBytes = static_cast<uint64_t>(queryBlockRows) *
+        const uint64_t qTileBytes = static_cast<uint64_t>(queryTileRows) *
             headDim * sizeof(float);
-        const uint64_t kvTileBytes = static_cast<uint64_t>(keyBlockRows) *
+        const uint64_t kvTileBytes = static_cast<uint64_t>(kvTileRows) *
             headDim * sizeof(float);
-        const uint64_t scoreBytes = static_cast<uint64_t>(queryBlockRows) *
-            keyBlockRows * sizeof(float);
+        const uint64_t scoreBytes = static_cast<uint64_t>(queryTileRows) *
+            kvTileRows * sizeof(float);
         const uint32_t kvBuffers = attentionKvDoubleBuffer_
             ? attentionKvBufferCount_ : 1u;
         const uint32_t queryGroupSize = attentionKvPairReuse_
             ? attentionKvQueryGroupSize_ : 1u;
         const uint32_t queryStorageCopies = attentionClusterEnable_
             ? queryGroupSize + 1u : 2u * queryGroupSize;
-        return sizeof(GolemAttentionDescV1) + queryStorageCopies * qTileBytes + scoreBytes +
+        return sizeof(GolemAttentionDescV2) + queryStorageCopies * qTileBytes + scoreBytes +
             2 * kvBuffers * kvTileBytes;
     }
 
-    void startAttentionWorker(const ReductionTransportMessage& message) {
+    void startAttentionWorker(const ControlTransportMessage& message) {
+        if (attentionWorker_) {
+            const bool validGqa = message.numQueryHeads != 0 &&
+                message.numKvHeads != 0 &&
+                message.numQueryHeads % message.numKvHeads == 0 &&
+                message.kvHeadIndex < message.numKvHeads;
+            if (validGqa && attentionPendingDispatches_.size() < 1024) {
+                attentionPendingDispatches_.push_back(message);
+                return;
+            }
+        }
         const bool c1Shape = message.expectedRows == 32 && message.expectedCols == 32;
         const bool d1Shape = message.expectedRows == 64 && message.expectedCols == 64;
         const bool d3Shape = message.expectedRows == 20 && message.expectedCols == 70;
         const bool streamingShape = isStreamingAttentionWorkerShape(message);
         const uint64_t requiredWindow = streamingShape ?
             streamingAttentionWindowBytes(
-                message.queryBlockRows, message.keyBlockRows, message.headDim) :
+                message.queryTileRows, message.kvTileRows, message.headDim) :
             (d3Shape ? ATTENTION_D3_WINDOW_BYTES :
              (d1Shape ? ATTENTION_D1_WINDOW_BYTES :
               ATTENTION_C1_WINDOW_BYTES));
@@ -8920,11 +9013,11 @@ public:
             message.workerCore != coreID ||
             (!c1Shape && !d1Shape && !d3Shape && !streamingShape) ||
             ((!streamingShape && message.headDim != 64)) ||
-            (attentionSequential64Enable_ ? message.queryBlockRows != 64 :
-             message.queryBlockRows != 16) ||
+            (attentionSequential64Enable_ ? message.queryTileRows != 64 :
+             message.queryTileRows != 16) ||
             (attentionClusterEnable_ ?
-                message.keyBlockRows != attentionClusterConfig_.keyBlockRows :
-                (message.keyBlockRows != 32u && message.keyBlockRows != 64u)) ||
+                message.kvTileRows != attentionClusterConfig_.kvTileRows :
+                (message.kvTileRows != 32u && message.kvTileRows != 64u)) ||
             (message.flags & ~GOLEM_ATTENTION_FLAG_CAUSAL) != 0 ||
             (attentionKvPairReuse_ &&
              ((message.flags & GOLEM_ATTENTION_FLAG_CAUSAL) != 0 ||
@@ -8951,13 +9044,13 @@ public:
                    arrayOutputSize != 16))) ||
             attentionWindowBytes_ < requiredWindowWithVTileBuffer ||
                 attentionWindowOffset_ + requiredWindowWithVTileBuffer > globalMem->getSize()) {
-            ReductionTransportMessage rejected = message;
-            rejected.kind = ReductionTransportMessageKind::AttentionComplete;
+            ControlTransportMessage rejected = message;
+            rejected.kind = ControlTransportMessageKind::AttentionComplete;
             rejected.value = 0.0;
             traceAttentionMilestone(
                 "worker", "worker_dispatch_accept", "fail", message.jobId,
                 message.tag);
-            globalMem->sendReductionMessage(message.ownerCore, rejected);
+            globalMem->sendControlMessage(message.ownerCore, rejected);
             return;
         }
         attentionWorker_ = std::make_unique<AttentionWorkerState>();
@@ -8980,10 +9073,10 @@ public:
             message.tag);
         state.phase = AttentionWorkerPhase::LoadingKv;
         const uint64_t base = globalMem->getBaseAddr() + attentionWindowOffset_;
-        const uint64_t qTileBytes = static_cast<uint64_t>(message.queryBlockRows) *
+        const uint64_t qTileBytes = static_cast<uint64_t>(message.queryTileRows) *
             message.headDim * sizeof(float);
         const uint64_t kvBytes = streamingShape ?
-            static_cast<uint64_t>(message.keyBlockRows) * message.headDim * sizeof(float) :
+            static_cast<uint64_t>(message.kvTileRows) * message.headDim * sizeof(float) :
             static_cast<uint64_t>(message.expectedCols) * message.headDim * sizeof(float);
         const uint32_t kvBufferCount = attentionKvDoubleBuffer_ && streamingShape
             ? attentionKvBufferCount_ : 1u;
@@ -9009,8 +9102,8 @@ public:
         state.vLocal = state.vLocalBuffers[0];
         state.spLocal = state.vLocalBuffers[kvBufferCount - 1] + kvBytes;
         const uint64_t outputBase = state.spLocal +
-            static_cast<uint64_t>(message.queryBlockRows) *
-                message.keyBlockRows * sizeof(float);
+            static_cast<uint64_t>(message.queryTileRows) *
+                message.kvTileRows * sizeof(float);
         for (uint32_t buffer = 0; buffer < state.oLocalBuffers.size(); ++buffer) {
             state.oLocalBuffers[buffer] = outputBase +
                 static_cast<uint64_t>(buffer) * qTileBytes;
@@ -9032,7 +9125,7 @@ public:
         }
         attentionArrayPending_.assign(numArrays, 0);
         if (streamingShape) {
-            beginAttentionQueryBlock();
+            beginAttentionQueryTile();
             return;
         }
         const uint64_t generation = state.generation;
@@ -9048,7 +9141,7 @@ public:
                     attentionWorker_->vLocal, [this, generation](bool vOk) {
                         if (!attentionCallbackGenerationMatches(generation)) return;
                         if (!vOk) { finishAttentionWorker(false); return; }
-                        beginAttentionQueryBlock();
+                        beginAttentionQueryTile();
                     }, DmaRequestKind::AttentionKv);
             }, DmaRequestKind::AttentionKv);
     }
@@ -9063,7 +9156,7 @@ public:
                     completion.tag.generation)) continue;
             AttentionWorkerState& state = *attentionWorker_;
             const uint32_t queryContext =
-                state.queryBlock % attentionClusterConfig_.groupSize;
+                state.queryTileIndex % attentionClusterConfig_.groupSize;
             const int32_t slot = state.clusterOContextSlots[queryContext];
             if (!completion.ok || slot < 0 ||
                 static_cast<uint32_t>(slot) != completion.slot ||
@@ -9092,7 +9185,7 @@ public:
                             finishAttentionWorker(false);
                             return;
                         }
-                        dmaAttentionQueryBlockOutput();
+                        dmaAttentionQueryTileOutput();
                     });
                 continue;
             }
@@ -9107,7 +9200,7 @@ public:
             attentionWorker_->phase == AttentionWorkerPhase::PvReadOutputs &&
             attentionWorker_->attentionClusterOCommitsPending == 0 &&
             attentionWorker_->clusterPvOutputCompleted ==
-                attentionDimensionPanels(*attentionWorker_) &&
+                attentionOutputSliceCount(*attentionWorker_) &&
             attentionWorker_->clusterPvOutputInFlight == 0) {
             readAttentionClusterPvOutput();
         }
@@ -9143,7 +9236,7 @@ public:
             statAttentionPvVTileBufferWaitTicks_->addData(
                 attentionWorker_->vTileBufferCurrentWaitTicks);
             attentionWorker_->vTileBufferCurrentWaitTicks = 0;
-            beginAttentionPvPanel();
+            beginAttentionPvOutputSlice();
         }
         if (attentionWorker_ && attentionWorker_->attentionPvRestoreReadRetry) {
             prepareAttentionPvOutput();
@@ -9169,7 +9262,7 @@ public:
     struct ManagerAttentionJobState {
         uint64_t tag = 0;
         uint64_t descAddr = 0;
-        GolemAttentionDescV1 desc = {};
+        GolemAttentionDescV2 desc = {};
         std::array<uint32_t, SFU_WORKER_TOPOLOGY_MAX_WORKERS> workerCoreIds = {};
         uint32_t workersDispatched = 0;
         uint32_t workersCompleted = 0;
@@ -9244,36 +9337,44 @@ public:
         return true;
     }
 
-    bool validateManagerAttentionDescriptor(const GolemAttentionDescV1& desc) const {
-        const bool c1Shape = desc.queries == 32 && desc.keys == 32;
-        const bool d1Shape = desc.queries == 64 && desc.keys == 64;
-        const bool d3Shape = desc.queries == 20 && desc.keys == 70;
-        const bool streamingShape = desc.queries != 0 && desc.queries % 64 == 0 &&
-            desc.keys != 0 && desc.keys % 128 == 0 &&
+    bool validateManagerAttentionDescriptor(const GolemAttentionDescV2& desc) const {
+        const bool c1Shape = desc.group_query_rows == 32 && desc.kv_length == 32;
+        const bool d1Shape = desc.group_query_rows == 64 && desc.kv_length == 64;
+        const bool d3Shape = desc.group_query_rows == 20 && desc.kv_length == 70;
+        const bool streamingShape = desc.group_query_rows != 0 && desc.group_query_rows % 64 == 0 &&
+            desc.kv_length != 0 && desc.kv_length % 128 == 0 &&
             (desc.head_dim == 64 || desc.head_dim == 128) &&
             desc.worker_count == 4 &&
-            desc.query_row_begin == static_cast<uint32_t>(coreID) * desc.queries &&
-            desc.kv_rows_per_node == desc.keys / 4 &&
+            desc.group_query_row_begin == static_cast<uint32_t>(coreID) * desc.group_query_rows &&
+            desc.kv_rows_per_memory_node == desc.kv_length / 4 &&
             desc.kv_node_stride_bytes != 0 && desc.tensor_root_core == 0 &&
             desc.tensor_manager_count == 4 &&
             desc.tensor_manager_slot < desc.tensor_manager_count &&
             desc.tensor_manager_slot == coreID;
+        const bool validGqa = desc.num_query_heads != 0 && desc.num_kv_heads != 0 &&
+            desc.num_query_heads % desc.num_kv_heads == 0 &&
+            (desc.num_query_heads / desc.num_kv_heads == 1 ||
+             desc.num_query_heads / desc.num_kv_heads == 2 ||
+             desc.num_query_heads / desc.num_kv_heads == 4) &&
+            desc.kv_head_index < desc.num_kv_heads &&
+            desc.group_query_rows % (desc.num_query_heads / desc.num_kv_heads) == 0;
         const uint64_t requiredWindow = streamingShape ?
             streamingAttentionWindowBytes(
-                desc.query_block_rows, desc.key_block_rows, desc.head_dim) :
+                desc.query_tile_rows, desc.kv_tile_rows, desc.head_dim) :
             (d3Shape ? ATTENTION_D3_WINDOW_BYTES :
             (d1Shape ? ATTENTION_D1_WINDOW_BYTES :
              ATTENTION_C1_WINDOW_BYTES));
         return desc.magic == GOLEM_ATTENTION_DESC_MAGIC &&
             desc.version == GOLEM_ATTENTION_DESC_VERSION &&
-            desc.size_bytes == sizeof(GolemAttentionDescV1) &&
+            desc.size_bytes == sizeof(GolemAttentionDescV2) &&
+            validGqa &&
             (c1Shape || d1Shape || d3Shape || streamingShape) &&
             ((!streamingShape && desc.head_dim == 64) || streamingShape) &&
-            (attentionSequential64Enable_ ? desc.query_block_rows == 64 :
-             desc.query_block_rows == 16) &&
+            (attentionSequential64Enable_ ? desc.query_tile_rows == 64 :
+             desc.query_tile_rows == 16) &&
             (attentionClusterEnable_ ?
-                desc.key_block_rows == attentionClusterConfig_.keyBlockRows :
-                (desc.key_block_rows == 32u || desc.key_block_rows == 64u)) &&
+                desc.kv_tile_rows == attentionClusterConfig_.kvTileRows :
+                (desc.kv_tile_rows == 32u || desc.kv_tile_rows == 64u)) &&
             ((streamingShape && desc.worker_count == 4) ||
              (!streamingShape && desc.worker_count == 1)) &&
             (desc.flags & ~GOLEM_ATTENTION_FLAG_CAUSAL) == 0 &&
@@ -9292,14 +9393,14 @@ public:
                 const uint64_t jobTag = state.tag;
                 const uint64_t readTag = allocateLocalTransferTag();
                 const bool accepted = globalMem->localReadAsync(
-                    state.descAddr, sizeof(GolemAttentionDescV1), LocalMemoryClient::Control,
+                    state.descAddr, sizeof(GolemAttentionDescV2), LocalMemoryClient::Control,
                     readTag, [this, jobTag, readTag](bool ok, uint64_t tag,
                                                      const std::vector<uint8_t>& bytes) {
                         auto it = managerAttentionJobs_.find(jobTag);
                         if (it == managerAttentionJobs_.end()) return;
                         ManagerAttentionJobState& callbackState = it->second;
                         callbackState.readInflight = false;
-                        if (!ok || tag != readTag || bytes.size() != sizeof(GolemAttentionDescV1)) {
+                        if (!ok || tag != readTag || bytes.size() != sizeof(GolemAttentionDescV2)) {
                             failManagerAttentionJob(callbackState, SFUStatus::InvalidDescriptor);
                             return;
                         }
@@ -9371,38 +9472,44 @@ public:
                 }
                 const uint32_t workerCore = state.workerCoreIds[workerSlot];
                 const uint32_t rowsPerWorker = state.desc.worker_count == 1 ?
-                    state.desc.queries :
-                    (state.desc.queries + state.desc.worker_count - 1) /
+                    state.desc.group_query_rows :
+                    (state.desc.group_query_rows + state.desc.worker_count - 1) /
                         state.desc.worker_count;
                 const uint32_t localQueryBegin = workerSlot * rowsPerWorker;
-                const uint32_t workerRows = state.desc.worker_count == 1 ? state.desc.queries :
+                const uint32_t workerRows = state.desc.worker_count == 1 ? state.desc.group_query_rows :
                     std::min(rowsPerWorker,
-                             state.desc.queries - localQueryBegin);
-                ReductionTransportMessage message = {};
-                message.kind = ReductionTransportMessageKind::AttentionDispatch;
+                             state.desc.group_query_rows - localQueryBegin);
+                ControlTransportMessage message = {};
+                message.kind = ControlTransportMessageKind::AttentionDispatch;
                 message.jobId = state.desc.job_id;
                 message.tag = state.tag;
                 message.ownerCore = static_cast<uint32_t>(coreID);
                 message.workerSlot = workerSlot;
                 message.workerCore = workerCore;
-                message.row = state.desc.query_row_begin + localQueryBegin;
+                message.row = state.desc.group_query_row_begin + localQueryBegin;
                 message.expectedWorkers = state.desc.worker_count;
                 message.expectedRows = workerRows;
-                message.expectedCols = state.desc.keys;
+                message.expectedCols = state.desc.kv_length;
                 message.headDim = state.desc.head_dim;
-                message.queryBlockRows = state.desc.query_block_rows;
-                message.keyBlockRows = state.desc.key_block_rows;
+                message.queryTileRows = state.desc.query_tile_rows;
+                message.kvTileRows = state.desc.kv_tile_rows;
                 message.flags = state.desc.flags;
                 message.nodeStrideBytes = state.desc.kv_node_stride_bytes;
-                message.rowsPerBand = state.desc.kv_rows_per_node;
+                message.rowsPerBand = state.desc.kv_rows_per_memory_node;
                 message.qAddr = state.desc.q_addr +
                     static_cast<uint64_t>(localQueryBegin) * state.desc.head_dim * sizeof(float);
                 message.kAddr = state.desc.k_addr;
                 message.vAddr = state.desc.v_addr;
-                message.oAddr = state.desc.output_addr +
-                    static_cast<uint64_t>(localQueryBegin) * state.desc.head_dim * sizeof(float);
+                message.oAddr = state.desc.output_addr;
+                message.numQueryHeads = state.desc.num_query_heads;
+                message.numKvHeads = state.desc.num_kv_heads;
+                message.kvHeadIndex = state.desc.kv_head_index;
+                message.queryLength =
+                    state.desc.group_query_rows /
+                    (state.desc.num_query_heads / state.desc.num_kv_heads);
+                message.groupQueryRowBegin = localQueryBegin;
                 message.sendCycle = getCurrentSimCycle();
-                if (!globalMem->sendReductionMessage(workerCore, message)) {
+                if (!globalMem->sendControlMessage(workerCore, message)) {
                     failManagerAttentionJob(state, SFUStatus::GlobalMemoryUnavailable);
                 } else {
                     state.workersDispatched += 1;
@@ -9418,8 +9525,8 @@ public:
         }
     }
 
-    bool handleManagerAttentionCompletion(const ReductionTransportMessage& message) {
-        if (message.kind != ReductionTransportMessageKind::AttentionComplete ||
+    bool handleManagerAttentionCompletion(const ControlTransportMessage& message) {
+        if (message.kind != ControlTransportMessageKind::AttentionComplete ||
             message.ownerCore != coreID) return false;
         auto it = managerAttentionJobs_.find(message.tag);
         if (it == managerAttentionJobs_.end()) return false;
@@ -9453,9 +9560,9 @@ public:
                     "manager", "root_tensor_complete", "done",
                     state.desc.job_id, state.tag);
             } else {
-                ReductionTransportMessage managerCompletion = {};
+                ControlTransportMessage managerCompletion = {};
                 managerCompletion.kind =
-                    ReductionTransportMessageKind::AttentionManagerComplete;
+                    ControlTransportMessageKind::AttentionManagerComplete;
                 managerCompletion.jobId = state.desc.job_id;
                 managerCompletion.tag = state.tag;
                 managerCompletion.ownerCore = state.desc.tensor_root_core;
@@ -9466,7 +9573,7 @@ public:
                 managerCompletion.value = 1.0;
                 if (coreID == state.desc.tensor_root_core) {
                     handleAttentionManagerBandCompletion(managerCompletion);
-                } else if (!globalMem->sendReductionMessage(
+                } else if (!globalMem->sendControlMessage(
                                state.desc.tensor_root_core, managerCompletion)) {
                     failManagerAttentionJob(
                         state, SFUStatus::GlobalMemoryUnavailable);
@@ -9481,8 +9588,8 @@ public:
     }
 
     bool handleAttentionManagerBandCompletion(
-        const ReductionTransportMessage& message) {
-        if (message.kind != ReductionTransportMessageKind::AttentionManagerComplete) {
+        const ControlTransportMessage& message) {
+        if (message.kind != ControlTransportMessageKind::AttentionManagerComplete) {
             return false;
         }
         auto it = managerAttentionJobs_.find(message.tag);
@@ -9687,8 +9794,8 @@ public:
         for (uint32_t band = 0; band < bands; ++band) {
             const uint32_t workerSlot = band % state.desc.worker_cores;
             const uint32_t workerCore = state.workerCoreIds[workerSlot];
-            ReductionTransportMessage dispatch = {};
-            dispatch.kind = ReductionTransportMessageKind::TensorRowDispatch;
+            ControlTransportMessage dispatch = {};
+            dispatch.kind = ControlTransportMessageKind::TensorRowDispatch;
             dispatch.jobId = state.desc.job_id;
             dispatch.tag = state.tag;
             dispatch.ownerCore = static_cast<uint32_t>(coreID);
@@ -9714,7 +9821,7 @@ public:
                     (state.params.flags & SFU_SOFTMAX_PARAMS_FLAG_CAUSAL) != 0
                         ? -scale : scale;
             }
-            if (!globalMem->sendReductionMessage(workerCore, dispatch)) {
+            if (!globalMem->sendControlMessage(workerCore, dispatch)) {
                 failManagerTensorJob(state, SFUStatus::GlobalMemoryUnavailable);
                 return;
             }
@@ -9782,8 +9889,8 @@ public:
         }
     }
 
-    bool handleManagerTensorCompletion(const ReductionTransportMessage& message) {
-        if (message.kind != ReductionTransportMessageKind::TensorRowComplete ||
+    bool handleManagerTensorCompletion(const ControlTransportMessage& message) {
+        if (message.kind != ControlTransportMessageKind::TensorRowComplete ||
             message.ownerCore != coreID) {
             return false;
         }
@@ -9825,8 +9932,8 @@ public:
         return true;
     }
 
-    void handleReductionTransportMessage(const ReductionTransportMessage& message) {
-        if (message.kind == ReductionTransportMessageKind::AttentionDispatch) {
+    void handleControlTransportMessage(const ControlTransportMessage& message) {
+        if (message.kind == ControlTransportMessageKind::AttentionDispatch) {
             startAttentionWorker(message);
             return;
         }
@@ -9840,7 +9947,7 @@ public:
             return;
         }
         if (sfu != nullptr) {
-            sfu->receiveReductionMessage(message);
+            sfu->receiveControlMessage(message);
         }
     }
 
@@ -11055,6 +11162,7 @@ private:
     std::unordered_map<uint64_t, ManagerTensorJobState> managerTensorJobs_;
     std::unordered_map<uint64_t, ManagerAttentionJobState> managerAttentionJobs_;
     std::unique_ptr<AttentionWorkerState> attentionWorker_;
+    std::deque<ControlTransportMessage> attentionPendingDispatches_;
     uint64_t nextAttentionWorkerGeneration_ = 1;
     std::vector<uint8_t> attentionArrayPending_;
     bool sfuWaitBlocked_ = false;
@@ -11070,7 +11178,7 @@ private:
     bool attentionQkInputPipeline_;
     bool attentionQkReadoutOverlap_;
     uint32_t attentionQkReadoutWindow_;
-    bool attentionQkPanelRowBurst_;
+    bool attentionQkScoreRowBurst_;
     bool attentionCrossTileOperandPipeline_;
     uint32_t attentionOperandContextBanks_;
     bool attentionKvTileRotation_;
@@ -11358,8 +11466,8 @@ private:
     Statistics::Statistic<uint64_t>* statAttentionClusterPvArrayBusySpanTicks_;
     Statistics::Statistic<uint64_t>* statAttentionClusterPvArrayIdleGapTicks_;
     Statistics::Statistic<uint64_t>* statAttentionClusterPvArrayMaxConcurrency_;
-    Statistics::Statistic<uint64_t>* statAttentionClusterKPanelBroadcasts_;
-    Statistics::Statistic<uint64_t>* statAttentionClusterKPanelBytes_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterKTileBroadcasts_;
+    Statistics::Statistic<uint64_t>* statAttentionClusterKTileBytes_;
     Statistics::Statistic<uint64_t>* statAttentionClusterQPairMulticasts_;
     Statistics::Statistic<uint64_t>* statAttentionClusterQPairBytes_;
     Statistics::Statistic<uint64_t>* statAttentionClusterScoreBeats_;

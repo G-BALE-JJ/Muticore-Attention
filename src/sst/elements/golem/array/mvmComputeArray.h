@@ -585,8 +585,8 @@ public:
         }
         if (trafficClass == AttentionClusterTrafficClass::SequentialPvORestore ||
             trafficClass == AttentionClusterTrafficClass::SequentialPvOOutput) {
-            if (arrayIDs.size() != 64) return false;
-            for (uint32_t index = 0; index < 64; ++index) {
+            if (arrayIDs.empty() || arrayIDs.size() > 64) return false;
+            for (uint32_t index = 0; index < arrayIDs.size(); ++index) {
                 if (arrayIDs[index] != index) return false;
             }
             return true;

@@ -711,7 +711,8 @@ public:
         const bool scatterClass =
             trafficClass == AttentionClusterTrafficClass::SequentialQkInputScatter ||
             trafficClass == AttentionClusterTrafficClass::SequentialPvInputScatter;
-        if (array_ == nullptr || arrayIds.size() != 64 || !scatterClass ||
+        if (array_ == nullptr || arrayIds.empty() || arrayIds.size() > 64 ||
+            !scatterClass ||
             !array_->validateOperandContextRequest(arrayIds.front(), operandBank) ||
             !array_->validateInputScatterRequest(
                 arrayIds, inputs.size(), elemBytes)) return false;
