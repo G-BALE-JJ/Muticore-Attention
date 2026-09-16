@@ -788,7 +788,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn(
             'exec "$SCRIPT_DIR/run_fused_attention_scale.sh" "$@"', text
         )
-        self.assertNotIn("RISC-V-CIM-Manycore-SST", text)
+        self.assertNotIn("/data/", text)
 
     def test_attention_runner_disables_unused_generic_reuse_windows(self):
         runner = SCALE_RUNNER.read_text(encoding="utf-8")

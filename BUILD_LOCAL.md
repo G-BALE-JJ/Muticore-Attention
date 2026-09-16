@@ -14,7 +14,7 @@ directory, and one local install prefix.
 From a fresh checkout/worktree:
 
 ```bash
-cd /path/to/RISC-V-CIM-Manycore-SST
+cd /path/to/Muticore-Attention
 scripts/build_and_install_local.sh
 ```
 
@@ -74,7 +74,7 @@ scripts/build_and_install_local.sh --jobs 32
 Before running this branch's experiments, source the local environment:
 
 ```bash
-cd /data/jjgong/LLM/RISC-V-CIM-Manycore-SST
+cd /data/jjgong/LLM/Muticore-Attention
 source scripts/env_local_install.sh
 cd build/sst-elements/src/sst/elements/golem/tests
 ```

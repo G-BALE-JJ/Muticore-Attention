@@ -21,10 +21,10 @@ See [Contributing](https://github.com/sstsimulator/sst-elements/blob/devel/CONTR
 
 ##### [LICENSE](https://github.com/sstsimulator/sst-elements/blob/devel/LICENSE.md)
 
-## Current RISC-V-CIM Attention status
+## Muticore-Attention status
 
 The integrated development branch is `softmax-update` in
-[`G-BALE-JJ/RISC-V-CIM-Manycore-SST`](https://github.com/G-BALE-JJ/RISC-V-CIM-Manycore-SST).
+[`G-BALE-JJ/Muticore-Attention`](https://github.com/G-BALE-JJ/Muticore-Attention).
 It combines the Golem generic GEMM/WCP path, deterministic MPI partitioning,
 Ramulator2-backed memory timing, bounded resource models, and the current
 single-head FP32 FlashAttention dataflow.
@@ -82,10 +82,10 @@ for the parallel GQA dataflow, cycle derivation, and measurements,
 [`attention_sequential_64/ATTENTION_TERMINOLOGY.md`](attention_sequential_64/ATTENTION_TERMINOLOGY.md)
 for the canonical terminology and compatibility map.
 
-## Portable RISC-V CIM worktree build
+## Portable Muticore-Attention build
 
 The current integrated CIM/WCP implementation is maintained on the
-`softmax-update` branch of `G-BALE-JJ/RISC-V-CIM-Manycore-SST`. Clone that
+`softmax-update` branch of `G-BALE-JJ/Muticore-Attention`. Clone that
 branch explicitly in a new
 environment:
 
@@ -93,9 +93,9 @@ environment:
 git clone \
   --branch softmax-update \
   --single-branch \
-  https://github.com/G-BALE-JJ/RISC-V-CIM-Manycore-SST.git \
-  RISC-V-CIM-Manycore-SST
-cd RISC-V-CIM-Manycore-SST
+  https://github.com/G-BALE-JJ/Muticore-Attention.git \
+  Muticore-Attention
+cd Muticore-Attention
 ```
 
 ### Prerequisites and paths
@@ -260,8 +260,8 @@ elements against that private library, and runs a timing smoke test:
 
 ```bash
 git clone --branch softmax-update --single-branch \
-  https://github.com/G-BALE-JJ/RISC-V-CIM-Manycore-SST.git RISC-V-CIM-Manycore-SST
-cd RISC-V-CIM-Manycore-SST
+  https://github.com/G-BALE-JJ/Muticore-Attention.git Muticore-Attention
+cd Muticore-Attention
 
 export REPO_ROOT="$PWD"
 export DEPS_ROOT="$REPO_ROOT/deps"
