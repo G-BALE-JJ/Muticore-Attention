@@ -901,7 +901,9 @@ private:
     std::unordered_map<uint64_t, PrimitiveBatchOpState> pendingPrimitiveBatchOps_;
     std::unordered_map<uint64_t, JobOpState> pendingJobOps_;
     std::map<TensorWorkerKey, TensorWorkerState> tensorWorkerOps_;
-    std::vector<AttentionOnlineRowContext> attentionOnlineContexts_;
+    using AttentionOnlineRowKey = std::pair<uint64_t, uint32_t>;
+    std::map<AttentionOnlineRowKey, AttentionOnlineRowContext>
+        attentionOnlineContexts_;
     SST::Link* rowEngineSelfLink_;
 
     Statistic<uint64_t>* statOpsIssued_;

@@ -397,6 +397,25 @@ sfu_control_vn = os.getenv(
     "GOLEM_SFU_CONTROL_VN", os.getenv("GOLEM_SFU_REDUCTION_VN", "")
 )
 sfu_verbose = os.getenv("GOLEM_SFU_VERBOSE", "0")
+attention_worker_cluster_bridge = int(
+    os.getenv("GOLEM_ATTENTION_WORKER_CLUSTER_BRIDGE", "0")
+)
+attention_worker_cluster_qk_workers_per_manager = int(
+    os.getenv("GOLEM_ATTENTION_WORKER_CLUSTER_QK_WORKERS_PER_MANAGER", "1")
+)
+attention_worker_cluster_row_priority = int(
+    os.getenv("GOLEM_ATTENTION_WORKER_CLUSTER_ROW_PRIORITY", "0")
+)
+attention_worker_cluster_v_broadcast = int(
+    os.getenv("GOLEM_ATTENTION_WORKER_CLUSTER_V_BROADCAST", "0")
+)
+attention_worker_cluster_dynamic_pv = int(
+    os.getenv("GOLEM_ATTENTION_WORKER_CLUSTER_DYNAMIC_PV", "0")
+)
+if attention_worker_cluster_qk_workers_per_manager not in (1, 2):
+    raise ValueError(
+        "GOLEM_ATTENTION_WORKER_CLUSTER_QK_WORKERS_PER_MANAGER must be 1 or 2"
+    )
 
 num_arrays = int(os.getenv("GOLEM_NUM_ARRAYS", 1))
 array_input_size = int(os.getenv("GOLEM_ARRAY_INPUT_SIZE", "4"))
@@ -734,6 +753,16 @@ roccarrayParams = {
         os.getenv("GOLEM_ATTENTION_PV_MATRIX_BROADCAST", "0")
     ),
     "attention_generic_gemm_enable": attention_generic_gemm_enable,
+    "attention_reuse_window_qk_bridge": int(
+        os.getenv("GOLEM_ATTENTION_REUSE_WINDOW_QK_BRIDGE", "0")
+    ),
+    "attention_worker_cluster_bridge": attention_worker_cluster_bridge,
+    "attention_worker_cluster_qk_workers_per_manager": (
+        attention_worker_cluster_qk_workers_per_manager
+    ),
+    "attention_worker_cluster_row_priority": attention_worker_cluster_row_priority,
+    "attention_worker_cluster_v_broadcast": attention_worker_cluster_v_broadcast,
+    "attention_worker_cluster_dynamic_pv": attention_worker_cluster_dynamic_pv,
     "attention_milestone_trace": int(
         os.getenv("GOLEM_ATTENTION_MILESTONE_TRACE", "0")
     ),
@@ -1100,6 +1129,7 @@ class CPU_Builder:
                         "tile_stream_base_latency_cycles": sfu_tile_stream_base_latency_cycles,
                         "row_dispatch_interval_cycles": sfu_row_dispatch_interval_cycles,
                         "row_contexts": sfu_row_contexts,
+                        "attention_cluster_enable": attention_worker_cluster_bridge,
                         "attention_kv_pair_reuse": attention_kv_pair_reuse,
                         "attention_kv_query_group_size": attention_kv_query_group_size,
                         "scratchpad_bytes": sfu_scratchpad_bytes,
@@ -1196,6 +1226,9 @@ class CPU_Builder:
                         "stage3_trace": os.getenv("GOLEM_WCP_STAGE3_TRACE", "0"),
                         "prefetch_windows": wcp_prefetch_windows,
                         "cross_macro_prefetch": wcp_cross_macro_prefetch,
+                        "attention_pv_panel_prefetch": os.getenv(
+                            "GOLEM_ATTENTION_PV_PANEL_PREFETCH", "0"
+                        ),
                         "window_k_tiles": os.getenv("GOLEM_DMA_WINDOW_K_TILES", "4"),
                         "gemm_proxy_queue_depth": wcp_gemm_proxy_queue_depth,
                         "gemm_proxy_issue_width": wcp_gemm_proxy_issue_width,

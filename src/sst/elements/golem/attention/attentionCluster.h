@@ -291,7 +291,7 @@ struct AttentionClusterTag {
 
 class AttentionScoreFifo {
 public:
-    static constexpr uint32_t kSlots = 4;
+    static constexpr uint32_t kSlots = 16;
     static constexpr size_t kElementsPerSlot = 16 * 64;
 
     bool reserve(uint32_t slot, const AttentionClusterTag& tag, size_t elements) {

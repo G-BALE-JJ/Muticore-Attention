@@ -41,9 +41,9 @@ output slices. The SFU has 64 online row contexts, balanced 16-lane vector/EXP
 paths, and row-resident intermediate storage. This is the only supported
 Attention worker dataflow.
 
-| Workload | Current SST cycles | RTX 5060 FP32 Scope A | SST/GPU | Status |
-|---|---:|---:|---:|---|
-| Sq=Skv=1024 | **31,197** | 97,568 | 0.320x | numerical/lifecycle/backend PASS |
+| Workload | Current SST cycles | Status |
+|---|---:|---|
+| Sq=Skv=1024 | **31,197** | numerical/lifecycle/backend PASS |
 
 The implementation uses worker-local 64-array `QK^T` -> softmax -> PV
 execution, grouped score readout, 256 B/cycle matrix/vector/O fabrics, grouped
@@ -79,6 +79,12 @@ for the runner contract,
 for the single-head architecture evolution,
 [`attention_sequential_64/GQA_ARCHITECTURE.md`](attention_sequential_64/GQA_ARCHITECTURE.md)
 for the parallel GQA dataflow, cycle derivation, and measurements,
+[`baseline/reuse_window_flash_attention/README.md`](baseline/reuse_window_flash_attention/README.md)
+for the independent `2x4` generic-GEMM reuse-window FlashAttention baseline,
+[`baseline/attention_cluster/README.md`](baseline/attention_cluster/README.md)
+for the 4 QK/SFU + 12 PV worker-cluster baseline, and
+[`baseline/attention_cluster_8qk_8pv/README.md`](baseline/attention_cluster_8qk_8pv/README.md)
+for the frozen 8 QK/SFU + 8 PV comparison and its `47,193`-cycle SST archive,
 [`attention_sequential_64/ATTENTION_TERMINOLOGY.md`](attention_sequential_64/ATTENTION_TERMINOLOGY.md)
 for the canonical terminology and compatibility map.
 

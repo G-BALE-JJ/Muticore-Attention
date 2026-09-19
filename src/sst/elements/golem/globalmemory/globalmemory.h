@@ -114,6 +114,14 @@ enum class ControlTransportMessageKind {
     AttentionDispatch,
     AttentionComplete,
     AttentionManagerComplete,
+    AttentionClusterPvDispatch,
+    AttentionClusterPvComplete,
+    AttentionClusterPvAllocationRequest,
+    AttentionClusterPvAllocationResponse,
+    AttentionClusterPvAllocationRelease,
+    AttentionClusterPvVPrefetchHint,
+    AttentionClusterPvVRequest,
+    AttentionClusterPvVDelivery,
 };
 
 struct ControlTransportMessage {
@@ -147,6 +155,8 @@ struct ControlTransportMessage {
     uint32_t kvHeadIndex = 0;
     uint32_t queryLength = 0;
     uint32_t groupQueryRowBegin = 0;
+    std::vector<float> payload;
+    std::vector<float> scales;
 
     void serialize_order(SST::Core::Serialization::serializer& ser) {
         ser & kind;
@@ -179,6 +189,8 @@ struct ControlTransportMessage {
         ser & kvHeadIndex;
         ser & queryLength;
         ser & groupQueryRowBegin;
+        ser & payload;
+        ser & scales;
     }
 };
 

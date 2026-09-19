@@ -70,6 +70,13 @@ struct WorkerTaskListHeaderRuntime {
     uint32_t m_group_count;
     uint32_t data_node_map_mode;
     uint64_t descriptor_start_cycle;
+    uint32_t operand_layout;
+    uint32_t attention_query_length;
+    uint32_t attention_rows_per_band;
+    uint32_t scheduler_worker_slot;
+    uint64_t attention_node_stride_bytes;
+    uint64_t attention_pv_cache_gm_addr;
+    uint64_t attention_pv_cache_bytes;
 };
 
 constexpr uint64_t WCP_DESC_GM_ADDR = LOCAL_TMP_OFFSET;

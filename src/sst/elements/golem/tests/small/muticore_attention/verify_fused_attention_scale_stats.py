@@ -10,45 +10,6 @@ from decimal import Decimal
 from pathlib import Path
 
 
-PROFILES = {
-    "e2": {
-        "qk": 256, "pv": 512, "jobs": 8, "qblocks": 1,
-        "rows": 128, "scaled": 4096, "dimension_panels": 4,
-        "v_tile_bytes": 8192,
-    },
-    "e3": {
-        "qk": 4096,
-        "pv": 16384,
-        "jobs": 128,
-        "qblocks": 4,
-        "rows": 2048,
-        "scaled": 65536,
-        "dimension_panels": 8,
-        "v_tile_bytes": 16384,
-    },
-    "e4": {
-        "qk": 16384,
-        "pv": 65536,
-        "jobs": 512,
-        "qblocks": 8,
-        "rows": 8192,
-        "scaled": 262144,
-        "dimension_panels": 8,
-        "v_tile_bytes": 16384,
-    },
-    "e5": {
-        "qk": 65536,
-        "pv": 262144,
-        "jobs": 2048,
-        "qblocks": 16,
-        "rows": 32768,
-        "scaled": 1048576,
-        "dimension_panels": 8,
-        "v_tile_bytes": 16384,
-    },
-}
-
-
 def make_attention_activity(queries, keys, head_dim, key_block_rows=32):
     if queries <= 0 or queries % 256 != 0:
         raise ValueError("queries must be a positive multiple of 256")
@@ -1116,7 +1077,7 @@ def summarize_system_frontier(observed, minima, maxima, accelerator_clock_hz,
     }
 
 
-def verify(path, profile, accelerator_clock_hz=1_000_000_000,
+def verify(path, case_id, accelerator_clock_hz=1_000_000_000,
            timebase_ticks_per_second=10**12, pv_matrix_broadcast=False,
            qk_matrix_broadcast=False, qk_dataflow_transpose=False,
            kv_double_buffer=False, pv_input_pipeline=False,
@@ -1165,7 +1126,7 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
            input_scatter_bytes_per_cycle=256,
            output_scatter_gather_bytes_per_cycle=256):
     if activity is None:
-        activity = PROFILES[profile]
+        raise ValueError("dimension-derived activity is required")
     query_head_count = activity.get("query_heads", activity.get("heads", 1))
     attention_job_count = activity.get("kv_heads", query_head_count)
     observed = {}
@@ -3005,7 +2966,6 @@ def verify(path, profile, accelerator_clock_hz=1_000_000_000,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=sorted(PROFILES))
     parser.add_argument("--case-id")
     parser.add_argument("--query-length", "--queries", dest="query_length", type=int)
     parser.add_argument("--kv-length", "--keys", dest="kv_length", type=int)
@@ -3167,9 +3127,6 @@ def main():
             + (f"_hq{query_heads}_hkv{kv_heads}"
                if query_heads > 1 or kv_heads > 1 else "")
         )
-    elif args.profile:
-        activity = PROFILES[args.profile]
-        case_id = args.profile
     else:
         parser.error("explicit dimensions are required")
     if args.run_config:

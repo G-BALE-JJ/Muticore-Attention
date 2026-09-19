@@ -42,8 +42,10 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <map>
 #include <numeric>
 #include <queue>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 #include <iostream>
@@ -514,6 +516,19 @@ public:
         attentionPvMatrixBroadcast_ = params.find<bool>("attention_pv_matrix_broadcast", false);
         attentionGenericGemmEnable_ =
             params.find<bool>("attention_generic_gemm_enable", false);
+        attentionReuseWindowQkBridge_ =
+            params.find<bool>("attention_reuse_window_qk_bridge", false);
+        attentionWorkerClusterBridge_ =
+            params.find<bool>("attention_worker_cluster_bridge", false);
+        attentionWorkerClusterQkWorkersPerManager_ = std::max<uint32_t>(
+            1u, std::min<uint32_t>(2u, params.find<uint32_t>(
+                "attention_worker_cluster_qk_workers_per_manager", 1)));
+        attentionWorkerClusterRowPriority_ = params.find<bool>(
+            "attention_worker_cluster_row_priority", false);
+        attentionWorkerClusterVBroadcast_ = params.find<bool>(
+            "attention_worker_cluster_v_broadcast", false);
+        attentionWorkerClusterDynamicPv_ = params.find<bool>(
+            "attention_worker_cluster_dynamic_pv", false);
         attentionMilestoneTrace_ =
             params.find<bool>("attention_milestone_trace", false);
         attentionTileTrace_ = params.find<bool>("attention_tile_trace", false);
@@ -971,6 +986,7 @@ public:
         progressManagerTensorJobs();
         progressManagerAttentionJobs();
         progressAttentionWorker();
+        progressAttentionWorkerClusterVBroadcast();
         if (workerCommandProcessor != nullptr && workerCommandProcessor->isBusy()) {
             workerCommandProcessor->tick(cycle);
         }
@@ -1936,6 +1952,29 @@ public:
         std::vector<double> payload;
     };
 
+    struct AttentionReuseWindowRowContext {
+        uint32_t rowBlock = 0;
+        uint32_t rowOffset = 0;
+        uint32_t nextKvTile = 0;
+        int32_t scoreSlot = -1;
+        int32_t pSlot = -1;
+        bool requestInFlight = false;
+        uint8_t fifoPhase = 0;
+        AttentionClusterTag fifoTag = {};
+        std::vector<float> p;
+        std::vector<float> groupScale;
+        std::vector<float> outputScale;
+    };
+
+    struct AttentionReuseWindowPvAggregate {
+        std::vector<float> p;
+        std::vector<float> scales;
+        uint16_t rowSliceMask = 0;
+        bool vPrefetchReadyToHint = false;
+        bool vPrefetchHinted = false;
+        bool dispatched = false;
+    };
+
     struct AttentionWorkerState {
         ControlTransportMessage dispatch = {};
         uint64_t generation = 0;
@@ -1969,6 +2008,45 @@ public:
         std::vector<double> sequentialKTilePayload;
         std::vector<double> sequentialPPayload;
         std::vector<double> sequentialOPayload;
+        uint64_t reuseWindowFusionTiles = 0;
+        uint64_t reuseWindowExpectedFusionTiles = 0;
+        uint64_t reuseWindowQkStartCycle = 0;
+        uint64_t reuseWindowQkEndCycle = 0;
+        uint64_t reuseWindowPvCycles = 0;
+        uint32_t reuseWindowAttentionTile = 0;
+        uint32_t reuseWindowPvFusionTiles = 0;
+        std::vector<float> reuseWindowScores;
+        std::vector<float> reuseWindowOutput;
+        std::vector<float> reuseWindowP;
+        std::vector<float> reuseWindowGroupScale;
+        uint32_t reuseWindowClusterPvCompleted = 0;
+        std::vector<uint8_t> reuseWindowScoreReady;
+        bool reuseWindowSoftmaxBusy = false;
+        bool reuseWindowQkComplete = false;
+        std::vector<AttentionReuseWindowRowContext> reuseWindowRowContexts;
+        std::vector<AttentionReuseWindowPvAggregate> reuseWindowPvAggregates;
+        std::array<int32_t, 16> reuseWindowScoreOwners = {};
+        std::array<int32_t, 16> reuseWindowPOwners = {};
+        std::array<int32_t, 16> reuseWindowSliceOwners = {};
+        std::array<uint32_t, 16> reuseWindowSliceNextRowBlock = {};
+        std::array<uint64_t, 16> reuseWindowSliceWaitStart = {};
+        uint32_t reuseWindowNextScoreContext = 0;
+        uint32_t reuseWindowNextPContext = 0;
+        uint64_t reuseWindowScoreSlotStallCycles = 0;
+        uint64_t reuseWindowPSlotStallCycles = 0;
+        uint64_t reuseWindowRowContextSwitches = 0;
+        uint64_t reuseWindowLastScoreSlotStallCycle = UINT64_MAX;
+        uint64_t reuseWindowLastPSlotStallCycle = UINT64_MAX;
+        std::array<uint32_t, 3> reuseWindowPvNextRowBlock = {{0, 1, 2}};
+        std::array<uint32_t, 3> reuseWindowPvNextWindow = {};
+        uint32_t reuseWindowPvDispatchLane = 0;
+        uint64_t reuseWindowPvNextDispatchCycle = 0;
+        std::vector<int32_t> reuseWindowPvRowCore;
+        std::vector<uint8_t> reuseWindowPvAllocationPending;
+        std::vector<uint32_t> reuseWindowPvRowNextWindow;
+        std::deque<uint32_t> reuseWindowReadQueue;
+        bool reuseWindowIoBusy = false;
+        uint32_t reuseWindowRowContextsCompleted = 0;
         bool clusterQkTileStartValid = false;
         uint64_t clusterLastQkTileStartCycle = 0;
         uint32_t clusterLastQkTileStartGroup = UINT32_MAX;
@@ -2092,6 +2170,44 @@ public:
         std::array<uint64_t, static_cast<size_t>(AttentionTilePipelinePhase::Count)>
             tilePipelinePhaseTicks = {};
         std::function<void(bool, const std::vector<uint8_t>&)> localCallback;
+    };
+
+    struct AttentionWorkerClusterPvState {
+        bool busy = false;
+        ControlTransportMessage active = {};
+        uint32_t fusionTiles = 0;
+        uint64_t startCycle = 0;
+        bool nextPrefetchAttempted = false;
+        bool nextPrefetchPending = false;
+        bool nextPrefetchReady = false;
+        uint64_t nextPrefetchGeneration = 0;
+        uint64_t nextPrefetchSource = 0;
+        size_t nextPrefetchBytesReceived = 0;
+        uint32_t nextPrefetchRelayMask = 0;
+        WorkerTaskListHeader nextPrefetchHeader = {};
+        std::vector<uint8_t> nextPrefetchPayload;
+        std::vector<uint8_t> nextPrefetchChunkSeen;
+    };
+
+    struct AttentionWorkerClusterVEntry {
+        bool loading = false;
+        bool ready = false;
+        size_t bytes = 0;
+        std::vector<uint8_t> data;
+        std::unordered_set<uint32_t> subscribers;
+        std::unordered_set<uint32_t> delivered;
+    };
+
+    struct AttentionWorkerClusterVLoad {
+        bool active = false;
+        bool dmaIssued = false;
+        bool dmaDone = false;
+        bool dmaOk = false;
+        bool readInFlight = false;
+        uint64_t source = 0;
+        uint64_t scratch = 0;
+        size_t bytes = 0;
+        size_t readOffset = 0;
     };
 
     uint64_t attentionTransferTag() { return allocateLocalTransferTag(); }
@@ -4809,7 +4925,20 @@ public:
         if (!globalMem->sendControlMessage(completion.ownerCore, completion)) {
             output->verbose(CALL_INFO, 1, 0, "Attention completion send failed\n");
         }
-        if (!attentionPendingDispatches_.empty()) {
+        if (ok && attentionWorkerClusterQkAhead_) {
+            attentionWorker_ = std::move(attentionWorkerClusterQkAhead_);
+            startAttentionReuseWindowSoftmax();
+        } else {
+            if (!ok && attentionWorkerClusterQkAhead_) {
+                ControlTransportMessage rejected =
+                    attentionWorkerClusterQkAhead_->dispatch;
+                rejected.kind = ControlTransportMessageKind::AttentionComplete;
+                rejected.value = 0.0;
+                rejected.sendCycle = getCurrentSimCycle();
+                globalMem->sendControlMessage(rejected.ownerCore, rejected);
+                attentionWorkerClusterQkAhead_.reset();
+            }
+            if (attentionPendingDispatches_.empty()) return;
             ControlTransportMessage next = attentionPendingDispatches_.front();
             attentionPendingDispatches_.pop_front();
             startAttentionWorker(next);
@@ -8533,6 +8662,15 @@ public:
     void completeAttentionQueryTileOutputDma(uint64_t generation) {
         if (!attentionCallbackGenerationMatches(generation)) return;
         AttentionWorkerState& state = *attentionWorker_;
+        if (attentionReuseWindowQkBridge_) {
+            output->output(
+                "[ATTENTION_REUSE_WINDOW_E2E] core=%" PRIu64
+                " cycles=%" PRIu64 " start=%" PRIu64 " end=%" PRIu64
+                " qk_end=%" PRIu64 " pv_cycles=%" PRIu64 "\n",
+                coreID, LastTickCycle - state.reuseWindowQkStartCycle,
+                state.reuseWindowQkStartCycle, LastTickCycle,
+                state.reuseWindowQkEndCycle, state.reuseWindowPvCycles);
+        }
         if (attentionClusterEnable_ && !releaseAttentionClusterOContext()) {
             statAttentionClusterIllegalTransitions_->addData(1);
             finishAttentionWorker(false);
@@ -8956,7 +9094,11 @@ public:
 
     bool isStreamingAttentionWorkerShape(
         const ControlTransportMessage& message) const {
-        return message.expectedWorkers == 4 && message.expectedRows != 0 &&
+        return (message.expectedWorkers == 4 ||
+                (attentionWorkerClusterBridge_ &&
+                 message.expectedWorkers ==
+                    attentionWorkerClusterQkWorkersPerManager_)) &&
+            message.expectedRows != 0 &&
             message.expectedRows % 16 == 0 && message.expectedCols != 0 &&
             message.expectedCols % 128 == 0 && message.rowsPerBand != 0 &&
             message.rowsPerBand == message.expectedCols / 4 &&
@@ -8983,6 +9125,1275 @@ public:
             2 * kvBuffers * kvTileBytes;
     }
 
+    void requestAttentionWorkerClusterPvAllocation(
+        AttentionWorkerState& state, uint32_t rowBlock) {
+        if (!attentionWorkerClusterDynamicPv_ ||
+            rowBlock >= state.reuseWindowPvAllocationPending.size() ||
+            state.reuseWindowPvAllocationPending[rowBlock] != 0 ||
+            state.reuseWindowPvRowCore[rowBlock] >= 0) {
+            return;
+        }
+        ControlTransportMessage request = state.dispatch;
+        request.kind =
+            ControlTransportMessageKind::AttentionClusterPvAllocationRequest;
+        request.ownerCore = static_cast<uint32_t>(coreID);
+        request.workerCore = 0;
+        request.row = rowBlock;
+        request.groupQueryRowBegin = rowBlock * 64;
+        request.sendCycle = getCurrentSimCycle();
+        if (globalMem->sendControlMessage(0, request)) {
+            state.reuseWindowPvAllocationPending[rowBlock] = 1;
+        }
+    }
+
+    void sendAttentionWorkerClusterVHint(
+        AttentionWorkerState& state, uint32_t rowBlock, uint32_t window,
+        uint32_t workerCore) {
+        constexpr uint32_t windowsPerRowBlock = 4;
+        const size_t aggregateIndex =
+            static_cast<size_t>(rowBlock) * windowsPerRowBlock + window;
+        if (!attentionWorkerClusterVBroadcast_ ||
+            aggregateIndex >= state.reuseWindowPvAggregates.size()) {
+            return;
+        }
+        AttentionReuseWindowPvAggregate& aggregate =
+            state.reuseWindowPvAggregates[aggregateIndex];
+        if (!aggregate.vPrefetchReadyToHint || aggregate.vPrefetchHinted) return;
+        ControlTransportMessage hint = state.dispatch;
+        hint.kind =
+            ControlTransportMessageKind::AttentionClusterPvVPrefetchHint;
+        hint.ownerCore = static_cast<uint32_t>(coreID);
+        hint.workerCore = workerCore;
+        hint.groupQueryRowBegin = rowBlock * 64;
+        hint.expectedRows = 64;
+        hint.expectedCols = 128;
+        hint.kvTileRows = window;
+        hint.sendCycle = getCurrentSimCycle();
+        if (globalMem->sendControlMessage(workerCore, hint)) {
+            aggregate.vPrefetchHinted = true;
+        }
+    }
+
+    void dispatchAttentionReuseWindowPvAggregates(AttentionWorkerState& state) {
+        if (!attentionWorkerClusterBridge_) return;
+        constexpr uint32_t windowsPerRowBlock = 4;
+        constexpr uint64_t pWindowBytes =
+            (64u * 256u + 64u) * sizeof(float);
+        constexpr uint64_t injectionBytesPerCycle = 256;
+        const uint32_t pvLaneCount =
+            4u - attentionWorkerClusterQkWorkersPerManager_;
+        const uint32_t rowBlocks = state.dispatch.expectedRows / 64;
+        if (LastTickCycle < state.reuseWindowPvNextDispatchCycle) return;
+        if (attentionWorkerClusterDynamicPv_) {
+            for (uint32_t attempt = 0; attempt < rowBlocks; ++attempt) {
+                const uint32_t rowBlock =
+                    (state.reuseWindowPvDispatchLane + attempt) % rowBlocks;
+                if (rowBlock >= state.reuseWindowPvRowNextWindow.size()) return;
+                const uint32_t window =
+                    state.reuseWindowPvRowNextWindow[rowBlock];
+                if (window >= windowsPerRowBlock) continue;
+                const size_t aggregateIndex =
+                    static_cast<size_t>(rowBlock) * windowsPerRowBlock + window;
+                if (aggregateIndex >= state.reuseWindowPvAggregates.size()) return;
+                AttentionReuseWindowPvAggregate& aggregate =
+                    state.reuseWindowPvAggregates[aggregateIndex];
+                if (aggregate.rowSliceMask != 0xffff || aggregate.dispatched) {
+                    continue;
+                }
+                if (state.reuseWindowPvRowCore[rowBlock] < 0) {
+                    requestAttentionWorkerClusterPvAllocation(state, rowBlock);
+                    continue;
+                }
+
+                ControlTransportMessage pv = state.dispatch;
+                pv.kind = ControlTransportMessageKind::AttentionClusterPvDispatch;
+                pv.ownerCore = static_cast<uint32_t>(coreID);
+                pv.workerCore = static_cast<uint32_t>(
+                    state.reuseWindowPvRowCore[rowBlock]);
+                pv.groupQueryRowBegin = rowBlock * 64;
+                pv.expectedRows = 64;
+                pv.expectedCols = 128;
+                pv.kvTileRows = window;
+                pv.payload = aggregate.p;
+                pv.scales = aggregate.scales;
+                pv.sendCycle = getCurrentSimCycle();
+                if (!globalMem->sendControlMessage(pv.workerCore, pv)) return;
+                aggregate.dispatched = true;
+                ++state.reuseWindowPvRowNextWindow[rowBlock];
+                state.reuseWindowPvDispatchLane =
+                    (rowBlock + 1) % rowBlocks;
+                state.reuseWindowPvNextDispatchCycle = LastTickCycle +
+                    (pWindowBytes + injectionBytesPerCycle - 1) /
+                        injectionBytesPerCycle;
+                return;
+            }
+            return;
+        }
+        for (uint32_t attempt = 0; attempt < pvLaneCount; ++attempt) {
+            const uint32_t lane =
+                (state.reuseWindowPvDispatchLane + attempt) % pvLaneCount;
+            while (state.reuseWindowPvNextRowBlock[lane] < rowBlocks) {
+                const uint32_t rowBlock = state.reuseWindowPvNextRowBlock[lane];
+                const uint32_t window = state.reuseWindowPvNextWindow[lane];
+                const size_t aggregateIndex =
+                    static_cast<size_t>(rowBlock) * windowsPerRowBlock + window;
+                if (aggregateIndex >= state.reuseWindowPvAggregates.size()) return;
+                AttentionReuseWindowPvAggregate& aggregate =
+                    state.reuseWindowPvAggregates[aggregateIndex];
+                if (aggregate.rowSliceMask != 0xffff || aggregate.dispatched) break;
+
+                ControlTransportMessage pv = state.dispatch;
+                pv.kind = ControlTransportMessageKind::AttentionClusterPvDispatch;
+                pv.ownerCore = static_cast<uint32_t>(coreID);
+                const uint32_t manager = state.dispatch.ownerCore;
+                pv.workerCore = 4 +
+                    (attentionWorkerClusterQkWorkersPerManager_ + lane) * 4 +
+                    manager;
+                pv.groupQueryRowBegin = rowBlock * 64;
+                pv.expectedRows = 64;
+                pv.expectedCols = 128;
+                pv.kvTileRows = window;
+                pv.payload = aggregate.p;
+                pv.scales = aggregate.scales;
+                pv.sendCycle = getCurrentSimCycle();
+                if (!globalMem->sendControlMessage(pv.workerCore, pv)) break;
+                aggregate.dispatched = true;
+                state.reuseWindowPvDispatchLane =
+                    (lane + 1) % pvLaneCount;
+                state.reuseWindowPvNextDispatchCycle = LastTickCycle +
+                    (pWindowBytes + injectionBytesPerCycle - 1) /
+                        injectionBytesPerCycle;
+                if (++state.reuseWindowPvNextWindow[lane] == windowsPerRowBlock) {
+                    state.reuseWindowPvNextWindow[lane] = 0;
+                    state.reuseWindowPvNextRowBlock[lane] += pvLaneCount;
+                }
+                return;
+            }
+        }
+    }
+
+    void dispatchAttentionReuseWindowPvAggregates() {
+        if (attentionWorker_) {
+            dispatchAttentionReuseWindowPvAggregates(*attentionWorker_);
+        }
+    }
+
+    void completeAttentionReuseWindowRowTile(
+        uint32_t contextIndex, const std::vector<float>& values) {
+        if (!attentionWorker_ ||
+            contextIndex >= attentionWorker_->reuseWindowRowContexts.size()) {
+            finishAttentionWorker(false);
+            return;
+        }
+        AttentionWorkerState& state = *attentionWorker_;
+        AttentionReuseWindowRowContext& context =
+            state.reuseWindowRowContexts[contextIndex];
+        constexpr uint32_t sliceRows = 4;
+        constexpr uint32_t cols = 64;
+        constexpr uint32_t tilesPerWindow = 4;
+        constexpr uint32_t tilesPerRowBlock = 16;
+        if (values.size() != sliceRows * cols ||
+            context.nextKvTile >= tilesPerRowBlock ||
+            context.outputScale.size() != sliceRows) {
+            finishAttentionWorker(false);
+            return;
+        }
+
+        const uint32_t kvTile = context.nextKvTile;
+        const uint32_t tileInWindow = kvTile % tilesPerWindow;
+        const uint32_t window = kvTile / tilesPerWindow;
+        const size_t aggregateIndex =
+            static_cast<size_t>(context.rowBlock) * 4 + window;
+        if (aggregateIndex >= state.reuseWindowPvAggregates.size()) {
+            finishAttentionWorker(false);
+            return;
+        }
+        AttentionReuseWindowPvAggregate& aggregate =
+            state.reuseWindowPvAggregates[aggregateIndex];
+        const uint32_t pvLaneCount =
+            4u - attentionWorkerClusterQkWorkersPerManager_;
+        if (tileInWindow == 0) {
+            aggregate.vPrefetchReadyToHint = true;
+            if (attentionWorkerClusterDynamicPv_) {
+                if (context.rowBlock < state.reuseWindowPvRowCore.size() &&
+                    state.reuseWindowPvRowCore[context.rowBlock] >= 0) {
+                    sendAttentionWorkerClusterVHint(
+                        state, context.rowBlock, window,
+                        static_cast<uint32_t>(
+                            state.reuseWindowPvRowCore[context.rowBlock]));
+                }
+            } else {
+                const uint32_t lane = context.rowBlock % pvLaneCount;
+                const uint32_t workerCore = 4 +
+                    (attentionWorkerClusterQkWorkersPerManager_ + lane) * 4 +
+                    state.dispatch.ownerCore;
+                sendAttentionWorkerClusterVHint(
+                    state, context.rowBlock, window, workerCore);
+            }
+        }
+        if (tileInWindow == 0) {
+            std::fill(context.p.begin(), context.p.end(), 0.0f);
+            std::fill(context.groupScale.begin(), context.groupScale.end(), 1.0f);
+        } else {
+            for (uint32_t prior = 0; prior < tileInWindow; ++prior) {
+                for (uint32_t row = 0; row < sliceRows; ++row) {
+                    const float scale = context.outputScale[row];
+                    const size_t base =
+                        (static_cast<size_t>(prior) * sliceRows + row) * cols;
+                    for (uint32_t col = 0; col < cols; ++col) {
+                        context.p[base + col] *= scale;
+                    }
+                }
+            }
+        }
+        for (uint32_t row = 0; row < sliceRows; ++row) {
+            context.groupScale[row] *= context.outputScale[row];
+        }
+        std::copy(values.begin(), values.end(),
+                  context.p.begin() +
+                      static_cast<size_t>(tileInWindow) * sliceRows * cols);
+
+        if (tileInWindow == tilesPerWindow - 1) {
+            const uint32_t slice = context.rowOffset / sliceRows;
+            for (uint32_t panel = 0; panel < tilesPerWindow; ++panel) {
+                for (uint32_t row = 0; row < sliceRows; ++row) {
+                    const size_t src =
+                        (static_cast<size_t>(panel) * sliceRows + row) * cols;
+                    const size_t dst =
+                        (static_cast<size_t>(panel) * 64 + context.rowOffset + row) * cols;
+                    std::copy_n(context.p.begin() + src, cols,
+                                aggregate.p.begin() + dst);
+                }
+            }
+            std::copy(context.groupScale.begin(), context.groupScale.end(),
+                      aggregate.scales.begin() + context.rowOffset);
+            aggregate.rowSliceMask |= static_cast<uint16_t>(1u << slice);
+            if (aggregate.rowSliceMask == 0xffff) {
+                state.reuseWindowAttentionTile += tilesPerWindow;
+            }
+        }
+
+        ++context.nextKvTile;
+        context.requestInFlight = false;
+        const uint32_t slice = context.rowOffset / sliceRows;
+        const bool rowComplete = context.nextKvTile == tilesPerRowBlock;
+        const uint32_t nextReadyIndex =
+            context.rowBlock * tilesPerRowBlock + context.nextKvTile;
+        const bool nextScoreReady = !rowComplete &&
+            nextReadyIndex < state.reuseWindowScoreReady.size() &&
+            state.reuseWindowScoreReady[nextReadyIndex] != 0;
+        if (rowComplete) {
+            if (slice >= state.reuseWindowSliceOwners.size() ||
+                state.reuseWindowSliceOwners[slice] !=
+                    static_cast<int32_t>(contextIndex)) {
+                finishAttentionWorker(false);
+                return;
+            }
+            state.reuseWindowSliceOwners[slice] = -1;
+            state.reuseWindowSliceNextRowBlock[slice] =
+                (context.rowBlock + 1) %
+                (state.dispatch.expectedRows / 64);
+            state.reuseWindowSliceWaitStart[slice] = UINT64_MAX;
+        } else if (nextScoreReady) {
+            state.reuseWindowSliceWaitStart[slice] = UINT64_MAX;
+        } else if (state.reuseWindowSliceWaitStart[slice] == UINT64_MAX) {
+            state.reuseWindowSliceWaitStart[slice] = LastTickCycle;
+        }
+        if (rowComplete) {
+            if (context.scoreSlot >= 0 || context.pSlot >= 0) {
+                finishAttentionWorker(false);
+                return;
+            }
+            ++state.reuseWindowRowContextsCompleted;
+        }
+        dispatchAttentionReuseWindowPvAggregates();
+    }
+
+    void completeAttentionWorkerClusterDraining(size_t index) {
+        if (index >= attentionWorkerClusterPvDraining_.size()) return;
+        std::unique_ptr<AttentionWorkerState> completed =
+            std::move(attentionWorkerClusterPvDraining_[index]);
+        attentionWorkerClusterPvDraining_.erase(
+            attentionWorkerClusterPvDraining_.begin() + index);
+        const uint64_t endCycle = LastTickCycle;
+        output->output("[ATTENTION_WORKER_CLUSTER_E2E] core=%" PRIu64
+            " start=%" PRIu64 " end=%" PRIu64 " cycles=%" PRIu64 "\n",
+            coreID, completed->reuseWindowQkStartCycle, endCycle,
+            endCycle - completed->reuseWindowQkStartCycle + 1);
+        output->output("[ATTENTION_FIFO_DECOUPLED] core=%" PRIu64
+            " score_slot_stall_cycles=%" PRIu64
+            " p_slot_stall_cycles=%" PRIu64
+            " row_context_switches=%" PRIu64 "\n",
+            coreID, completed->reuseWindowScoreSlotStallCycles,
+            completed->reuseWindowPSlotStallCycles,
+            completed->reuseWindowRowContextSwitches);
+        traceAttentionMilestone(
+            "worker", "worker_complete", "done",
+            completed->dispatch.jobId, completed->dispatch.tag);
+        ControlTransportMessage completion = completed->dispatch;
+        completion.kind = ControlTransportMessageKind::AttentionComplete;
+        completion.sendCycle = getCurrentSimCycle();
+        completion.value = 1.0;
+        if (!globalMem->sendControlMessage(completion.ownerCore, completion)) {
+            output->verbose(CALL_INFO, 1, 0,
+                            "Attention draining completion send failed\n");
+        }
+    }
+
+    bool promoteAttentionWorkerClusterQkAheadForSfu() {
+        if (!attentionWorker_ || !attentionWorkerClusterQkAhead_ ||
+            attentionWorker_->reuseWindowRowContextsCompleted !=
+                attentionWorker_->reuseWindowRowContexts.size()) {
+            return false;
+        }
+        attentionWorkerClusterPvDraining_.push_back(std::move(attentionWorker_));
+        attentionWorker_ = std::move(attentionWorkerClusterQkAhead_);
+        output->output("[ATTENTION_WORKER_CLUSTER_JOB_OVERLAP] core=%" PRIu64
+            " draining_job=%" PRIu64 " active_job=%" PRIu64 " cycle=%" PRIu64
+            "\n", coreID,
+            attentionWorkerClusterPvDraining_.back()->dispatch.jobId,
+            attentionWorker_->dispatch.jobId, getCurrentSimCycle());
+        startAttentionWorkerClusterQkAhead();
+        startAttentionReuseWindowSoftmax();
+        return true;
+    }
+
+    void pumpAttentionReuseWindowSoftmax() {
+        if (!attentionWorker_ || !attentionWorkerClusterBridge_ || sfu == nullptr)
+            return;
+        AttentionWorkerState& state = *attentionWorker_;
+        constexpr uint32_t sliceRows = 4;
+        constexpr uint32_t cols = 64;
+        constexpr uint32_t fifoSlots = 16;
+        constexpr uint32_t tilesPerRowBlock = 16;
+        const uint32_t rowBlocks = state.dispatch.expectedRows / 64;
+        const uint32_t contextCount =
+            static_cast<uint32_t>(state.reuseWindowRowContexts.size());
+        const uint64_t generation = state.generation;
+
+        // A physical slice follows a logical row only while its next Score tile
+        // is ready. Online state lives in the logical context, so another ready
+        // row can fill QK producer gaps without losing softmax state.
+        for (uint32_t slice = 0; slice < fifoSlots; ++slice) {
+            const int32_t owner = state.reuseWindowSliceOwners[slice];
+            if (owner < 0 || static_cast<uint32_t>(owner) >= contextCount) {
+                continue;
+            }
+            AttentionReuseWindowRowContext& context =
+                state.reuseWindowRowContexts[static_cast<uint32_t>(owner)];
+            if (context.requestInFlight || context.fifoPhase != 0 ||
+                context.nextKvTile >= tilesPerRowBlock) {
+                continue;
+            }
+            const uint32_t readyIndex =
+                context.rowBlock * tilesPerRowBlock + context.nextKvTile;
+            const bool ready = readyIndex < state.reuseWindowScoreReady.size() &&
+                state.reuseWindowScoreReady[readyIndex] != 0;
+            if (ready) {
+                state.reuseWindowSliceWaitStart[slice] = UINT64_MAX;
+                continue;
+            }
+            state.reuseWindowSliceOwners[slice] = -1;
+            state.reuseWindowSliceNextRowBlock[slice] =
+                (context.rowBlock + 1) % rowBlocks;
+            state.reuseWindowSliceWaitStart[slice] = UINT64_MAX;
+            ++state.reuseWindowRowContextSwitches;
+        }
+        for (uint32_t slice = 0; slice < fifoSlots; ++slice) {
+            if (state.reuseWindowSliceOwners[slice] >= 0) continue;
+            int32_t selectedContext = -1;
+            for (uint32_t attempt = 0; attempt < rowBlocks; ++attempt) {
+                const uint32_t rowBlock =
+                    (state.reuseWindowSliceNextRowBlock[slice] + attempt) %
+                        rowBlocks;
+                const uint32_t contextIndex = rowBlock * fifoSlots + slice;
+                AttentionReuseWindowRowContext& candidate =
+                    state.reuseWindowRowContexts[contextIndex];
+                const uint32_t readyIndex =
+                    candidate.rowBlock * tilesPerRowBlock +
+                    candidate.nextKvTile;
+                const bool ready = candidate.nextKvTile < tilesPerRowBlock &&
+                    readyIndex < state.reuseWindowScoreReady.size() &&
+                    state.reuseWindowScoreReady[readyIndex] != 0;
+                if (!ready) continue;
+                if (selectedContext < 0 ||
+                    (attentionWorkerClusterRowPriority_ &&
+                     candidate.nextKvTile > state.reuseWindowRowContexts[
+                         static_cast<uint32_t>(selectedContext)].nextKvTile)) {
+                    selectedContext = static_cast<int32_t>(contextIndex);
+                    if (!attentionWorkerClusterRowPriority_) break;
+                }
+            }
+            if (selectedContext >= 0) {
+                state.reuseWindowSliceOwners[slice] = selectedContext;
+                const uint32_t rowBlock = state.reuseWindowRowContexts[
+                    static_cast<uint32_t>(selectedContext)].rowBlock;
+                state.reuseWindowSliceNextRowBlock[slice] =
+                    (rowBlock + 1) % rowBlocks;
+            }
+        }
+        const auto contextIsActive = [&state](uint32_t contextIndex) {
+            if (contextIndex >= state.reuseWindowRowContexts.size()) {
+                return false;
+            }
+            const AttentionReuseWindowRowContext& context =
+                state.reuseWindowRowContexts[contextIndex];
+            const uint32_t slice = context.rowOffset / sliceRows;
+            return slice < state.reuseWindowSliceOwners.size() &&
+                state.reuseWindowSliceOwners[slice] ==
+                    static_cast<int32_t>(contextIndex);
+        };
+
+        dispatchAttentionReuseWindowPvAggregates();
+        if (state.reuseWindowRowContextsCompleted ==
+                state.reuseWindowRowContexts.size()) {
+            if (state.reuseWindowClusterPvCompleted == rowBlocks) {
+                const uint64_t endCycle = LastTickCycle;
+                output->output("[ATTENTION_WORKER_CLUSTER_E2E] core=%" PRIu64
+                    " start=%" PRIu64 " end=%" PRIu64 " cycles=%" PRIu64 "\n",
+                    coreID, state.reuseWindowQkStartCycle, endCycle,
+                    endCycle - state.reuseWindowQkStartCycle + 1);
+                output->output("[ATTENTION_FIFO_DECOUPLED] core=%" PRIu64
+                    " score_slot_stall_cycles=%" PRIu64
+                    " p_slot_stall_cycles=%" PRIu64
+                    " row_context_switches=%" PRIu64 "\n",
+                    coreID, state.reuseWindowScoreSlotStallCycles,
+                    state.reuseWindowPSlotStallCycles,
+                    state.reuseWindowRowContextSwitches);
+                finishAttentionWorker(true);
+            } else {
+                promoteAttentionWorkerClusterQkAheadForSfu();
+            }
+            return;
+        }
+
+        // P drains are independent of Score production. Releasing a P slot may
+        // allow another Score-ready context to enter the SFU immediately.
+        for (uint32_t contextIndex = 0; contextIndex < contextCount;
+                ++contextIndex) {
+            AttentionReuseWindowRowContext& context =
+                state.reuseWindowRowContexts[contextIndex];
+            if (!contextIsActive(contextIndex) || context.fifoPhase != 4 ||
+                context.requestInFlight ||
+                context.pSlot < 0) continue;
+            const uint32_t pSlot = static_cast<uint32_t>(context.pSlot);
+            context.requestInFlight = true;
+            const uint64_t transferTag = attentionTransferTag();
+            if (!sfu->readAttentionPRowAsync(
+                    pSlot, context.fifoTag, 0, sliceRows * cols, transferTag,
+                    [this, generation, contextIndex, pSlot, transferTag](
+                        bool ok, uint64_t callbackTag,
+                        const std::vector<float>& values) {
+                        if (!attentionCallbackGenerationMatches(generation)) return;
+                        if (!ok || callbackTag != transferTag ||
+                            contextIndex >= attentionWorker_->reuseWindowRowContexts.size()) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        AttentionWorkerState& completedState = *attentionWorker_;
+                        AttentionReuseWindowRowContext& completed =
+                            completedState.reuseWindowRowContexts[contextIndex];
+                        completed.requestInFlight = false;
+                        if (completed.pSlot != static_cast<int32_t>(pSlot) ||
+                            completedState.reuseWindowPOwners[pSlot] !=
+                                static_cast<int32_t>(contextIndex) ||
+                            !sfu->releaseAttentionPSlot(pSlot, completed.fifoTag)) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        completedState.reuseWindowPOwners[pSlot] = -1;
+                        completed.pSlot = -1;
+                        completed.fifoPhase = 0;
+                        completeAttentionReuseWindowRowTile(contextIndex, values);
+                        pumpAttentionReuseWindowSoftmax();
+                    })) {
+                context.requestInFlight = false;
+            }
+        }
+
+        // A Score-ready context independently claims any free P slot. The two
+        // FIFO indices deliberately need not match.
+        bool pSlotBlocked = false;
+        const uint32_t pScanBegin = state.reuseWindowNextPContext;
+        std::vector<uint32_t> pOrder(contextCount);
+        for (uint32_t attempt = 0; attempt < contextCount; ++attempt) {
+            pOrder[attempt] = (pScanBegin + attempt) % contextCount;
+        }
+        if (attentionWorkerClusterRowPriority_) {
+            std::stable_sort(pOrder.begin(), pOrder.end(),
+                [&state](uint32_t lhs, uint32_t rhs) {
+                    return state.reuseWindowRowContexts[lhs].nextKvTile >
+                        state.reuseWindowRowContexts[rhs].nextKvTile;
+                });
+        }
+        for (uint32_t contextIndex : pOrder) {
+            AttentionReuseWindowRowContext& context =
+                state.reuseWindowRowContexts[contextIndex];
+            if (!contextIsActive(contextIndex) || context.fifoPhase != 2 ||
+                context.requestInFlight) continue;
+            const uint32_t kvTile = context.nextKvTile;
+            const uint32_t rowBegin = context.rowBlock * 64 + context.rowOffset;
+            if (context.pSlot < 0) {
+                uint32_t pSlot = fifoSlots;
+                for (uint32_t slot = 0; slot < fifoSlots; ++slot) {
+                    if (state.reuseWindowPOwners[slot] < 0) {
+                        pSlot = slot;
+                        break;
+                    }
+                }
+                if (pSlot == fifoSlots) {
+                    pSlotBlocked = true;
+                    continue;
+                }
+                const size_t elements = static_cast<size_t>(sliceRows) * cols;
+                if (!sfu->reserveAttentionPSlot(
+                        pSlot, context.fifoTag, elements)) {
+                    pSlotBlocked = true;
+                    continue;
+                }
+                context.pSlot = static_cast<int32_t>(pSlot);
+                state.reuseWindowPOwners[pSlot] =
+                    static_cast<int32_t>(contextIndex);
+                state.reuseWindowNextPContext =
+                    (contextIndex + 1) % contextCount;
+            }
+            if (context.scoreSlot < 0) {
+                finishAttentionWorker(false);
+                return;
+            }
+            const uint32_t scoreSlot = static_cast<uint32_t>(context.scoreSlot);
+            const uint32_t pSlot = static_cast<uint32_t>(context.pSlot);
+            AttentionTileRequest request{};
+            request.tag = state.dispatch.tag + 1 +
+                static_cast<uint64_t>(contextIndex) * tilesPerRowBlock + kvTile;
+            request.jobId = state.dispatch.jobId;
+            request.globalRowBegin = rowBegin;
+            request.keyBegin = kvTile * cols;
+            request.rows = sliceRows;
+            request.cols = cols;
+            request.headDim = state.dispatch.headDim;
+            request.kvTileIndex = kvTile;
+            request.numKvTiles = tilesPerRowBlock;
+            request.causal = false;
+            request.firstTileForJob = kvTile == 0;
+            request.directScoreMode = true;
+            request.generation = generation;
+            request.scoreSlot = scoreSlot;
+            request.scoreTag = context.fifoTag;
+            request.directPMode = true;
+            request.pSlot = pSlot;
+            request.pTag = context.fifoTag;
+            const AttentionClusterAdmission admission =
+                sfu->attentionTileAdmission(request);
+            if (admission == AttentionClusterAdmission::Invalid) {
+                finishAttentionWorker(false);
+                return;
+            }
+            if (admission == AttentionClusterAdmission::Retry) continue;
+            context.requestInFlight = true;
+            if (!sfu->issueAttentionTile(request,
+                    [this, generation, contextIndex, scoreSlot](
+                        bool softmaxOk, const AttentionTileResult& result) {
+                        if (!attentionCallbackGenerationMatches(generation) ||
+                            !softmaxOk || result.rows != sliceRows ||
+                            contextIndex >=
+                                attentionWorker_->reuseWindowRowContexts.size()) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        AttentionReuseWindowRowContext& completed =
+                            attentionWorker_->reuseWindowRowContexts[contextIndex];
+                        completed.requestInFlight = false;
+                        if (completed.scoreSlot !=
+                                static_cast<int32_t>(scoreSlot) ||
+                            attentionWorker_->reuseWindowScoreOwners[scoreSlot] !=
+                                static_cast<int32_t>(contextIndex) ||
+                            !sfu->releaseAttentionScoreSlot(
+                                scoreSlot, completed.fifoTag)) {
+                            finishAttentionWorker(false);
+                            return;
+                        }
+                        attentionWorker_->reuseWindowScoreOwners[scoreSlot] = -1;
+                        completed.scoreSlot = -1;
+                        completed.outputScale.assign(
+                            result.oldOutputScale.begin(),
+                            result.oldOutputScale.begin() + result.rows);
+                        completed.fifoPhase = 4;
+                        pumpAttentionReuseWindowSoftmax();
+                    })) {
+                context.requestInFlight = false;
+            } else {
+                context.fifoPhase = 3;
+            }
+        }
+        if (pSlotBlocked &&
+            state.reuseWindowLastPSlotStallCycle != LastTickCycle) {
+            ++state.reuseWindowPSlotStallCycles;
+            state.reuseWindowLastPSlotStallCycle = LastTickCycle;
+        }
+
+        // Score production has its own free list and can run while older P
+        // slots are being drained.
+        bool scoreSlotBlocked = false;
+        const uint32_t scoreScanBegin = state.reuseWindowNextScoreContext;
+        std::vector<uint32_t> scoreOrder(contextCount);
+        for (uint32_t attempt = 0; attempt < contextCount; ++attempt) {
+            scoreOrder[attempt] = (scoreScanBegin + attempt) % contextCount;
+        }
+        if (attentionWorkerClusterRowPriority_) {
+            std::stable_sort(scoreOrder.begin(), scoreOrder.end(),
+                [&state](uint32_t lhs, uint32_t rhs) {
+                    return state.reuseWindowRowContexts[lhs].nextKvTile >
+                        state.reuseWindowRowContexts[rhs].nextKvTile;
+                });
+        }
+        for (uint32_t contextIndex : scoreOrder) {
+            AttentionReuseWindowRowContext& context =
+                state.reuseWindowRowContexts[contextIndex];
+            if (!contextIsActive(contextIndex) || context.fifoPhase != 0 ||
+                context.requestInFlight ||
+                context.nextKvTile >= tilesPerRowBlock) continue;
+            const uint32_t kvTile = context.nextKvTile;
+            const uint32_t readyIndex =
+                context.rowBlock * tilesPerRowBlock + kvTile;
+            if (readyIndex >= state.reuseWindowScoreReady.size() ||
+                state.reuseWindowScoreReady[readyIndex] == 0) continue;
+            uint32_t scoreSlot = fifoSlots;
+            for (uint32_t slot = 0; slot < fifoSlots; ++slot) {
+                if (state.reuseWindowScoreOwners[slot] < 0) {
+                    scoreSlot = slot;
+                    break;
+                }
+            }
+            if (scoreSlot == fifoSlots) {
+                scoreSlotBlocked = true;
+                continue;
+            }
+
+            const uint32_t rowBegin = context.rowBlock * 64 + context.rowOffset;
+            std::vector<float> score(sliceRows * cols, 0.0f);
+            for (uint32_t row = 0; row < sliceRows; ++row) {
+                const size_t src = static_cast<size_t>(rowBegin + row) *
+                    state.dispatch.expectedCols + kvTile * cols;
+                std::copy_n(state.reuseWindowScores.begin() + src, cols,
+                            score.begin() + static_cast<size_t>(row) * cols);
+            }
+            AttentionClusterTag fifoTag;
+            fifoTag.generation = generation;
+            fifoTag.jobId = state.dispatch.jobId;
+            fifoTag.group = context.rowBlock;
+            fifoTag.queryContext = context.rowOffset / sliceRows;
+            fifoTag.queryTileIndex = context.rowBlock;
+            fifoTag.kvTileIndex = kvTile;
+            fifoTag.sequence = contextIndex;
+            const size_t elements = static_cast<size_t>(sliceRows) * cols;
+            if (!sfu->reserveAttentionScoreSlot(
+                    scoreSlot, fifoTag, elements)) {
+                scoreSlotBlocked = true;
+                continue;
+            }
+            context.fifoTag = fifoTag;
+            context.scoreSlot = static_cast<int32_t>(scoreSlot);
+            state.reuseWindowScoreOwners[scoreSlot] =
+                static_cast<int32_t>(contextIndex);
+            state.reuseWindowNextScoreContext =
+                (contextIndex + 1) % contextCount;
+            context.fifoPhase = 1;
+            context.requestInFlight = true;
+            const uint64_t transferTag = attentionTransferTag();
+            if (!sfu->writeAttentionScoreBeatAsync(
+                    scoreSlot, fifoTag, 0, score, transferTag,
+                    [this, generation, contextIndex, scoreSlot, transferTag](
+                        bool ok, uint64_t callbackTag) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (!ok || callbackTag != transferTag ||
+                        contextIndex >=
+                            attentionWorker_->reuseWindowRowContexts.size()) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    AttentionReuseWindowRowContext& completed =
+                        attentionWorker_->reuseWindowRowContexts[contextIndex];
+                    if (completed.scoreSlot != static_cast<int32_t>(scoreSlot) ||
+                        attentionWorker_->reuseWindowScoreOwners[scoreSlot] !=
+                            static_cast<int32_t>(contextIndex) ||
+                        completed.fifoPhase != 1) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    completed.requestInFlight = false;
+                    completed.fifoPhase = 2;
+                    pumpAttentionReuseWindowSoftmax();
+                })) {
+                context.requestInFlight = false;
+                context.fifoPhase = 0;
+                context.scoreSlot = -1;
+                state.reuseWindowScoreOwners[scoreSlot] = -1;
+                if (!sfu->releaseAttentionScoreSlot(scoreSlot, fifoTag)) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+            }
+        }
+        if (scoreSlotBlocked &&
+            state.reuseWindowLastScoreSlotStallCycle != LastTickCycle) {
+            ++state.reuseWindowScoreSlotStallCycles;
+            state.reuseWindowLastScoreSlotStallCycle = LastTickCycle;
+        }
+    }
+
+    void startAttentionReuseWindowSoftmax() {
+        if (!attentionWorker_ || sfu == nullptr) {
+            finishAttentionWorker(false);
+            return;
+        }
+        AttentionWorkerState& state = *attentionWorker_;
+        if (attentionWorkerClusterBridge_) {
+            pumpAttentionReuseWindowSoftmax();
+            return;
+        }
+        constexpr uint32_t rows = 64;
+        constexpr uint32_t cols = 64;
+        constexpr uint32_t tilesPerHalf = 16;
+        const uint32_t tileIndex = state.reuseWindowAttentionTile;
+        const uint32_t rowBlocks = state.dispatch.expectedRows / rows;
+        if (tileIndex >= rowBlocks * tilesPerHalf) {
+            if (attentionWorkerClusterBridge_) {
+                if (state.reuseWindowClusterPvCompleted == rowBlocks) {
+                    const uint64_t endCycle = LastTickCycle;
+                    output->output("[ATTENTION_WORKER_CLUSTER_E2E] core=%" PRIu64
+                        " start=%" PRIu64 " end=%" PRIu64 " cycles=%" PRIu64 "\n",
+                        coreID, state.reuseWindowQkStartCycle, endCycle,
+                        endCycle - state.reuseWindowQkStartCycle + 1);
+                    finishAttentionWorker(true);
+                }
+                return;
+            }
+            const uint64_t localBase = globalMem->getBaseAddr();
+            state.oLocal = localBase + 0x10000;
+            state.dispatch.queryTileRows = state.dispatch.expectedRows;
+            state.queryTileIndex = 0;
+            attentionLocalWrite(
+                state.oLocal,
+                attentionFloatsToBytes(state.reuseWindowOutput),
+                [this](bool ok) {
+                    if (!attentionWorker_ || !ok) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    dmaAttentionQueryTileOutput();
+                });
+            return;
+        }
+        if (attentionWorkerClusterBridge_) {
+            if (state.reuseWindowSoftmaxBusy ||
+                tileIndex >= state.reuseWindowScoreReady.size() ||
+                state.reuseWindowScoreReady[tileIndex] == 0) {
+                return;
+            }
+            state.reuseWindowSoftmaxBusy = true;
+        }
+        const uint32_t rowBegin = (tileIndex / tilesPerHalf) * rows;
+        const uint32_t kvTile = tileIndex % tilesPerHalf;
+        std::vector<float> score(rows * cols, 0.0f);
+        for (uint32_t row = 0; row < rows; ++row) {
+            const size_t src = static_cast<size_t>(rowBegin + row) *
+                state.dispatch.expectedCols + kvTile * cols;
+            std::copy_n(state.reuseWindowScores.begin() + src, cols,
+                        score.begin() + static_cast<size_t>(row) * cols);
+        }
+        const uint64_t scoreAddr = globalMem->getBaseAddr() + 0x10000;
+        const uint64_t generation = state.generation;
+        attentionLocalWrite(
+            scoreAddr, attentionFloatsToBytes(score),
+            [this, generation, rowBegin, kvTile, scoreAddr](bool ok) {
+                if (!attentionCallbackGenerationMatches(generation) || !ok) {
+                    finishAttentionWorker(false);
+                    return;
+                }
+                AttentionTileRequest request{};
+                request.tag = attentionWorker_->dispatch.tag +
+                    attentionWorker_->reuseWindowAttentionTile + 1;
+                request.jobId = attentionWorker_->dispatch.jobId;
+                request.localScoreAddr = scoreAddr;
+                request.globalRowBegin = rowBegin;
+                request.keyBegin = kvTile * 64;
+                request.rows = 64;
+                request.cols = 64;
+                request.headDim = attentionWorker_->dispatch.headDim;
+                request.kvTileIndex = kvTile;
+                request.numKvTiles = 16;
+                request.causal = false;
+                request.firstTileForJob = kvTile == 0;
+                request.generation = generation;
+                if (!sfu->issueAttentionTile(
+                        request,
+                        [this, generation, scoreAddr, rowBegin](
+                            bool softmaxOk, const AttentionTileResult& result) {
+                            if (!attentionCallbackGenerationMatches(generation) ||
+                                !softmaxOk || result.rows != 64) {
+                                finishAttentionWorker(false);
+                                return;
+                            }
+                            for (uint32_t row = 0; row < 64; ++row) {
+                                const float scale = result.oldOutputScale[row];
+                                const size_t base =
+                                    static_cast<size_t>(rowBegin + row) * 128;
+                                for (uint32_t dim = 0; dim < 128; ++dim) {
+                                    attentionWorker_->reuseWindowOutput[base + dim] *= scale;
+                                }
+                            }
+                            attentionWorker_->outputScales.assign(
+                                result.oldOutputScale.begin(),
+                                result.oldOutputScale.begin() + result.rows);
+                            attentionLocalRead(
+                                scoreAddr, 64u * 64u * sizeof(float),
+                                [this, generation](
+                                    bool readOk, const std::vector<uint8_t>& raw) {
+                                    if (!attentionCallbackGenerationMatches(generation) ||
+                                        !readOk || raw.size() != 64u * 64u * sizeof(float)) {
+                                        finishAttentionWorker(false);
+                                        return;
+                                    }
+                                    const uint32_t kvTile =
+                                        attentionWorker_->reuseWindowAttentionTile % 16;
+                                    const uint32_t tileInWindow = kvTile % 4;
+                                    if (tileInWindow == 0) {
+                                        std::fill(
+                                            attentionWorker_->reuseWindowP.begin(),
+                                            attentionWorker_->reuseWindowP.end(), 0.0f);
+                                        attentionWorker_->reuseWindowGroupScale.assign(64, 1.0f);
+                                    } else {
+                                        for (uint32_t prior = 0;
+                                             prior < tileInWindow; ++prior) {
+                                            for (uint32_t row = 0; row < 64; ++row) {
+                                                const float scale =
+                                                    attentionWorker_->outputScales[row];
+                                                const size_t base =
+                                                    (static_cast<size_t>(prior) * 64 + row) * 64;
+                                                for (uint32_t col = 0; col < 64; ++col) {
+                                                    attentionWorker_->reuseWindowP[base + col] *= scale;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    for (uint32_t row = 0; row < 64; ++row) {
+                                        attentionWorker_->reuseWindowGroupScale[row] *=
+                                            attentionWorker_->outputScales[row];
+                                    }
+                                    std::memcpy(
+                                        attentionWorker_->reuseWindowP.data() +
+                                            static_cast<size_t>(tileInWindow) * 64 * 64,
+                                        raw.data(), raw.size());
+                                    if (tileInWindow != 3) {
+                                        ++attentionWorker_->reuseWindowAttentionTile;
+                                        attentionWorker_->reuseWindowSoftmaxBusy = false;
+                                        startAttentionReuseWindowSoftmax();
+                                        return;
+                                    }
+                                    if (attentionWorkerClusterBridge_) {
+                                        ControlTransportMessage pv = attentionWorker_->dispatch;
+                                        pv.kind = ControlTransportMessageKind::AttentionClusterPvDispatch;
+                                        pv.ownerCore = static_cast<uint32_t>(coreID);
+                                        const uint32_t manager = attentionWorker_->dispatch.ownerCore;
+                                        const uint32_t rowBlock =
+                                            attentionWorker_->reuseWindowAttentionTile / 16;
+                                        const uint32_t pvLaneCount = 4u -
+                                            attentionWorkerClusterQkWorkersPerManager_;
+                                        const uint32_t pvLane = rowBlock % pvLaneCount;
+                                        pv.workerCore = 4 +
+                                            (attentionWorkerClusterQkWorkersPerManager_ +
+                                             pvLane) * 4 + manager;
+                                        pv.groupQueryRowBegin = rowBlock * 64;
+                                        pv.expectedRows = 64;
+                                        pv.expectedCols = 128;
+                                        pv.kvTileRows = kvTile / 4;
+                                        pv.payload = attentionWorker_->reuseWindowP;
+                                        pv.scales = attentionWorker_->reuseWindowGroupScale;
+                                        pv.sendCycle = getCurrentSimCycle();
+                                        if (!globalMem->sendControlMessage(pv.workerCore, pv)) {
+                                            finishAttentionWorker(false);
+                                            return;
+                                        }
+                                        ++attentionWorker_->reuseWindowAttentionTile;
+                                        attentionWorker_->reuseWindowSoftmaxBusy = false;
+                                        startAttentionReuseWindowSoftmax();
+                                        return;
+                                    }
+                                    constexpr size_t panelBytes = 64u * 64u * sizeof(float);
+                                    std::vector<uint8_t> packed(6u * panelBytes, 0);
+                                    std::memcpy(packed.data(),
+                                        attentionWorker_->reuseWindowP.data(), 2u * panelBytes);
+                                    std::memcpy(packed.data() + 4u * panelBytes,
+                                        attentionWorker_->reuseWindowP.data() + 2u * 64u * 64u,
+                                        2u * panelBytes);
+                                    attentionLocalWrite(
+                                        globalMem->getBaseAddr() + 0x10000,
+                                        packed,
+                                        [this, generation](bool writeOk) {
+                                            if (!attentionCallbackGenerationMatches(generation) ||
+                                                !writeOk) {
+                                                finishAttentionWorker(false);
+                                                return;
+                                            }
+                                            startAttentionReuseWindowPv();
+                                        });
+                                });
+                        })) {
+                    finishAttentionWorker(false);
+                }
+            });
+    }
+
+    void startAttentionReuseWindowPv() {
+        if (!attentionWorker_ || workerCommandProcessor == nullptr) {
+            finishAttentionWorker(false);
+            return;
+        }
+        AttentionWorkerState& state = *attentionWorker_;
+        constexpr uint32_t block = 64;
+        constexpr uint64_t panelVOffset = 0x06000000;
+        const uint32_t keyWindow =
+            (state.reuseWindowAttentionTile % 16) / 4;
+        const uint64_t panelBytes = block * block * sizeof(float);
+        const uint64_t vHeadOffset =
+            static_cast<uint64_t>(state.dispatch.kvHeadIndex) * 2 * 4 * panelBytes;
+        WorkerTaskListHeader header{};
+        header.worker_slot = 0;
+        header.task_count = 1;
+        header.active_worker_cores = 1;
+        header.total_groups = 4;
+        header.data_memory_node_count = 4;
+        header.mem_node_size = state.dispatch.nodeStrideBytes;
+        header.m = 64;
+        header.n = 128;
+        header.k = 256;
+        header.hw_input_size = block;
+        header.hw_output_size = block;
+        header.block_m = block;
+        header.block_n = block;
+        header.block_k = block;
+        header.elem_bytes = sizeof(float);
+        header.mat_stride_bytes = panelBytes;
+        header.vec_stride_bytes = block * sizeof(float);
+        header.off_gemm_vec_base =
+            static_cast<uint64_t>(1 + keyWindow) * state.dispatch.nodeStrideBytes +
+            panelVOffset + vHeadOffset;
+        const uint64_t localBase = globalMem->getBaseAddr();
+        header.local_mat_ping_gm_addr = localBase + 0x10000;
+        header.local_vec_ping_gm_addr = localBase + 0x70000;
+        header.local_mat_slot_stride_bytes = panelBytes;
+        header.local_vec_slot_stride_bytes = panelBytes;
+        header.local_slot_count = 24;
+        header.local_accum_gm_addr = localBase + 0xD0000;
+        header.local_out_gm_addr = localBase + 0xD4000;
+        header.a_reuse_n_tiles = 2;
+        header.n_group_count = 1;
+        header.b_reuse_m_tiles = 1;
+        header.m_group_count = 1;
+        header.descriptor_start_cycle = getCurrentSimCycle();
+        header.operand_layout = 3;
+        header.scheduler_worker_slot = state.dispatch.workerSlot;
+        header.attention_pv_cache_gm_addr = localBase + 0x100000;
+        header.attention_pv_cache_bytes = 0x80000;
+
+        state.reuseWindowPvFusionTiles = 0;
+        const uint64_t generation = state.generation;
+        if (!workerCommandProcessor->setWindowCallbacks(
+                [this, generation](uint64_t taskId, uint64_t,
+                                   const std::vector<uint8_t>& tile) {
+                    if (!attentionCallbackGenerationMatches(generation) ||
+                        taskId >= 2 || tile.size() != 64u * 64u * sizeof(float)) {
+                        return false;
+                    }
+                    const uint32_t rowBegin =
+                        (attentionWorker_->reuseWindowAttentionTile / 16) * 64;
+                    for (uint32_t col = 0; col < 64; ++col) {
+                        for (uint32_t row = 0; row < 64; ++row) {
+                            float value = 0.0f;
+                            std::memcpy(&value,
+                                tile.data() +
+                                    (static_cast<size_t>(col) * 64 + row) * sizeof(float),
+                                sizeof(float));
+                            const size_t dst =
+                                static_cast<size_t>(rowBegin + row) * 128 +
+                                static_cast<uint32_t>(taskId) * 64 + col;
+                            attentionWorker_->reuseWindowOutput[dst] += value;
+                        }
+                    }
+                    ++attentionWorker_->reuseWindowPvFusionTiles;
+                    return true;
+                },
+                [this, generation](uint64_t cycles, uint64_t, uint64_t) {
+                    if (!attentionCallbackGenerationMatches(generation)) return;
+                    if (attentionWorker_->reuseWindowPvFusionTiles != 2) {
+                        finishAttentionWorker(false);
+                        return;
+                    }
+                    attentionWorker_->reuseWindowPvCycles += cycles;
+                    ++attentionWorker_->reuseWindowAttentionTile;
+                    startAttentionReuseWindowSoftmax();
+                }) || !workerCommandProcessor->startWindow(header)) {
+            finishAttentionWorker(false);
+        }
+    }
+
+    bool startAttentionReuseWindowQkBridge(AttentionWorkerState& state) {
+        if (!attentionReuseWindowQkBridge_ || workerCommandProcessor == nullptr ||
+            state.dispatch.nodeStrideBytes == 0 || coreID < 4 ||
+            state.dispatch.queryLength == 0 || state.dispatch.headDim == 0) {
+            return false;
+        }
+        const uint32_t groupSize =
+            state.dispatch.numQueryHeads / state.dispatch.numKvHeads;
+        const uint32_t globalWorkerSlot = attentionWorkerClusterBridge_
+            ? 0u : state.dispatch.workerSlot;
+        const uint32_t activeWorkers = attentionWorkerClusterBridge_ ? 1u : 4u;
+        constexpr uint32_t blockM = 64;
+        constexpr uint32_t blockN = 64;
+        constexpr uint32_t blockK = 64;
+        constexpr uint32_t reuseM = 2;
+        constexpr uint32_t reuseN = 4;
+        const uint32_t m = attentionWorkerClusterBridge_
+            ? state.dispatch.expectedRows
+            : state.dispatch.queryLength * groupSize;
+        const uint32_t n = state.dispatch.expectedCols;
+        const uint32_t mGroups = (m / blockM + reuseM - 1) / reuseM;
+        const uint32_t nGroups = (n / blockN + reuseN - 1) / reuseN;
+        const uint32_t macroTasks = mGroups * nGroups;
+        if (m % (blockM * reuseM) != 0 || n % (blockN * reuseN) != 0 ||
+            state.dispatch.headDim % blockK != 0 || globalWorkerSlot >= activeWorkers ||
+            state.dispatch.rowsPerBand == 0 ||
+            state.dispatch.rowsPerBand % (blockM * reuseM) != 0) {
+            return false;
+        }
+
+        WorkerTaskListHeader header{};
+        header.worker_slot = globalWorkerSlot;
+        header.task_count = globalWorkerSlot < macroTasks
+            ? (macroTasks - globalWorkerSlot + activeWorkers - 1) / activeWorkers : 0;
+        header.active_worker_cores = activeWorkers;
+        header.total_groups = 4;
+        header.data_memory_node_count = 4;
+        header.mem_node_size = state.dispatch.nodeStrideBytes;
+        header.m = m;
+        header.n = n;
+        header.k = state.dispatch.headDim;
+        header.hw_input_size = blockK;
+        header.hw_output_size = blockM;
+        header.block_m = blockM;
+        header.block_n = blockN;
+        header.block_k = blockK;
+        header.elem_bytes = sizeof(float);
+        header.mat_stride_bytes =
+            static_cast<uint64_t>(blockM) * blockK * sizeof(float);
+        header.vec_stride_bytes = static_cast<uint64_t>(blockK) * sizeof(float);
+        constexpr uint64_t panelQOffset = 0x04000000;
+        constexpr uint64_t panelKOffset = 0x05000000;
+        header.off_gemm_mat_base = panelQOffset +
+            static_cast<uint64_t>(state.dispatch.kvHeadIndex) * groupSize *
+                (state.dispatch.rowsPerBand / blockM) *
+                (state.dispatch.headDim / blockK) * blockM * blockK * sizeof(float) +
+            (attentionWorkerClusterBridge_
+                ? static_cast<uint64_t>(state.dispatch.groupQueryRowBegin) *
+                    state.dispatch.headDim * sizeof(float)
+                : 0u);
+        header.off_gemm_vec_base = panelKOffset +
+            static_cast<uint64_t>(state.dispatch.kvHeadIndex) *
+                (state.dispatch.rowsPerBand / blockN) *
+                (state.dispatch.headDim / blockK) * blockN * blockK * sizeof(float);
+        const uint64_t localBase = globalMem->getBaseAddr();
+        header.local_mat_ping_gm_addr = localBase + 0x10000;
+        header.local_vec_ping_gm_addr = localBase + 0x40000;
+        header.local_mat_slot_stride_bytes = header.mat_stride_bytes;
+        header.local_vec_slot_stride_bytes =
+            static_cast<uint64_t>(blockN) * blockK * sizeof(float);
+        header.local_slot_count = 24;
+        header.local_accum_gm_addr = localBase + 0xA0000;
+        header.local_out_gm_addr = localBase + 0xA4000;
+        header.a_reuse_n_tiles = reuseN;
+        header.n_group_count = nGroups;
+        header.b_reuse_m_tiles = reuseM;
+        header.m_group_count = mGroups;
+        header.descriptor_start_cycle = getCurrentSimCycle();
+        header.operand_layout = 2;
+        header.attention_query_length = state.dispatch.queryLength;
+        header.attention_rows_per_band = state.dispatch.rowsPerBand;
+        header.scheduler_worker_slot = state.dispatch.workerSlot;
+        header.attention_node_stride_bytes = state.dispatch.nodeStrideBytes;
+
+        state.reuseWindowExpectedFusionTiles =
+            static_cast<uint64_t>(header.task_count) * reuseM * reuseN;
+        state.reuseWindowScores.assign(
+            static_cast<size_t>(state.dispatch.expectedRows) *
+                state.dispatch.expectedCols, 0.0f);
+        state.reuseWindowOutput.assign(
+            static_cast<size_t>(state.dispatch.expectedRows) *
+                state.dispatch.headDim, 0.0f);
+        state.reuseWindowP.assign(64u * 256u, 0.0f);
+        state.reuseWindowAttentionTile = 0;
+        state.reuseWindowScoreReady.assign(
+            static_cast<size_t>(state.dispatch.expectedRows / blockM) *
+                (state.dispatch.expectedCols / blockN), 0);
+        state.reuseWindowSoftmaxBusy = false;
+        state.reuseWindowQkComplete = false;
+        state.reuseWindowClusterPvCompleted = 0;
+        state.reuseWindowRowContexts.clear();
+        state.reuseWindowPvAggregates.clear();
+        state.reuseWindowReadQueue.clear();
+        state.reuseWindowIoBusy = false;
+        state.reuseWindowRowContextsCompleted = 0;
+        state.reuseWindowScoreOwners.fill(-1);
+        state.reuseWindowPOwners.fill(-1);
+        state.reuseWindowSliceOwners.fill(-1);
+        state.reuseWindowSliceNextRowBlock.fill(0);
+        state.reuseWindowSliceWaitStart.fill(UINT64_MAX);
+        state.reuseWindowNextScoreContext = 0;
+        state.reuseWindowNextPContext = 0;
+        state.reuseWindowScoreSlotStallCycles = 0;
+        state.reuseWindowPSlotStallCycles = 0;
+        state.reuseWindowRowContextSwitches = 0;
+        state.reuseWindowLastScoreSlotStallCycle = UINT64_MAX;
+        state.reuseWindowLastPSlotStallCycle = UINT64_MAX;
+        state.reuseWindowPvNextRowBlock = {{0, 1, 2}};
+        state.reuseWindowPvNextWindow.fill(0);
+        state.reuseWindowPvDispatchLane = 0;
+        state.reuseWindowPvNextDispatchCycle = 0;
+        state.reuseWindowPvRowCore.clear();
+        state.reuseWindowPvAllocationPending.clear();
+        state.reuseWindowPvRowNextWindow.clear();
+        if (attentionWorkerClusterBridge_) {
+            constexpr uint32_t sliceRows = 4;
+            constexpr uint32_t slicesPerRowBlock = 16;
+            const uint32_t rowBlocks = state.dispatch.expectedRows / blockM;
+            state.reuseWindowPvRowCore.assign(rowBlocks, -1);
+            state.reuseWindowPvAllocationPending.assign(rowBlocks, 0);
+            state.reuseWindowPvRowNextWindow.assign(rowBlocks, 0);
+            state.reuseWindowRowContexts.resize(
+                static_cast<size_t>(rowBlocks) * slicesPerRowBlock);
+            for (uint32_t rowBlock = 0; rowBlock < rowBlocks; ++rowBlock) {
+                for (uint32_t slice = 0; slice < slicesPerRowBlock; ++slice) {
+                    AttentionReuseWindowRowContext& context =
+                        state.reuseWindowRowContexts[
+                            rowBlock * slicesPerRowBlock + slice];
+                    context.rowBlock = rowBlock;
+                    context.rowOffset = slice * sliceRows;
+                    context.p.assign(4u * sliceRows * blockN, 0.0f);
+                    context.groupScale.assign(sliceRows, 1.0f);
+                }
+            }
+            state.reuseWindowPvAggregates.resize(
+                static_cast<size_t>(rowBlocks) * 4);
+            for (AttentionReuseWindowPvAggregate& aggregate :
+                    state.reuseWindowPvAggregates) {
+                aggregate.p.assign(4u * blockM * blockN, 0.0f);
+                aggregate.scales.assign(blockM, 1.0f);
+            }
+        }
+        state.reuseWindowQkStartCycle = LastTickCycle;
+        AttentionWorkerState* const target = &state;
+        const uint64_t generation = state.generation;
+        if (!workerCommandProcessor->setWindowCallbacks(
+                [this, target, generation](uint64_t taskId, uint64_t,
+                                   const std::vector<uint8_t>& tile) {
+                    if (!attentionReuseWindowStateValid(target, generation) ||
+                        tile.size() != 64u * 64u * sizeof(float)) {
+                        return false;
+                    }
+                    const uint32_t nTiles =
+                        target->dispatch.expectedCols / 64;
+                    const uint32_t mTile = static_cast<uint32_t>(taskId) / nTiles;
+                    const uint32_t nTile = static_cast<uint32_t>(taskId) % nTiles;
+                    const uint32_t ownedMStart = attentionWorkerClusterBridge_
+                        ? 0u : target->dispatch.workerSlot * 2;
+                    const uint32_t ownedMTiles = attentionWorkerClusterBridge_
+                        ? target->dispatch.expectedRows / 64 : 2u;
+                    if (mTile < ownedMStart || mTile >= ownedMStart + ownedMTiles) {
+                        return false;
+                    }
+                    const uint32_t localRowBegin = (mTile - ownedMStart) * 64;
+                    for (uint32_t col = 0; col < 64; ++col) {
+                        for (uint32_t row = 0; row < 64; ++row) {
+                            float value = 0.0f;
+                            std::memcpy(&value,
+                                tile.data() +
+                                    (static_cast<size_t>(col) * 64 + row) * sizeof(float),
+                                sizeof(float));
+                            target->reuseWindowScores[
+                                static_cast<size_t>(localRowBegin + row) *
+                                    target->dispatch.expectedCols +
+                                nTile * 64 + col] = value;
+                        }
+                    }
+                    target->reuseWindowFusionTiles++;
+                    if (attentionWorkerClusterBridge_) {
+                        const uint32_t readyIndex =
+                            (localRowBegin / blockM) * nTiles + nTile;
+                        target->reuseWindowScoreReady[readyIndex] = 1;
+                        if (attentionWorker_.get() == target) {
+                            startAttentionReuseWindowSoftmax();
+                        }
+                    }
+                    return true;
+                },
+                [this, target, generation](uint64_t cycles, uint64_t start, uint64_t end) {
+                    if (!attentionReuseWindowStateValid(target, generation)) return;
+                    const bool ok = target->reuseWindowFusionTiles ==
+                        target->reuseWindowExpectedFusionTiles;
+                    output->output(
+                        "[ATTENTION_REUSE_WINDOW_QK] core=%" PRIu64
+                        " cycles=%" PRIu64 " start=%" PRIu64 " end=%" PRIu64
+                        " fusion_tiles=%" PRIu64 " expected_tiles=%" PRIu64 "\n",
+                        coreID, cycles, start, end,
+                        target->reuseWindowFusionTiles,
+                        target->reuseWindowExpectedFusionTiles);
+                    if (!ok) {
+                        if (attentionWorker_.get() == target) finishAttentionWorker(false);
+                        return;
+                    }
+                    target->reuseWindowQkEndCycle = end;
+                    target->reuseWindowPvCycles = 0;
+                    target->reuseWindowQkComplete = true;
+                    if (attentionWorker_.get() == target) {
+                        startAttentionWorkerClusterQkAhead();
+                        startAttentionReuseWindowSoftmax();
+                    }
+                }) || !workerCommandProcessor->startWindow(header)) {
+            return false;
+        }
+        state.phase = AttentionWorkerPhase::QkCompute;
+        return true;
+    }
+
+    bool attentionReuseWindowStateValid(const AttentionWorkerState* state,
+                                        uint64_t generation) const {
+        return state != nullptr && state->generation == generation &&
+            (attentionWorker_.get() == state ||
+             attentionWorkerClusterQkAhead_.get() == state);
+    }
+
+    void startAttentionWorkerClusterQkAhead() {
+        if (!attentionWorkerClusterBridge_ || !attentionWorker_ ||
+            !attentionWorker_->reuseWindowQkComplete ||
+            attentionWorkerClusterQkAhead_ || attentionPendingDispatches_.empty() ||
+            workerCommandProcessor == nullptr || workerCommandProcessor->isBusy()) return;
+        ControlTransportMessage message = attentionPendingDispatches_.front();
+        auto ahead = std::make_unique<AttentionWorkerState>();
+        ahead->generation = nextAttentionWorkerGeneration_++;
+        ahead->dispatch = message;
+        ahead->phase = AttentionWorkerPhase::LoadingKv;
+        AttentionWorkerState* const target = ahead.get();
+        attentionWorkerClusterQkAhead_ = std::move(ahead);
+        if (!startAttentionReuseWindowQkBridge(*target)) {
+            attentionWorkerClusterQkAhead_.reset();
+            return;
+        }
+        attentionPendingDispatches_.pop_front();
+        statAttentionWorkerDispatchAcceptTick_->addData(getCurrentSimCycle());
+        traceAttentionMilestone("worker", "worker_qk_ahead", "done",
+            message.jobId, message.tag);
+    }
+
     void startAttentionWorker(const ControlTransportMessage& message) {
         if (attentionWorker_) {
             const bool validGqa = message.numQueryHeads != 0 &&
@@ -8991,6 +10402,7 @@ public:
                 message.kvHeadIndex < message.numKvHeads;
             if (validGqa && attentionPendingDispatches_.size() < 1024) {
                 attentionPendingDispatches_.push_back(message);
+                startAttentionWorkerClusterQkAhead();
                 return;
             }
         }
@@ -9124,6 +10536,12 @@ public:
             return;
         }
         attentionArrayPending_.assign(numArrays, 0);
+        if (attentionReuseWindowQkBridge_) {
+            if (!startAttentionReuseWindowQkBridge(state)) {
+                finishAttentionWorker(false);
+            }
+            return;
+        }
         if (streamingShape) {
             beginAttentionQueryTile();
             return;
@@ -9148,6 +10566,17 @@ public:
 
     void progressAttentionWorker() {
         recordAttentionClusterPipelineOverlap();
+        if (!attentionWorkerClusterPv_.busy &&
+            !attentionWorkerClusterPvQueue_.empty()) {
+            startAttentionWorkerClusterPv();
+        }
+        for (const auto& draining : attentionWorkerClusterPvDraining_) {
+            dispatchAttentionReuseWindowPvAggregates(*draining);
+        }
+        if (attentionWorker_ && attentionWorkerClusterBridge_ &&
+            !attentionWorker_->reuseWindowRowContexts.empty()) {
+            pumpAttentionReuseWindowSoftmax();
+        }
         const auto oCompletions = attentionOAccumulator_.progress(LastTickCycle);
         bool resumePvOutput = false;
         for (const auto& completion : oCompletions) {
@@ -9274,6 +10703,13 @@ public:
         bool readInflight = false;
         uint64_t readTag = 0;
     };
+
+    uint32_t managerAttentionWorkerCount(const ManagerAttentionJobState& state) const {
+        return attentionWorkerClusterBridge_
+            ? std::min(attentionWorkerClusterQkWorkersPerManager_,
+                       state.desc.worker_count)
+            : state.desc.worker_count;
+    }
 
     void failManagerAttentionJob(ManagerAttentionJobState& state, SFUStatus status) {
         if (state.phase != ManagerAttentionJobPhase::Complete) {
@@ -9466,17 +10902,18 @@ public:
                 }
             } else if (state.phase == ManagerAttentionJobPhase::Dispatch) {
                 const uint32_t workerSlot = state.workersDispatched;
-                if (workerSlot >= state.desc.worker_count) {
+                const uint32_t dispatchedWorkers = managerAttentionWorkerCount(state);
+                if (workerSlot >= dispatchedWorkers) {
                     state.phase = ManagerAttentionJobPhase::Running;
                     continue;
                 }
                 const uint32_t workerCore = state.workerCoreIds[workerSlot];
-                const uint32_t rowsPerWorker = state.desc.worker_count == 1 ?
+                const uint32_t rowsPerWorker = dispatchedWorkers == 1 ?
                     state.desc.group_query_rows :
-                    (state.desc.group_query_rows + state.desc.worker_count - 1) /
-                        state.desc.worker_count;
+                    (state.desc.group_query_rows + dispatchedWorkers - 1) /
+                        dispatchedWorkers;
                 const uint32_t localQueryBegin = workerSlot * rowsPerWorker;
-                const uint32_t workerRows = state.desc.worker_count == 1 ? state.desc.group_query_rows :
+                const uint32_t workerRows = dispatchedWorkers == 1 ? state.desc.group_query_rows :
                     std::min(rowsPerWorker,
                              state.desc.group_query_rows - localQueryBegin);
                 ControlTransportMessage message = {};
@@ -9487,7 +10924,7 @@ public:
                 message.workerSlot = workerSlot;
                 message.workerCore = workerCore;
                 message.row = state.desc.group_query_row_begin + localQueryBegin;
-                message.expectedWorkers = state.desc.worker_count;
+                message.expectedWorkers = dispatchedWorkers;
                 message.expectedRows = workerRows;
                 message.expectedCols = state.desc.kv_length;
                 message.headDim = state.desc.head_dim;
@@ -9495,6 +10932,7 @@ public:
                 message.kvTileRows = state.desc.kv_tile_rows;
                 message.flags = state.desc.flags;
                 message.nodeStrideBytes = state.desc.kv_node_stride_bytes;
+                message.rowsPerBand = state.desc.kv_rows_per_memory_node;
                 message.rowsPerBand = state.desc.kv_rows_per_memory_node;
                 message.qAddr = state.desc.q_addr +
                     static_cast<uint64_t>(localQueryBegin) * state.desc.head_dim * sizeof(float);
@@ -9513,7 +10951,7 @@ public:
                     failManagerAttentionJob(state, SFUStatus::GlobalMemoryUnavailable);
                 } else {
                     state.workersDispatched += 1;
-                    if (state.workersDispatched == state.desc.worker_count) {
+                    if (state.workersDispatched == dispatchedWorkers) {
                         state.phase = ManagerAttentionJobPhase::Running;
                         statAttentionManagerDispatchTick_->addData(getCurrentSimCycle());
                         traceAttentionMilestone(
@@ -9531,12 +10969,13 @@ public:
         auto it = managerAttentionJobs_.find(message.tag);
         if (it == managerAttentionJobs_.end()) return false;
         ManagerAttentionJobState& state = it->second;
+        const uint32_t dispatchedWorkers = managerAttentionWorkerCount(state);
         const uint32_t workerSlot = message.workerSlot;
         const bool validPhase = state.phase == ManagerAttentionJobPhase::Dispatch ||
             state.phase == ManagerAttentionJobPhase::Running;
         if (!validPhase || message.jobId != state.desc.job_id ||
-            message.expectedWorkers != state.desc.worker_count ||
-            workerSlot >= state.desc.worker_count ||
+            message.expectedWorkers != dispatchedWorkers ||
+            workerSlot >= dispatchedWorkers ||
             message.workerCore != state.workerCoreIds[workerSlot] ||
             (state.completionBitmap & (1u << workerSlot)) != 0 || message.value != 1.0) {
             failManagerAttentionJob(state, SFUStatus::InvalidDescriptor);
@@ -9544,7 +10983,7 @@ public:
         }
         state.completionBitmap |= 1u << workerSlot;
         state.workersCompleted += 1;
-        if (state.workersCompleted == state.desc.worker_count) {
+        if (state.workersCompleted == dispatchedWorkers) {
             statAttentionManagerBandsCompleted_->addData(1);
             statAttentionManagerLocalCompleteTick_->addData(getCurrentSimCycle());
             traceAttentionMilestone(
@@ -9932,7 +11371,718 @@ public:
         return true;
     }
 
+    WorkerTaskListHeader makeAttentionWorkerClusterPvHeader(
+        const ControlTransportMessage& msg) const {
+        constexpr uint32_t block = 64;
+        constexpr size_t panelBytes = block * block * sizeof(float);
+        const uint64_t localBase = globalMem->getBaseAddr();
+        WorkerTaskListHeader header{};
+        header.worker_slot = 0;
+        header.task_count = 1;
+        header.active_worker_cores = 1;
+        header.total_groups = 4;
+        header.data_memory_node_count = 4;
+        header.mem_node_size = msg.nodeStrideBytes;
+        header.m = block; header.n = 128; header.k = 256;
+        header.hw_input_size = block; header.hw_output_size = block;
+        header.block_m = block; header.block_n = block; header.block_k = block;
+        header.elem_bytes = sizeof(float);
+        header.mat_stride_bytes = panelBytes;
+        header.vec_stride_bytes = block * sizeof(float);
+        constexpr uint64_t panelVOffset = 0x06000000;
+        const uint64_t vHeadOffset =
+            static_cast<uint64_t>(msg.kvHeadIndex) * 8 * panelBytes;
+        header.off_gemm_vec_base =
+            static_cast<uint64_t>(1 + msg.kvTileRows) * msg.nodeStrideBytes +
+            panelVOffset + vHeadOffset;
+        header.local_mat_ping_gm_addr = localBase + 0x10000;
+        header.local_vec_ping_gm_addr = localBase + 0x70000;
+        header.local_mat_slot_stride_bytes = panelBytes;
+        header.local_vec_slot_stride_bytes = panelBytes;
+        header.local_slot_count = 24;
+        header.local_accum_gm_addr = localBase + 0xD0000;
+        header.local_out_gm_addr = localBase + 0xD4000;
+        header.a_reuse_n_tiles = 2; header.n_group_count = 1;
+        header.b_reuse_m_tiles = 1; header.m_group_count = 1;
+        header.descriptor_start_cycle = getCurrentSimCycle();
+        header.operand_layout = 3;
+        header.scheduler_worker_slot = 0;
+        header.attention_pv_cache_gm_addr = localBase + 0x100000;
+        header.attention_pv_cache_bytes = 0x80000;
+        return header;
+    }
+
+    size_t attentionWorkerClusterVEntryBytes(
+        const WorkerTaskListHeader& header) const {
+        const uint32_t reuseN = std::max<uint32_t>(header.a_reuse_n_tiles, 1u);
+        const uint32_t kTiles = header.block_k == 0 ? 0 : header.k / header.block_k;
+        return static_cast<size_t>(reuseN) * kTiles *
+            header.local_vec_slot_stride_bytes;
+    }
+
+    uint32_t attentionWorkerClusterVLeader(uint32_t kvHead) const {
+        const uint32_t pvBase = 4u +
+            attentionWorkerClusterQkWorkersPerManager_ * 4u;
+        const uint32_t pvCount =
+            (4u - attentionWorkerClusterQkWorkersPerManager_) * 4u;
+        return pvBase + kvHead % std::max<uint32_t>(pvCount, 1u);
+    }
+
+    void releaseAttentionWorkerClusterVStagingIfComplete(
+        AttentionWorkerClusterVEntry& entry) {
+        const uint32_t pvCount =
+            (4u - attentionWorkerClusterQkWorkersPerManager_) * 4u;
+        if (entry.delivered.size() >= pvCount) {
+            entry.data.clear();
+            entry.data.shrink_to_fit();
+        }
+    }
+
+    void deliverAttentionWorkerClusterV(
+        uint32_t destination, uint64_t source,
+        const std::vector<uint8_t>& bytes, uint32_t relayMask = 0) {
+        constexpr size_t deliveryChunkBytes = 16u * 1024u;
+        for (size_t offset = 0; offset < bytes.size();
+             offset += deliveryChunkBytes) {
+            const size_t chunkBytes =
+                std::min(deliveryChunkBytes, bytes.size() - offset);
+            ControlTransportMessage delivery{};
+            delivery.kind =
+                ControlTransportMessageKind::AttentionClusterPvVDelivery;
+            delivery.ownerCore = static_cast<uint32_t>(coreID);
+            delivery.workerCore = destination;
+            delivery.inputAddr = source;
+            delivery.outputAddr = offset;
+            delivery.dataNodeMask = relayMask;
+            delivery.expectedRows = static_cast<uint32_t>(bytes.size());
+            delivery.expectedCols = static_cast<uint32_t>(chunkBytes);
+            delivery.payload.resize(chunkBytes / sizeof(float));
+            std::memcpy(
+                delivery.payload.data(), bytes.data() + offset, chunkBytes);
+            delivery.sendCycle = getCurrentSimCycle();
+            if (destination == coreID) {
+                handleControlTransportMessage(delivery);
+            } else {
+                globalMem->sendControlMessage(destination, delivery);
+            }
+        }
+    }
+
+    void distributeAttentionWorkerClusterV(
+        uint32_t destinationMask, uint64_t source,
+        const std::vector<uint8_t>& bytes) {
+        if (coreID < 32) {
+            destinationMask &=
+                ~(uint32_t{1} << static_cast<uint32_t>(coreID));
+        }
+        std::array<uint32_t, 2> groupMasks = {};
+        uint32_t destinationCount = 0;
+        for (uint32_t core = 0; core < 32; ++core) {
+            if ((destinationMask & (uint32_t{1} << core)) == 0) continue;
+            groupMasks[destinationCount++ & 1u] |= uint32_t{1} << core;
+        }
+        for (uint32_t groupMask : groupMasks) {
+            if (groupMask == 0) continue;
+            const uint32_t destination =
+                static_cast<uint32_t>(__builtin_ctz(groupMask));
+            deliverAttentionWorkerClusterV(
+                destination, source, bytes,
+                groupMask & ~(uint32_t{1} << destination));
+        }
+    }
+
+    void handleAttentionWorkerClusterVRequest(
+        const ControlTransportMessage& message) {
+        if (!attentionWorkerClusterVBroadcast_ ||
+            message.ownerCore < 4 || message.expectedRows == 0 ||
+            message.inputAddr == 0 ||
+            coreID != attentionWorkerClusterVLeader(message.kvHeadIndex)) {
+            return;
+        }
+        AttentionWorkerClusterVEntry& entry =
+            attentionWorkerClusterVEntries_[message.inputAddr];
+        if (entry.bytes != 0 && entry.bytes != message.expectedRows) return;
+        entry.bytes = message.expectedRows;
+        if (entry.ready) {
+            if (entry.delivered.count(message.ownerCore) != 0 ||
+                entry.data.empty()) {
+                return;
+            }
+            deliverAttentionWorkerClusterV(
+                message.ownerCore, message.inputAddr, entry.data);
+            entry.delivered.insert(message.ownerCore);
+            releaseAttentionWorkerClusterVStagingIfComplete(entry);
+            return;
+        }
+        entry.subscribers.insert(message.ownerCore);
+        if (!entry.loading) {
+            entry.loading = true;
+            attentionWorkerClusterVLoadQueue_.push_back(message.inputAddr);
+        }
+    }
+
+    void completeAttentionWorkerClusterVLoad(bool ok) {
+        const uint64_t source = attentionWorkerClusterVLoad_.source;
+        auto entryIt = attentionWorkerClusterVEntries_.find(source);
+        if (entryIt != attentionWorkerClusterVEntries_.end()) {
+            AttentionWorkerClusterVEntry& entry = entryIt->second;
+            entry.loading = false;
+            entry.ready = ok && entry.data.size() == entry.bytes;
+            if (entry.ready) {
+                output->output(
+                    "[ATTENTION_PV_V_BROADCAST] leader=%" PRIu64
+                    " source=%" PRIu64 " hbm_bytes=%zu subscribers=%zu\n",
+                    coreID, source, entry.bytes, entry.subscribers.size());
+                const std::vector<uint32_t> subscribers(
+                    entry.subscribers.begin(), entry.subscribers.end());
+                entry.subscribers.clear();
+                uint32_t remoteMask = 0;
+                for (uint32_t subscriber : subscribers) {
+                    entry.delivered.insert(subscriber);
+                    if (subscriber == coreID) {
+                        deliverAttentionWorkerClusterV(
+                            subscriber, source, entry.data);
+                    } else if (subscriber < 32) {
+                        remoteMask |= uint32_t{1} << subscriber;
+                    }
+                }
+                distributeAttentionWorkerClusterV(
+                    remoteMask, source, entry.data);
+                releaseAttentionWorkerClusterVStagingIfComplete(entry);
+            } else {
+                entry.subscribers.clear();
+                entry.data.clear();
+            }
+        }
+        attentionWorkerClusterVLoad_ = {};
+    }
+
+    void progressAttentionWorkerClusterVBroadcast() {
+        if (!attentionWorkerClusterVBroadcast_ || globalMem == nullptr) return;
+        if (!attentionWorkerClusterVLoad_.active) {
+            while (!attentionWorkerClusterVLoadQueue_.empty()) {
+                const uint64_t source = attentionWorkerClusterVLoadQueue_.front();
+                attentionWorkerClusterVLoadQueue_.pop_front();
+                auto it = attentionWorkerClusterVEntries_.find(source);
+                if (it == attentionWorkerClusterVEntries_.end() ||
+                    !it->second.loading || it->second.bytes == 0) {
+                    continue;
+                }
+                attentionWorkerClusterVLoad_.active = true;
+                attentionWorkerClusterVLoad_.source = source;
+                attentionWorkerClusterVLoad_.bytes = it->second.bytes;
+                attentionWorkerClusterVLoad_.scratch =
+                    globalMem->getBaseAddr() + 0x180000;
+                it->second.data.assign(it->second.bytes, 0);
+                break;
+            }
+        }
+        AttentionWorkerClusterVLoad& load = attentionWorkerClusterVLoad_;
+        if (!load.active) return;
+        if (!load.dmaIssued) {
+            load.dmaIssued = true;
+            const uint64_t source = load.source;
+            globalMem->dma_read_from_host_to_globalmem(
+                load.source, load.bytes, load.scratch,
+                [this, source](bool ok) {
+                    if (!attentionWorkerClusterVLoad_.active ||
+                        attentionWorkerClusterVLoad_.source != source) return;
+                    attentionWorkerClusterVLoad_.dmaDone = true;
+                    attentionWorkerClusterVLoad_.dmaOk = ok;
+                }, DmaRequestKind::AttentionKvPrefetch);
+            return;
+        }
+        if (!load.dmaDone || load.readInFlight) return;
+        if (!load.dmaOk) {
+            completeAttentionWorkerClusterVLoad(false);
+            return;
+        }
+        if (load.readOffset == load.bytes) {
+            completeAttentionWorkerClusterVLoad(true);
+            return;
+        }
+        const size_t chunk = std::min(
+            globalMem->localMaxRequestBytes(), load.bytes - load.readOffset);
+        if (chunk == 0) {
+            completeAttentionWorkerClusterVLoad(false);
+            return;
+        }
+        const uint64_t source = load.source;
+        const size_t offset = load.readOffset;
+        const uint64_t tag = attentionTransferTag();
+        const bool accepted = globalMem->localReadAsync(
+            load.scratch + offset, chunk, LocalMemoryClient::Control, tag,
+            [this, source, offset, tag](
+                bool ok, uint64_t callbackTag,
+                const std::vector<uint8_t>& bytes) {
+                if (!attentionWorkerClusterVLoad_.active ||
+                    attentionWorkerClusterVLoad_.source != source) return;
+                attentionWorkerClusterVLoad_.readInFlight = false;
+                auto it = attentionWorkerClusterVEntries_.find(source);
+                if (!ok || callbackTag != tag ||
+                    it == attentionWorkerClusterVEntries_.end() ||
+                    offset + bytes.size() > it->second.data.size()) {
+                    attentionWorkerClusterVLoad_.dmaOk = false;
+                    return;
+                }
+                std::copy(bytes.begin(), bytes.end(),
+                          it->second.data.begin() + offset);
+                attentionWorkerClusterVLoad_.readOffset += bytes.size();
+            });
+        if (accepted) load.readInFlight = true;
+    }
+
+    void requestAttentionWorkerClusterV(
+        const ControlTransportMessage& next,
+        const WorkerTaskListHeader& header) {
+        auto& state = attentionWorkerClusterPv_;
+        const uint64_t source = header.off_gemm_vec_base;
+        const size_t bytes = attentionWorkerClusterVEntryBytes(header);
+        const uint64_t generation = ++state.nextPrefetchGeneration;
+        state.nextPrefetchAttempted = true;
+        state.nextPrefetchSource = source;
+        state.nextPrefetchBytesReceived = 0;
+        state.nextPrefetchRelayMask = 0;
+        state.nextPrefetchHeader = header;
+        state.nextPrefetchPayload.clear();
+        state.nextPrefetchChunkSeen.clear();
+        if (attentionWorkerClusterVResident_.count(source) != 0) {
+            state.nextPrefetchPending = false;
+            state.nextPrefetchReady = true;
+            return;
+        }
+        state.nextPrefetchPending = true;
+        state.nextPrefetchReady = false;
+        ControlTransportMessage request{};
+        request.kind = ControlTransportMessageKind::AttentionClusterPvVRequest;
+        request.ownerCore = static_cast<uint32_t>(coreID);
+        request.workerCore = attentionWorkerClusterVLeader(next.kvHeadIndex);
+        request.inputAddr = source;
+        request.expectedRows = static_cast<uint32_t>(bytes);
+        request.kvHeadIndex = next.kvHeadIndex;
+        request.sendCycle = getCurrentSimCycle();
+        if (request.workerCore == coreID) {
+            handleAttentionWorkerClusterVRequest(request);
+        } else if (!globalMem->sendControlMessage(request.workerCore, request) &&
+                   generation == state.nextPrefetchGeneration) {
+            state.nextPrefetchPending = false;
+            state.nextPrefetchAttempted = false;
+        }
+    }
+
+    void handleAttentionWorkerClusterVDelivery(
+        const ControlTransportMessage& message) {
+        auto& state = attentionWorkerClusterPv_;
+        if (!attentionWorkerClusterVBroadcast_ || !state.nextPrefetchPending ||
+            state.nextPrefetchSource != message.inputAddr ||
+            workerCommandProcessor == nullptr ||
+            message.expectedRows == 0 || message.expectedCols == 0 ||
+            message.payload.size() * sizeof(float) != message.expectedCols ||
+            message.outputAddr + message.expectedCols > message.expectedRows) {
+            return;
+        }
+        constexpr size_t deliveryChunkBytes = 16u * 1024u;
+        if (state.nextPrefetchPayload.empty()) {
+            state.nextPrefetchPayload.assign(message.expectedRows, 0);
+            state.nextPrefetchRelayMask = message.dataNodeMask;
+            state.nextPrefetchChunkSeen.assign(
+                (message.expectedRows + deliveryChunkBytes - 1) /
+                    deliveryChunkBytes,
+                0);
+        }
+        if (state.nextPrefetchPayload.size() != message.expectedRows ||
+            state.nextPrefetchRelayMask != message.dataNodeMask ||
+            message.outputAddr % deliveryChunkBytes != 0) {
+            return;
+        }
+        const size_t chunkIndex = message.outputAddr / deliveryChunkBytes;
+        if (chunkIndex >= state.nextPrefetchChunkSeen.size()) return;
+        if (state.nextPrefetchChunkSeen[chunkIndex] == 0) {
+            std::memcpy(
+                state.nextPrefetchPayload.data() + message.outputAddr,
+                message.payload.data(), message.expectedCols);
+            state.nextPrefetchChunkSeen[chunkIndex] = 1;
+            state.nextPrefetchBytesReceived += message.expectedCols;
+        }
+        if (state.nextPrefetchBytesReceived != state.nextPrefetchPayload.size()) {
+            return;
+        }
+        distributeAttentionWorkerClusterV(
+            state.nextPrefetchRelayMask, message.inputAddr,
+            state.nextPrefetchPayload);
+        const WorkerTaskListHeader header = state.nextPrefetchHeader;
+        const uint64_t generation = state.nextPrefetchGeneration;
+        const uint64_t source = message.inputAddr;
+        const bool accepted = workerCommandProcessor->installAttentionPvVector(
+            header, state.nextPrefetchPayload,
+            [this, generation, source](bool ok) {
+                auto& callbackState = attentionWorkerClusterPv_;
+                if (generation != callbackState.nextPrefetchGeneration ||
+                    source != callbackState.nextPrefetchSource) return;
+                callbackState.nextPrefetchPending = false;
+                callbackState.nextPrefetchReady = ok;
+                callbackState.nextPrefetchPayload.clear();
+                callbackState.nextPrefetchChunkSeen.clear();
+                callbackState.nextPrefetchBytesReceived = 0;
+                callbackState.nextPrefetchRelayMask = 0;
+                if (ok) attentionWorkerClusterVResident_.insert(source);
+                if (!callbackState.busy) startAttentionWorkerClusterPv();
+            });
+        if (!accepted && generation == state.nextPrefetchGeneration) {
+            state.nextPrefetchPending = false;
+            state.nextPrefetchAttempted = false;
+            state.nextPrefetchPayload.clear();
+            state.nextPrefetchChunkSeen.clear();
+            state.nextPrefetchBytesReceived = 0;
+            state.nextPrefetchRelayMask = 0;
+        }
+    }
+
+    void prepareAttentionWorkerClusterPvNext() {
+        auto& state = attentionWorkerClusterPv_;
+        if (attentionWorkerClusterQkWorkersPerManager_ != 2 ||
+            !state.busy || attentionWorkerClusterPvQueue_.empty() ||
+            workerCommandProcessor == nullptr || state.nextPrefetchAttempted) {
+            return;
+        }
+        const auto& next = attentionWorkerClusterPvQueue_.front();
+        const WorkerTaskListHeader header =
+            makeAttentionWorkerClusterPvHeader(next);
+        if (attentionWorkerClusterVBroadcast_) {
+            requestAttentionWorkerClusterV(next, header);
+            return;
+        }
+        const uint64_t generation = ++state.nextPrefetchGeneration;
+        state.nextPrefetchAttempted = true;
+        state.nextPrefetchPending = true;
+        const bool accepted = workerCommandProcessor->prefetchAttentionPvVector(
+            header, [this, generation](bool ok) {
+                auto& callbackState = attentionWorkerClusterPv_;
+                if (generation != callbackState.nextPrefetchGeneration) return;
+                callbackState.nextPrefetchPending = false;
+                callbackState.nextPrefetchReady = ok;
+                if (!callbackState.busy) {
+                    startAttentionWorkerClusterPv();
+                }
+            });
+        if (!accepted && generation == state.nextPrefetchGeneration) {
+            state.nextPrefetchPending = false;
+        }
+    }
+
+    void handleAttentionWorkerClusterVPrefetchHint(
+        const ControlTransportMessage& message) {
+        auto& state = attentionWorkerClusterPv_;
+        if (!attentionWorkerClusterVBroadcast_ ||
+            attentionWorkerClusterQkWorkersPerManager_ != 2 ||
+            workerCommandProcessor == nullptr ||
+            state.nextPrefetchAttempted) {
+            return;
+        }
+        const WorkerTaskListHeader header =
+            makeAttentionWorkerClusterPvHeader(message);
+        requestAttentionWorkerClusterV(message, header);
+    }
+
+    void startAttentionWorkerClusterPv() {
+        auto& pvState = attentionWorkerClusterPv_;
+        if (pvState.busy) {
+            prepareAttentionWorkerClusterPvNext();
+            return;
+        }
+        if (attentionWorkerClusterPvQueue_.empty() ||
+            workerCommandProcessor == nullptr) return;
+        if (pvState.nextPrefetchPending) return;
+        if (attentionWorkerClusterVBroadcast_) {
+            const auto& next = attentionWorkerClusterPvQueue_.front();
+            const WorkerTaskListHeader header =
+                makeAttentionWorkerClusterPvHeader(next);
+            if (!pvState.nextPrefetchReady ||
+                pvState.nextPrefetchSource != header.off_gemm_vec_base) {
+                if (pvState.nextPrefetchReady &&
+                    pvState.nextPrefetchSource != header.off_gemm_vec_base) {
+                    pvState.nextPrefetchAttempted = false;
+                    pvState.nextPrefetchReady = false;
+                    pvState.nextPrefetchSource = 0;
+                }
+                if (!pvState.nextPrefetchAttempted) {
+                    requestAttentionWorkerClusterV(next, header);
+                }
+                return;
+            }
+        }
+        pvState.active = std::move(attentionWorkerClusterPvQueue_.front());
+        attentionWorkerClusterPvQueue_.pop_front();
+        pvState.nextPrefetchAttempted = false;
+        pvState.nextPrefetchPending = false;
+        pvState.nextPrefetchReady = false;
+        pvState.nextPrefetchSource = 0;
+        pvState.nextPrefetchBytesReceived = 0;
+        pvState.nextPrefetchRelayMask = 0;
+        pvState.nextPrefetchHeader = {};
+        pvState.nextPrefetchPayload.clear();
+        pvState.nextPrefetchChunkSeen.clear();
+        const auto& msg = pvState.active;
+        constexpr uint32_t block = 64;
+        constexpr size_t panelFloats = block * block;
+        constexpr size_t panelBytes = panelFloats * sizeof(float);
+        if (msg.payload.size() != 4 * panelFloats || msg.scales.size() != block ||
+            msg.expectedRows != block || msg.expectedCols != 128 ||
+            msg.kvTileRows >= 4) {
+            output->output("Attention worker-cluster PV invalid message core=%" PRIu64 "\n", coreID);
+            return;
+        }
+        pvState.busy = true;
+        pvState.startCycle = getCurrentSimCycle();
+        pvState.fusionTiles = 0;
+        std::vector<uint8_t> packed(6 * panelBytes, 0);
+        std::memcpy(packed.data(), msg.payload.data(), 2 * panelBytes);
+        std::memcpy(packed.data() + 4 * panelBytes,
+                    msg.payload.data() + 2 * panelFloats, 2 * panelBytes);
+        WorkerTaskListHeader header = makeAttentionWorkerClusterPvHeader(msg);
+        const bool started = workerCommandProcessor->setWindowCallbacks(
+                [this](uint64_t taskId, uint64_t, const std::vector<uint8_t>& tile) {
+                    auto& state = attentionWorkerClusterPv_;
+                    if (!state.busy || taskId >= 2 || tile.size() != 64u * 64u * sizeof(float))
+                        return false;
+                    const AttentionWorkerClusterPvOutputKey outputKey =
+                        std::make_tuple(
+                            state.active.jobId, state.active.tag,
+                            state.active.ownerCore,
+                            state.active.groupQueryRowBegin);
+                    auto outputIt = attentionWorkerClusterPvOutputs_.find(outputKey);
+                    if (outputIt == attentionWorkerClusterPvOutputs_.end() ||
+                        outputIt->second.size() != 64u * 128u) return false;
+                    std::vector<float>& rowOutput = outputIt->second;
+                    for (uint32_t col = 0; col < 64; ++col) {
+                        for (uint32_t row = 0; row < 64; ++row) {
+                            float value = 0.0f;
+                            std::memcpy(&value, tile.data() +
+                                (static_cast<size_t>(col) * 64 + row) * sizeof(float), sizeof(float));
+                            rowOutput[static_cast<size_t>(row) * 128 +
+                                taskId * 64 + col] += value;
+                        }
+                    }
+                    ++state.fusionTiles;
+                    return true;
+                },
+                [this](uint64_t cycles, uint64_t start, uint64_t end) {
+                    auto& state = attentionWorkerClusterPv_;
+                    if (!state.busy || state.fusionTiles != 2) return;
+                    output->output("[ATTENTION_WORKER_CLUSTER_PV] core=%" PRIu64
+                        " qk_core=%u row=%u window=%u cycles=%" PRIu64
+                        " start=%" PRIu64 " end=%" PRIu64 "\n",
+                        coreID, state.active.ownerCore, state.active.groupQueryRowBegin,
+                        state.active.kvTileRows, cycles, start, end);
+                    if (state.active.kvTileRows == 3) {
+                        const AttentionWorkerClusterPvOutputKey outputKey =
+                            std::make_tuple(
+                                state.active.jobId, state.active.tag,
+                                state.active.ownerCore,
+                                state.active.groupQueryRowBegin);
+                        ControlTransportMessage done = state.active;
+                        done.kind = ControlTransportMessageKind::AttentionClusterPvComplete;
+                        done.workerCore = static_cast<uint32_t>(coreID);
+                        done.value = 1.0;
+                        done.payload.clear(); done.scales.clear();
+                        done.sendCycle = getCurrentSimCycle();
+                        globalMem->sendControlMessage(done.ownerCore, done);
+                        attentionWorkerClusterPvOutputs_.erase(outputKey);
+                    }
+                    state.busy = false;
+                    startAttentionWorkerClusterPv();
+                }) &&
+            workerCommandProcessor->setWindowResidentMatrixPayload(
+                std::move(packed)) &&
+            workerCommandProcessor->startWindow(header);
+        if (!started) {
+            pvState.busy = false;
+            attentionWorkerClusterPvQueue_.push_front(std::move(pvState.active));
+            return;
+        }
+        const AttentionWorkerClusterPvOutputKey outputKey = std::make_tuple(
+            msg.jobId, msg.tag, msg.ownerCore, msg.groupQueryRowBegin);
+        std::vector<float>& rowOutput =
+            attentionWorkerClusterPvOutputs_[outputKey];
+        if (msg.kvTileRows == 0 || rowOutput.size() != block * 128) {
+            rowOutput.assign(block * 128, 0.0f);
+        } else {
+            for (uint32_t row = 0; row < block; ++row) {
+                for (uint32_t dim = 0; dim < 128; ++dim) {
+                    rowOutput[static_cast<size_t>(row) * 128 + dim] *=
+                        msg.scales[row];
+                }
+            }
+        }
+        prepareAttentionWorkerClusterPvNext();
+    }
+
+    AttentionWorkerState* findAttentionWorkerClusterState(
+        uint64_t jobId, uint64_t tag) {
+        if (attentionWorker_ && attentionWorker_->dispatch.jobId == jobId &&
+            attentionWorker_->dispatch.tag == tag) {
+            return attentionWorker_.get();
+        }
+        if (attentionWorkerClusterQkAhead_ &&
+            attentionWorkerClusterQkAhead_->dispatch.jobId == jobId &&
+            attentionWorkerClusterQkAhead_->dispatch.tag == tag) {
+            return attentionWorkerClusterQkAhead_.get();
+        }
+        for (auto& draining : attentionWorkerClusterPvDraining_) {
+            if (draining->dispatch.jobId == jobId &&
+                draining->dispatch.tag == tag) {
+                return draining.get();
+            }
+        }
+        return nullptr;
+    }
+
+    void handleAttentionWorkerClusterPvAllocationRequest(
+        const ControlTransportMessage& message) {
+        if (!attentionWorkerClusterDynamicPv_ || coreID != 0) return;
+        if (message.ownerCore < 4u || message.ownerCore >= 12u) return;
+        const uint32_t pvBase = 4u +
+            attentionWorkerClusterQkWorkersPerManager_ * 4u;
+        const uint32_t pvCount =
+            (4u - attentionWorkerClusterQkWorkersPerManager_) * 4u;
+        if (pvCount == 0 || pvCount > attentionWorkerClusterPvAssignedRows_.size())
+            return;
+        const uint32_t manager = (message.ownerCore - 4u) % 4u;
+        uint32_t selected = manager;
+        if ((attentionWorkerClusterPvAssignCursor_++ & 1u) != 0) {
+            selected += 4u;
+        }
+        const uint32_t alternate = selected == manager ? manager + 4u : manager;
+        if (alternate < pvCount &&
+            attentionWorkerClusterPvAssignedRows_[alternate] <
+                attentionWorkerClusterPvAssignedRows_[selected]) {
+            selected = alternate;
+        }
+        ++attentionWorkerClusterPvAssignedRows_[selected];
+
+        ControlTransportMessage response = message;
+        response.kind =
+            ControlTransportMessageKind::AttentionClusterPvAllocationResponse;
+        response.workerCore = pvBase + selected;
+        response.sendCycle = getCurrentSimCycle();
+        globalMem->sendControlMessage(message.ownerCore, response);
+    }
+
+    void handleAttentionWorkerClusterPvAllocationResponse(
+        const ControlTransportMessage& message) {
+        if (!attentionWorkerClusterDynamicPv_ || message.ownerCore != coreID)
+            return;
+        AttentionWorkerState* state =
+            findAttentionWorkerClusterState(message.jobId, message.tag);
+        if (state == nullptr || message.row >= state->reuseWindowPvRowCore.size() ||
+            state->reuseWindowPvAllocationPending[message.row] == 0) {
+            return;
+        }
+        state->reuseWindowPvAllocationPending[message.row] = 0;
+        state->reuseWindowPvRowCore[message.row] =
+            static_cast<int32_t>(message.workerCore);
+        for (uint32_t window = 0; window < 4; ++window) {
+            sendAttentionWorkerClusterVHint(
+                *state, message.row, window, message.workerCore);
+        }
+        output->output(
+            "[ATTENTION_DYNAMIC_PV_ASSIGN] qk_core=%" PRIu64
+            " job=%" PRIu64 " row=%u pv_core=%u\n",
+            coreID, message.jobId, message.row * 64, message.workerCore);
+        dispatchAttentionReuseWindowPvAggregates(*state);
+    }
+
+    void handleAttentionWorkerClusterPvAllocationRelease(
+        const ControlTransportMessage& message) {
+        if (!attentionWorkerClusterDynamicPv_ || coreID != 0) return;
+        const uint32_t pvBase = 4u +
+            attentionWorkerClusterQkWorkersPerManager_ * 4u;
+        const uint32_t pvCount =
+            (4u - attentionWorkerClusterQkWorkersPerManager_) * 4u;
+        if (message.workerCore < pvBase ||
+            message.workerCore >= pvBase + pvCount) return;
+        const uint32_t index = message.workerCore - pvBase;
+        if (attentionWorkerClusterPvAssignedRows_[index] != 0) {
+            --attentionWorkerClusterPvAssignedRows_[index];
+        }
+    }
+
     void handleControlTransportMessage(const ControlTransportMessage& message) {
+        if (message.kind ==
+                ControlTransportMessageKind::AttentionClusterPvAllocationRequest) {
+            handleAttentionWorkerClusterPvAllocationRequest(message);
+            return;
+        }
+        if (message.kind ==
+                ControlTransportMessageKind::AttentionClusterPvAllocationResponse) {
+            handleAttentionWorkerClusterPvAllocationResponse(message);
+            return;
+        }
+        if (message.kind ==
+                ControlTransportMessageKind::AttentionClusterPvAllocationRelease) {
+            handleAttentionWorkerClusterPvAllocationRelease(message);
+            return;
+        }
+        if (message.kind ==
+                ControlTransportMessageKind::AttentionClusterPvVPrefetchHint) {
+            handleAttentionWorkerClusterVPrefetchHint(message);
+            return;
+        }
+        if (message.kind == ControlTransportMessageKind::AttentionClusterPvVRequest) {
+            handleAttentionWorkerClusterVRequest(message);
+            return;
+        }
+        if (message.kind == ControlTransportMessageKind::AttentionClusterPvVDelivery) {
+            handleAttentionWorkerClusterVDelivery(message);
+            return;
+        }
+        if (message.kind == ControlTransportMessageKind::AttentionClusterPvDispatch) {
+            attentionWorkerClusterPvQueue_.push_back(message);
+            startAttentionWorkerClusterPv();
+            return;
+        }
+        if (message.kind == ControlTransportMessageKind::AttentionClusterPvComplete) {
+            if (message.ownerCore == coreID && message.value == 1.0) {
+                if (attentionWorkerClusterDynamicPv_) {
+                    ControlTransportMessage release = message;
+                    release.kind = ControlTransportMessageKind::
+                        AttentionClusterPvAllocationRelease;
+                    release.ownerCore = static_cast<uint32_t>(coreID);
+                    release.sendCycle = getCurrentSimCycle();
+                    globalMem->sendControlMessage(0, release);
+                }
+                AttentionWorkerState* target = nullptr;
+                if (attentionWorker_ &&
+                    attentionWorker_->dispatch.jobId == message.jobId &&
+                    attentionWorker_->dispatch.tag == message.tag) {
+                    target = attentionWorker_.get();
+                }
+                if (target != nullptr) {
+                    ++target->reuseWindowClusterPvCompleted;
+                    const uint32_t rowBlocks = target->dispatch.expectedRows / 64;
+                    if (target->reuseWindowClusterPvCompleted == rowBlocks &&
+                        target->reuseWindowRowContextsCompleted ==
+                            target->reuseWindowRowContexts.size()) {
+                        startAttentionReuseWindowSoftmax();
+                    }
+                    return;
+                }
+                for (size_t index = 0;
+                     index < attentionWorkerClusterPvDraining_.size(); ++index) {
+                    AttentionWorkerState& draining =
+                        *attentionWorkerClusterPvDraining_[index];
+                    if (draining.dispatch.jobId != message.jobId ||
+                        draining.dispatch.tag != message.tag) continue;
+                    ++draining.reuseWindowClusterPvCompleted;
+                    const uint32_t rowBlocks = draining.dispatch.expectedRows / 64;
+                    if (draining.reuseWindowClusterPvCompleted == rowBlocks) {
+                        completeAttentionWorkerClusterDraining(index);
+                    }
+                    return;
+                }
+            }
+            return;
+        }
         if (message.kind == ControlTransportMessageKind::AttentionDispatch) {
             startAttentionWorker(message);
             return;
@@ -11209,6 +13359,12 @@ private:
     bool attentionPvMatrixSoftmaxOverlap_;
     bool attentionPvActiveK_;
     bool attentionGenericGemmEnable_;
+    bool attentionReuseWindowQkBridge_ = false;
+    bool attentionWorkerClusterBridge_ = false;
+    uint32_t attentionWorkerClusterQkWorkersPerManager_ = 1;
+    bool attentionWorkerClusterRowPriority_ = false;
+    bool attentionWorkerClusterVBroadcast_ = false;
+    bool attentionWorkerClusterDynamicPv_ = false;
     bool attentionMilestoneTrace_;
     bool attentionTileTrace_;
     bool attentionClusterEnable_ = false;
@@ -11491,6 +13647,22 @@ private:
     Statistics::Statistic<uint64_t>* statAttentionSequentialPvActiveArrays_;
 
     AttentionOAccumulator attentionOAccumulator_;
+    std::unique_ptr<AttentionWorkerState> attentionWorkerClusterQkAhead_;
+    std::deque<std::unique_ptr<AttentionWorkerState>>
+        attentionWorkerClusterPvDraining_;
+    AttentionWorkerClusterPvState attentionWorkerClusterPv_;
+    std::deque<ControlTransportMessage> attentionWorkerClusterPvQueue_;
+    using AttentionWorkerClusterPvOutputKey =
+        std::tuple<uint64_t, uint64_t, uint32_t, uint32_t>;
+    std::map<AttentionWorkerClusterPvOutputKey, std::vector<float>>
+        attentionWorkerClusterPvOutputs_;
+    std::array<uint32_t, 8> attentionWorkerClusterPvAssignedRows_ = {};
+    uint32_t attentionWorkerClusterPvAssignCursor_ = 0;
+    std::unordered_map<uint64_t, AttentionWorkerClusterVEntry>
+        attentionWorkerClusterVEntries_;
+    std::deque<uint64_t> attentionWorkerClusterVLoadQueue_;
+    AttentionWorkerClusterVLoad attentionWorkerClusterVLoad_;
+    std::unordered_set<uint64_t> attentionWorkerClusterVResident_;
 
     uint64_t StartTickCycle;
     uint64_t LastTickCycle;

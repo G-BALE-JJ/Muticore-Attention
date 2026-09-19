@@ -275,6 +275,11 @@ static inline void gemm_tiled_baseline_ctrl(
             .b_reuse_m_tiles = static_cast<uint32_t>(B_REUSE_M_TILES),
             .m_group_count = static_cast<uint32_t>(gemm_m_groups(default_matmul_runtime_config())),
             .descriptor_start_cycle = 0,
+            .operand_layout = 0,
+            .attention_query_length = 0,
+            .attention_rows_per_band = 0,
+            .scheduler_worker_slot = UINT32_MAX,
+            .attention_node_stride_bytes = 0,
         };
         write_worker_task_list_header(core_id, header);
         mark_exec_window_begin(stats, read_cycle_counter());
@@ -715,6 +720,11 @@ inline void matmul_for_core_ctrl_t(int core_id, const MatmulRuntimeConfig& cfg, 
                 .b_reuse_m_tiles = static_cast<uint32_t>(B_REUSE_M_TILES),
                 .m_group_count = static_cast<uint32_t>(gemm_m_groups(cfg)),
                 .descriptor_start_cycle = descriptor_start_cycle,
+                .operand_layout = 0,
+                .attention_query_length = 0,
+                .attention_rows_per_band = 0,
+                .scheduler_worker_slot = UINT32_MAX,
+                .attention_node_stride_bytes = 0,
             };
             stats.descriptor_mm2gm_start_cycle = read_cycle_counter();
             write_worker_task_list_header_at(core_id, desc_base, header);

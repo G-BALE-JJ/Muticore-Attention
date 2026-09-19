@@ -1,7 +1,7 @@
 # FlashAttention Workload
 
 This directory contains the active FP32, non-causal GQA workload and its SST
-runner, verification, reporting, and GPU comparison tools.
+runner, verification, and reporting tools.
 The optimized point is `B=1,Sq=Skv=1024,Dh=128`. The active interface exposes
 independent `Hq` and `Hkv`.
 
@@ -125,8 +125,6 @@ worker has zero exposed K/V wait.
 - `verify_fused_attention_scale_stats.py`: lifecycle/resource verifier.
 - `report_attention_metrics.py`: JSON/CSV metrics and terminal summary.
 - `test_flash_attention_baseline_contract.py`: runner and contract tests.
-- `gpu_attention_stage_benchmark.py`: external GPU measurement tool.
-- `report_attention_gpu_comparison.py`: SST/GPU comparison report.
 
 Large HBM images, tensors, logs, CSV statistics, and run directories are
 regenerable and intentionally not stored in Git.

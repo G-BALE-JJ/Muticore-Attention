@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "measurement": "sst_attention_worker_cluster_critical_path",
+  "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+  "qk_workers_per_manager": 2,
+  "qk_worker_count": 8,
+  "pv_worker_count": 8,
+  "qk_jobs": 16,
+  "pv_windows": 256,
+  "completed_jobs": 16,
+  "qk_fusion_complete": true,
+  "start_cycle": 63651,
+  "end_cycle": 110844,
+  "end_to_end_cycles": 47193,
+  "slowest_job_cycles": 30194,
+  "qk_cores": [4, 5, 6, 7, 8, 9, 10, 11],
+  "pv_cores": [12, 13, 14, 15, 16, 17, 18, 19]
+}

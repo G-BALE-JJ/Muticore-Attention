@@ -118,6 +118,14 @@ struct WcpWindowTransaction {
     uint32_t vecTileCount = 0;
     uint32_t kWindowTiles = 0;
     uint32_t totalKTileCount = 0;
+    bool rowMajorPanels = false;
+    uint32_t matPanelRows = 0;
+    uint32_t vecPanelRows = 0;
+    uint64_t matSourceRowStrideBytes = 0;
+    uint64_t vecSourceRowStrideBytes = 0;
+    uint64_t matGroupStrideBytes = 0;
+    uint64_t vecGroupStrideBytes = 0;
+    uint64_t kSliceStrideBytes = 0;
 };
 
 struct WcpTileTimelineDebug {

@@ -261,7 +261,7 @@ class AttentionMetricsReportTest(unittest.TestCase):
         report = build_report(
             synthetic_lifecycle(),
             synthetic_numerical_result(),
-            profile="e3",
+            profile="fused_attention_q1024_k1024_d128",
             mpi_ranks=2,
             sst_wall_seconds=12.5,
             pipeline_wall_seconds=14.0,
@@ -271,7 +271,10 @@ class AttentionMetricsReportTest(unittest.TestCase):
 
         self.assertEqual(report["schema_version"], 1)
         self.assertEqual(report["status"], "PASS")
-        self.assertEqual(report["configuration"]["profile"], "e3")
+        self.assertEqual(
+            report["configuration"]["profile"],
+            "fused_attention_q1024_k1024_d128",
+        )
         self.assertEqual(report["configuration"]["mpi_ranks"], 2)
         self.assertTrue(report["configuration"]["wcp_enabled"])
         self.assertEqual(report["host_timing"]["sst_wall_seconds"], 12.5)
@@ -332,7 +335,7 @@ class AttentionMetricsReportTest(unittest.TestCase):
                     "--lifecycle-json", str(lifecycle_path),
                     "--numerical-json", str(numerical_path),
                     "--mpi-partition-json", str(mpi_path),
-                    "--profile", "e3",
+                    "--profile", "fused_attention_q1024_k1024_d128",
                     "--mpi-ranks", "2",
                     "--sst-wall-seconds", "12.5",
                     "--pipeline-wall-seconds", "14.0",
@@ -435,7 +438,8 @@ class AttentionMetricsReportTest(unittest.TestCase):
                     "--lifecycle-json", str(lifecycle_path),
                     "--numerical-json", str(numerical_path),
                     "--mpi-partition-json", str(mpi_path),
-                    "--profile", "e3", "--mpi-ranks", "2",
+                    "--profile", "fused_attention_q1024_k1024_d128",
+                    "--mpi-ranks", "2",
                     "--sst-wall-seconds", "12.5",
                     "--pipeline-wall-seconds", "14.0", "--generic-gemm",
                     "--output-json", str(report_path),
@@ -457,7 +461,8 @@ class AttentionMetricsReportTest(unittest.TestCase):
                     "--lifecycle-json", str(lifecycle_path),
                     "--numerical-json", str(numerical_path),
                     "--mpi-partition-json", str(mpi_path),
-                    "--profile", "e3", "--mpi-ranks", "2",
+                    "--profile", "fused_attention_q1024_k1024_d128",
+                    "--mpi-ranks", "2",
                     "--sst-wall-seconds", "12.5",
                     "--pipeline-wall-seconds", "14.0", "--generic-gemm",
                     "--output-json", str(report_path),
@@ -497,7 +502,8 @@ class AttentionMetricsReportTest(unittest.TestCase):
                     "--lifecycle-json", str(lifecycle_path),
                     "--numerical-json", str(numerical_path),
                     "--mpi-partition-json", str(mpi_path),
-                    "--profile", "e3", "--mpi-ranks", "2",
+                    "--profile", "fused_attention_q1024_k1024_d128",
+                    "--mpi-ranks", "2",
                     "--sst-wall-seconds", "1", "--pipeline-wall-seconds", "2",
                     "--generic-gemm", "--output-json", str(report_path),
                     "--output-csv", str(csv_path),

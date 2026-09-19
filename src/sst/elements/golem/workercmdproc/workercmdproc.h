@@ -70,6 +70,13 @@ struct WorkerTaskListHeader {
     uint32_t m_group_count = 0;
     uint32_t data_node_map_mode = 0;
     uint64_t descriptor_start_cycle = 0;
+    uint32_t operand_layout = 0;
+    uint32_t attention_query_length = 0;
+    uint32_t attention_rows_per_band = 0;
+    uint32_t scheduler_worker_slot = UINT32_MAX;
+    uint64_t attention_node_stride_bytes = 0;
+    uint64_t attention_pv_cache_gm_addr = 0;
+    uint64_t attention_pv_cache_bytes = 0;
 };
 
 struct WorkerWindowDescriptor {
@@ -112,6 +119,23 @@ public:
         SST::Golem::RequestSchedulerAPI* requestScheduler) = 0;
 
     virtual bool startWindow(const WorkerTaskListHeader& header) = 0;
+    using WindowFusionTileCallback =
+        std::function<bool(uint64_t, uint64_t, const std::vector<uint8_t>&)>;
+    using WindowCompleteCallback =
+        std::function<void(uint64_t, uint64_t, uint64_t)>;
+    virtual bool setWindowCallbacks(
+        WindowFusionTileCallback tileCallback,
+        WindowCompleteCallback completeCallback) = 0;
+    virtual bool setWindowResidentMatrixPayload(
+        std::vector<uint8_t> payload) = 0;
+    using AttentionPvPrefetchCallback = std::function<void(bool)>;
+    virtual bool prefetchAttentionPvVector(
+        const WorkerTaskListHeader& header,
+        AttentionPvPrefetchCallback callback) = 0;
+    virtual bool installAttentionPvVector(
+        const WorkerTaskListHeader& header,
+        const std::vector<uint8_t>& payload,
+        AttentionPvPrefetchCallback callback) = 0;
     using GemmBufferCallback = SST::Golem::ComputeArray::BufferCallback;
     using GemmReadCallback = SST::Golem::ComputeArray::BufferReadCallback;
     using GemmArrayDoneCallback = std::function<void(uint32_t, uint64_t)>;
@@ -332,6 +356,7 @@ public:
         {"attention_cluster_qk_arrays", "First PV array id in the 64-array Attention partition", "16"},
         {"prefetch_windows", "Number of 2D K-windows to prefetch ahead of the active window", "1"},
         {"cross_macro_prefetch", "Prefetch the next macro task's first K-window while the current final window computes", "0"},
+        {"attention_pv_panel_prefetch", "Double-buffer local-SRAM V panels for Attention PV", "0"},
         {"window_k_tiles", "WCP K-tiles per scheduler transaction", "4"},
         {"c_buffer_bytes", "Private partial-C SRAM capacity in bytes", "0"},
         {"c_buffer_read_bytes_per_cycle", "Independent partial-C SRAM read bandwidth", "256"},
@@ -383,6 +408,7 @@ public:
               "attention_cluster_qk_arrays", 16)),
           prefetchWindowDepth_(static_cast<uint32_t>(std::max(1, params.find<int>("prefetch_windows", 1)))),
           crossMacroPrefetch_(params.find<int>("cross_macro_prefetch", 0) != 0),
+          attentionPvPanelPrefetch_(params.find<int>("attention_pv_panel_prefetch", 0) != 0),
           windowKtiles_(std::max(1, params.find<int>("window_k_tiles", 4))),
           cBufferBytes_(params.find<uint64_t>("c_buffer_bytes", 0)),
           cBufferReadBytesPerCycle_(params.find<uint64_t>("c_buffer_read_bytes_per_cycle", 256)),
@@ -1215,6 +1241,19 @@ public:
             }
             return false;
         }
+        if (header.operand_layout == 1 &&
+            (header.attention_query_length == 0 ||
+             header.attention_rows_per_band == 0 ||
+             header.attention_node_stride_bytes == 0 ||
+             header.block_m > header.attention_rows_per_band ||
+             header.block_n > header.attention_rows_per_band)) {
+            if (extOutput_ != nullptr) {
+                extOutput_->output(
+                    "[Core %u] [wcp] ERROR: invalid row-major Attention panel layout\n",
+                    coreId_);
+            }
+            return false;
+        }
         const uint32_t reuseN = std::max<uint32_t>(header.a_reuse_n_tiles, 1u);
         const uint32_t reuseM = std::max<uint32_t>(header.b_reuse_m_tiles, 1u);
         const uint32_t kTiles = header.block_k > 0 ? header.k / header.block_k : 0;
@@ -1263,7 +1302,92 @@ public:
                 return false;
             }
         }
-        header_ = header;
+        WorkerTaskListHeader configuredHeader = header;
+        ++attentionPvVectorReadGeneration_;
+        attentionPvVectorReadInFlight_ = false;
+        attentionPvVectorReadFailed_ = false;
+        attentionPvVectorPanelPrefetchInFlight_ = false;
+        attentionPvVectorPanelPrefetchReady_ = false;
+        attentionPvVectorPanelPrefetchTile_ = -1;
+        attentionPvVectorPanelPrefetchReuseN_ = 0;
+        attentionPvVectorPanelPrefetchPayload_.clear();
+        attentionPvVectorResidentHit_ = false;
+        attentionPvVectorCacheIndex_ = -1;
+        if (header.operand_layout == 3) {
+            constexpr size_t cacheEntries = 4;
+            const uint64_t entryBytes = static_cast<uint64_t>(reuseN) *
+                kTiles * header.local_vec_slot_stride_bytes;
+            const uint64_t gmBase = globalMem_ == nullptr ? 0 : globalMem_->getBaseAddr();
+            const uint64_t gmSize = globalMem_ == nullptr ? 0 : globalMem_->getSize();
+            const bool cacheRangeValid = entryBytes != 0 &&
+                header.attention_pv_cache_gm_addr >= gmBase &&
+                header.attention_pv_cache_bytes >= cacheEntries * entryBytes &&
+                header.attention_pv_cache_gm_addr - gmBase <= gmSize &&
+                cacheEntries * entryBytes <=
+                    gmSize - (header.attention_pv_cache_gm_addr - gmBase);
+            if (!cacheRangeValid) {
+                if (extOutput_ != nullptr) {
+                    extOutput_->output(
+                        "[Core %u] [wcp] ERROR: invalid local-GM PV V-cache range"
+                        " base=%" PRIu64 " bytes=%" PRIu64 " entry=%" PRIu64 "\n",
+                        coreId_, header.attention_pv_cache_gm_addr,
+                        header.attention_pv_cache_bytes, entryBytes);
+                }
+                return false;
+            }
+            for (size_t index = 0; index < attentionPvVectorCache_.size(); ++index) {
+                AttentionPvVectorCacheEntry& entry =
+                    attentionPvVectorCache_[index];
+                if (entry.valid && entry.sourceBase == header.off_gemm_vec_base &&
+                    entry.k == header.k && entry.n == header.n &&
+                    entry.blockN == header.block_n &&
+                    entry.blockK == header.block_k &&
+                    entry.elemBytes == header.elem_bytes &&
+                    entry.vecStrideBytes == header.vec_stride_bytes &&
+                    entry.localSlotStride == header.local_vec_slot_stride_bytes &&
+                    entry.reuseN == reuseN) {
+                    attentionPvVectorResidentHit_ = true;
+                    attentionPvVectorCacheIndex_ = static_cast<int32_t>(index);
+                    entry.lastUse = ++attentionPvVectorCacheClock_;
+                    break;
+                }
+            }
+            if (attentionPvVectorCacheIndex_ < 0) {
+                for (size_t index = 0; index < cacheEntries; ++index) {
+                    if (!attentionPvVectorCache_[index].valid &&
+                        (!attentionPvVectorPrefetchInFlight_ ||
+                         static_cast<int32_t>(index) != attentionPvVectorPrefetchIndex_)) {
+                        attentionPvVectorCacheIndex_ = static_cast<int32_t>(index);
+                        break;
+                    }
+                }
+                if (attentionPvVectorCacheIndex_ < 0) {
+                    uint64_t oldest = UINT64_MAX;
+                    for (size_t index = 0; index < cacheEntries; ++index) {
+                        if (attentionPvVectorPrefetchInFlight_ &&
+                            static_cast<int32_t>(index) == attentionPvVectorPrefetchIndex_) {
+                            continue;
+                        }
+                        if (attentionPvVectorCache_[index].lastUse < oldest) {
+                            oldest = attentionPvVectorCache_[index].lastUse;
+                            attentionPvVectorCacheIndex_ = static_cast<int32_t>(index);
+                        }
+                    }
+                }
+            }
+            configuredHeader.local_vec_ping_gm_addr =
+                header.attention_pv_cache_gm_addr +
+                static_cast<uint64_t>(attentionPvVectorCacheIndex_) * entryBytes;
+            if (extOutput_ != nullptr) {
+                extOutput_->output(
+                    "[Core %u] [wcp] PV_V_RESIDENCY hit=%u source=%" PRIu64
+                    " local_addr=%" PRIu64 "\n",
+                    coreId_, attentionPvVectorResidentHit_ ? 1u : 0u,
+                    header.off_gemm_vec_base,
+                    configuredHeader.local_vec_ping_gm_addr);
+            }
+        }
+        header_ = configuredHeader;
         busy_ = true;
         if (reuseM > 1 && reuseN > 1) {
             cBufferMode_ = CBufferMode::GEMM_PARTIAL_C;
@@ -1316,6 +1440,129 @@ public:
         tileRetireSchedCycles_.clear();
         resetPipelineState();
         phase_ = Phase::RUN;
+        return true;
+    }
+
+    bool setWindowCallbacks(
+        WindowFusionTileCallback tileCallback,
+        WindowCompleteCallback completeCallback) override {
+        if (busy_) {
+            return false;
+        }
+        windowFusionTileCallback_ = std::move(tileCallback);
+        windowCompleteCallback_ = std::move(completeCallback);
+        return true;
+    }
+
+    bool setWindowResidentMatrixPayload(
+        std::vector<uint8_t> payload) override {
+        if (busy_) {
+            return false;
+        }
+        residentMatPayload_ = std::move(payload);
+        return true;
+    }
+
+    bool prefetchAttentionPvVector(
+        const WorkerTaskListHeader& header,
+        AttentionPvPrefetchCallback callback) override {
+        return prefetchAttentionPvVectorImpl(header, std::move(callback));
+    }
+
+    bool installAttentionPvVector(
+        const WorkerTaskListHeader& header,
+        const std::vector<uint8_t>& payload,
+        AttentionPvPrefetchCallback callback) override {
+        constexpr size_t cacheEntries = 4;
+        if (globalMem_ == nullptr || header.operand_layout != 3 ||
+            attentionPvVectorInstallInFlight_) {
+            return false;
+        }
+        const uint32_t reuseN = std::max<uint32_t>(header.a_reuse_n_tiles, 1u);
+        const uint32_t kTiles = header.block_k == 0 ? 0 : header.k / header.block_k;
+        const uint64_t entryBytes = static_cast<uint64_t>(reuseN) * kTiles *
+            header.local_vec_slot_stride_bytes;
+        const uint64_t gmBase = globalMem_->getBaseAddr();
+        const uint64_t gmSize = globalMem_->getSize();
+        if (entryBytes == 0 || payload.size() != entryBytes ||
+            header.attention_pv_cache_gm_addr < gmBase ||
+            header.attention_pv_cache_bytes < cacheEntries * entryBytes ||
+            header.attention_pv_cache_gm_addr - gmBase > gmSize ||
+            cacheEntries * entryBytes >
+                gmSize - (header.attention_pv_cache_gm_addr - gmBase)) {
+            return false;
+        }
+        for (auto& entry : attentionPvVectorCache_) {
+            if (attentionPvVectorMatches(entry, header)) {
+                entry.lastUse = ++attentionPvVectorCacheClock_;
+                if (callback) callback(true);
+                return true;
+            }
+        }
+        int32_t target = -1;
+        for (size_t index = 0; index < cacheEntries; ++index) {
+            if (!attentionPvVectorCache_[index].valid &&
+                static_cast<int32_t>(index) != attentionPvVectorCacheIndex_ &&
+                (!attentionPvVectorPrefetchInFlight_ ||
+                 static_cast<int32_t>(index) != attentionPvVectorPrefetchIndex_)) {
+                target = static_cast<int32_t>(index);
+                break;
+            }
+        }
+        if (target < 0) {
+            uint64_t oldest = UINT64_MAX;
+            for (size_t index = 0; index < cacheEntries; ++index) {
+                if (static_cast<int32_t>(index) == attentionPvVectorCacheIndex_ ||
+                    (attentionPvVectorPrefetchInFlight_ &&
+                     static_cast<int32_t>(index) == attentionPvVectorPrefetchIndex_)) {
+                    continue;
+                }
+                if (attentionPvVectorCache_[index].lastUse < oldest) {
+                    oldest = attentionPvVectorCache_[index].lastUse;
+                    target = static_cast<int32_t>(index);
+                }
+            }
+        }
+        if (target < 0) return false;
+
+        const size_t chunkMax = globalMem_->localMaxRequestBytes();
+        if (chunkMax == 0) return false;
+        const uint64_t destination = header.attention_pv_cache_gm_addr +
+            static_cast<uint64_t>(target) * entryBytes;
+        auto pending = std::make_shared<size_t>(
+            (payload.size() + chunkMax - 1) / chunkMax);
+        auto allOk = std::make_shared<bool>(true);
+        auto completed = std::make_shared<bool>(false);
+        attentionPvVectorInstallInFlight_ = true;
+        for (size_t offset = 0; offset < payload.size(); offset += chunkMax) {
+            const size_t bytes = std::min(chunkMax, payload.size() - offset);
+            std::vector<uint8_t> chunk(
+                payload.begin() + offset, payload.begin() + offset + bytes);
+            const bool accepted = globalMem_->localWriteAsync(
+                destination + offset, chunk, LocalMemoryClient::WCP,
+                ++attentionPvVectorReadTag_,
+                [this, pending, allOk, completed, target, header, callback](
+                    bool ok, uint64_t) mutable {
+                    if (*completed) return;
+                    *allOk = *allOk && ok;
+                    if (--*pending != 0) return;
+                    *completed = true;
+                    attentionPvVectorInstallInFlight_ = false;
+                    if (*allOk) {
+                        attentionPvVectorCache_[static_cast<size_t>(target)] =
+                            makeAttentionPvVectorCacheEntry(header);
+                    }
+                    if (callback) callback(*allOk);
+                });
+            if (!accepted) {
+                *allOk = false;
+                if (--*pending == 0 && !*completed) {
+                    *completed = true;
+                    attentionPvVectorInstallInFlight_ = false;
+                    if (callback) callback(false);
+                }
+            }
+        }
         return true;
     }
 
@@ -1398,10 +1645,18 @@ public:
                         pendingWritebackTokens_.push_back(writebackToken_);
                     }
                 } else if (outputMode_ == "fusion") {
-                    if (fusionDumpEnable_) {
+                    if (fusionDumpEnable_ || windowFusionTileCallback_) {
                         std::vector<uint8_t> tile;
-                        if (!captureArrayOutput(tile) ||
+                        if (!captureArrayOutput(tile)) {
+                            return false;
+                        }
+                        if (fusionDumpEnable_ &&
                             !consumeFusionOutput(current_.c_base_addr, tile)) {
+                            return false;
+                        }
+                        if (windowFusionTileCallback_ &&
+                            !windowFusionTileCallback_(current_.task_id,
+                                                       current_.c_base_addr, tile)) {
                             return false;
                         }
                     }
@@ -1426,7 +1681,7 @@ public:
             }
             phase_ = Phase::DONE;
             break;
-        case Phase::DONE:
+        case Phase::DONE: {
             workerEndCycle_ = cycle;
             emitWindowTimelines();
             if (extOutput_ != nullptr) {
@@ -1473,11 +1728,23 @@ public:
                 globalMem_->wr_to_globalmem(header_.finished_mailbox_addr, one.size(), one);
             }
             busy_ = false;
+            if (usesAttentionPvPanels() && !attentionPvVectorResidentHit_) {
+                commitAttentionPvVectorCache();
+            }
             if (cBufferMode_ == CBufferMode::GEMM_PARTIAL_C) {
                 cBufferMode_ = CBufferMode::FREE;
             }
             phase_ = Phase::IDLE;
+            windowFusionTileCallback_ = {};
+            residentMatPayload_.clear();
+            auto completeCallback = std::move(windowCompleteCallback_);
+            windowCompleteCallback_ = {};
+            if (completeCallback) {
+                completeCallback(
+                    totalWindowCycles_, workerStartCycle_, workerEndCycle_);
+            }
             break;
+        }
         case Phase::IDLE:
         default:
             break;
@@ -2003,6 +2270,18 @@ private:
     bool is2DReuse() const {
         return std::max<uint32_t>(header_.a_reuse_n_tiles, 1u) > 1 &&
                std::max<uint32_t>(header_.b_reuse_m_tiles, 1u) > 1;
+    }
+
+    bool usesAttentionRowMajorPanels() const {
+        return header_.operand_layout == 1;
+    }
+
+    bool usesAttentionPackedPanels() const {
+        return header_.operand_layout == 2;
+    }
+
+    bool usesAttentionPvPanels() const {
+        return header_.operand_layout == 3;
     }
 
     uint32_t base2DWindowBufferCount() const {
@@ -2646,7 +2925,8 @@ private:
                                    ? (std::max<uint32_t>(header_.b_reuse_m_tiles, 1u) * current_.k_count)
                                    : std::min<uint32_t>(windowKtiles_, k_end - nextPrefetchK_);
         WcpWindowTransaction txn{};
-        txn.workerSlot = header_.worker_slot;
+        txn.workerSlot = header_.scheduler_worker_slot == UINT32_MAX
+            ? header_.worker_slot : header_.scheduler_worker_slot;
         txn.taskId = static_cast<uint32_t>(current_.task_id);
         txn.windowId = currentWindowId_++;
         txn.kBegin = nextPrefetchK_;
@@ -2659,14 +2939,25 @@ private:
         txn.matBaseAddr = current_.mat_base_addr + static_cast<uint64_t>(nextPrefetchK_) * current_.mat_stride_bytes;
         txn.vecBaseAddr = current_.vec_base_addr + static_cast<uint64_t>(nextPrefetchK_) * current_.vec_stride_bytes;
         txn.localMatBaseAddr = header_.local_mat_ping_gm_addr;
-        txn.localVecBaseAddr = header_.local_vec_ping_gm_addr;
+        txn.localVecBaseAddr = usesAttentionPvPanels()
+            ? header_.local_vec_ping_gm_addr +
+                (static_cast<uint64_t>(reuseNIndex_) * totalKTileCount_ +
+                 nextPrefetchK_) * header_.local_vec_slot_stride_bytes
+            : header_.local_vec_ping_gm_addr;
         txn.localMatSlotStrideBytes = header_.local_mat_slot_stride_bytes;
         txn.localVecSlotStrideBytes = header_.local_vec_slot_stride_bytes;
         txn.slotCount = std::max<uint32_t>(header_.local_slot_count, 1u);
         txn.matStrideBytes = current_.mat_stride_bytes;
         txn.vecStrideBytes = current_.vec_stride_bytes;
-        txn.skipMatRead = !is2DReuse() && (std::max<uint32_t>(header_.a_reuse_n_tiles, 1u) > 1 && reuseNIndex_ > 0);
-        txn.skipVecRead = !is2DReuse() && (std::max<uint32_t>(header_.b_reuse_m_tiles, 1u) > 1 && reuseMIndex_ > 0);
+        txn.skipMatRead = usesAttentionPvPanels() ||
+            (!is2DReuse() &&
+             std::max<uint32_t>(header_.a_reuse_n_tiles, 1u) > 1 &&
+             reuseNIndex_ > 0);
+        txn.skipVecRead =
+            (usesAttentionPvPanels() && attentionPvVectorResidentHit_) ||
+            (!is2DReuse() &&
+             std::max<uint32_t>(header_.b_reuse_m_tiles, 1u) > 1 &&
+             reuseMIndex_ > 0);
         activeTxnId_ = requestScheduler_->submitWindowTransaction(txn);
         activeTxnTileCount_ = tiles;
         nextTxnComputeTile_ = 0;
@@ -2694,13 +2985,24 @@ private:
         const uint32_t windowKCapacity = std::max<uint32_t>(residentKTileCount_, kCount);
         const uint32_t perBufferMatSlots = reuseM * windowKCapacity;
         const uint32_t perBufferVecSlots = reuseN * windowKCapacity;
-        const uint64_t matGroupBase = current_.mat_base_addr - static_cast<uint64_t>(reuseMIndex_) * static_cast<uint64_t>(totalKTileCount_) * current_.mat_stride_bytes;
-        const uint64_t vecGroupBase = current_.vec_base_addr - static_cast<uint64_t>(reuseNIndex_) * static_cast<uint64_t>(totalKTileCount_) * current_.vec_stride_bytes;
+        const uint64_t sourceRowStride =
+            static_cast<uint64_t>(header_.k) * header_.elem_bytes;
+        const uint64_t matGroupBase = usesAttentionRowMajorPanels()
+            ? current_.mat_base_addr - static_cast<uint64_t>(reuseMIndex_) *
+                header_.block_m * sourceRowStride
+            : current_.mat_base_addr - static_cast<uint64_t>(reuseMIndex_) *
+                static_cast<uint64_t>(totalKTileCount_) * current_.mat_stride_bytes;
+        const uint64_t vecGroupBase = usesAttentionRowMajorPanels()
+            ? current_.vec_base_addr - static_cast<uint64_t>(reuseNIndex_) *
+                header_.block_n * sourceRowStride
+            : current_.vec_base_addr - static_cast<uint64_t>(reuseNIndex_) *
+                static_cast<uint64_t>(totalKTileCount_) * current_.vec_stride_bytes;
         const uint64_t localMatBufferBase = header_.local_mat_ping_gm_addr + static_cast<uint64_t>(buffer) * perBufferMatSlots * header_.local_mat_slot_stride_bytes;
         const uint64_t localVecBufferBase = header_.local_vec_ping_gm_addr + static_cast<uint64_t>(buffer) * perBufferVecSlots * header_.local_vec_slot_stride_bytes;
 
         WcpWindowTransaction txn{};
-        txn.workerSlot = header_.worker_slot;
+        txn.workerSlot = header_.scheduler_worker_slot == UINT32_MAX
+            ? header_.worker_slot : header_.scheduler_worker_slot;
         txn.taskId = static_cast<uint32_t>(current_.task_id);
         txn.windowId = currentWindowId_++;
         txn.kBegin = kBegin;
@@ -2710,8 +3012,10 @@ private:
         txn.elemBytes = current_.elem_bytes;
         txn.hwInputSize = current_.array_input_size;
         txn.memNodeSize = header_.mem_node_size;
-        txn.matBaseAddr = matGroupBase + static_cast<uint64_t>(kBegin) * current_.mat_stride_bytes;
-        txn.vecBaseAddr = vecGroupBase + static_cast<uint64_t>(kBegin) * current_.vec_stride_bytes;
+        txn.matBaseAddr = usesAttentionRowMajorPanels()
+            ? matGroupBase : matGroupBase + static_cast<uint64_t>(kBegin) * current_.mat_stride_bytes;
+        txn.vecBaseAddr = usesAttentionRowMajorPanels()
+            ? vecGroupBase : vecGroupBase + static_cast<uint64_t>(kBegin) * current_.vec_stride_bytes;
         txn.localMatBaseAddr = localMatBufferBase;
         txn.localVecBaseAddr = localVecBufferBase;
         txn.localMatSlotStrideBytes = header_.local_mat_slot_stride_bytes;
@@ -2724,6 +3028,18 @@ private:
         txn.vecTileCount = currentReuseNCount_ * kCount;
         txn.kWindowTiles = kCount;
         txn.totalKTileCount = totalKTileCount_;
+        txn.rowMajorPanels = usesAttentionRowMajorPanels();
+        if (usesAttentionPvPanels()) {
+            txn.skipMatRead = true;
+            txn.skipVecRead = attentionPvVectorResidentHit_;
+        }
+        txn.matPanelRows = header_.block_m;
+        txn.vecPanelRows = header_.block_n;
+        txn.matSourceRowStrideBytes = sourceRowStride;
+        txn.vecSourceRowStrideBytes = sourceRowStride;
+        txn.matGroupStrideBytes = static_cast<uint64_t>(header_.block_m) * sourceRowStride;
+        txn.vecGroupStrideBytes = static_cast<uint64_t>(header_.block_n) * sourceRowStride;
+        txn.kSliceStrideBytes = static_cast<uint64_t>(header_.block_k) * header_.elem_bytes;
         txnIds.push_back(requestScheduler_->submitWindowTransaction(txn));
         const uint64_t txnId = txnIds.back();
         windowTimelines_.push_back(WindowTimeline{
@@ -3199,19 +3515,144 @@ private:
         return -1;
     }
 
-    bool loadTilePayload(uint32_t local_tile_idx) {
+    enum class TilePayloadLoadStatus : uint8_t {
+        Ready,
+        Pending,
+        Failed,
+    };
+
+    void tryPrefetchAttentionPvPanel(uint32_t currentTile) {
+        if (!attentionPvPanelPrefetch_ || !usesAttentionPvPanels() ||
+            globalMem_ == nullptr ||
+            attentionPvVectorPanelPrefetchInFlight_ ||
+            attentionPvVectorPanelPrefetchReady_) {
+            return;
+        }
+        uint32_t nextTile = currentTile + 1u;
+        uint32_t nextReuseN = reuseNIndex_;
+        if (nextTile >= activeTxnTileCount_) {
+            if (nextReuseN + 1u >= currentReuseNCount_) {
+                return;
+            }
+            nextReuseN += 1u;
+            nextTile = 0;
+        }
+        const uint32_t vecSlotIdx = nextReuseN * totalKTileCount_ +
+            activeTxnKBegin_ + nextTile;
+        const uint64_t vecAddr = header_.local_vec_ping_gm_addr +
+            static_cast<uint64_t>(vecSlotIdx) * header_.local_vec_slot_stride_bytes;
+        const size_t vecBytes = static_cast<size_t>(current_.vec_stride_bytes);
+        const uint64_t generation = attentionPvVectorReadGeneration_;
+        const bool accepted = globalMem_->localReadAsync(
+            vecAddr, vecBytes, LocalMemoryClient::WCP,
+            ++attentionPvVectorReadTag_,
+            [this, generation, nextTile, nextReuseN, vecBytes](
+                bool ok, uint64_t, std::vector<uint8_t> bytes) {
+                if (generation != attentionPvVectorReadGeneration_) return;
+                attentionPvVectorPanelPrefetchInFlight_ = false;
+                if (!ok || bytes.size() < vecBytes) {
+                    attentionPvVectorReadFailed_ = true;
+                    return;
+                }
+                if (activeComputeTileIndex_ == static_cast<int>(nextTile) &&
+                    reuseNIndex_ == nextReuseN && !activeTilePayloadLoaded_) {
+                    activeVecPayload_ = std::move(bytes);
+                    activeTilePayloadLoaded_ = true;
+                    tryPrefetchAttentionPvPanel(nextTile);
+                    return;
+                }
+                attentionPvVectorPanelPrefetchPayload_ = std::move(bytes);
+                attentionPvVectorPanelPrefetchTile_ = static_cast<int>(nextTile);
+                attentionPvVectorPanelPrefetchReuseN_ = nextReuseN;
+                attentionPvVectorPanelPrefetchReady_ = true;
+            });
+        if (accepted) {
+            attentionPvVectorPanelPrefetchInFlight_ = true;
+            attentionPvVectorPanelPrefetchTile_ = static_cast<int>(nextTile);
+            attentionPvVectorPanelPrefetchReuseN_ = nextReuseN;
+        }
+    }
+
+    TilePayloadLoadStatus loadTilePayload(uint32_t local_tile_idx) {
         const uint64_t vec_bytes = current_.vec_stride_bytes;
         const uint32_t slotCount = std::max<uint32_t>(header_.local_slot_count, 1u);
         const uint32_t matSlotIdx = is2DReuse() ? groupMatSlotFor(local_tile_idx) : (local_tile_idx % slotCount);
-        const uint32_t vecSlotIdx = is2DReuse() ? groupVecSlotFor(local_tile_idx) : (local_tile_idx % slotCount);
+        const uint32_t vecSlotIdx = usesAttentionPvPanels()
+            ? reuseNIndex_ * totalKTileCount_ + activeTxnKBegin_ + local_tile_idx
+            : (is2DReuse() ? groupVecSlotFor(local_tile_idx)
+                           : (local_tile_idx % slotCount));
         const uint64_t mat_addr = header_.local_mat_ping_gm_addr + static_cast<uint64_t>(matSlotIdx) * header_.local_mat_slot_stride_bytes;
         const uint64_t vec_addr = header_.local_vec_ping_gm_addr + static_cast<uint64_t>(vecSlotIdx) * header_.local_vec_slot_stride_bytes;
-        globalMem_->rd_from_globalmem(mat_addr, static_cast<size_t>(current_.mat_stride_bytes), activeMatPayload_);
-        globalMem_->rd_from_globalmem(vec_addr, static_cast<size_t>(vec_bytes), activeVecPayload_);
-        if (activeMatPayload_.size() < current_.mat_stride_bytes || activeVecPayload_.size() < vec_bytes) {
-            return false;
+        if (usesAttentionPvPanels() && !residentMatPayload_.empty()) {
+            const size_t matOffset = static_cast<size_t>(matSlotIdx) *
+                header_.local_mat_slot_stride_bytes;
+            const size_t matBytes = static_cast<size_t>(current_.mat_stride_bytes);
+            if (matOffset > residentMatPayload_.size() ||
+                matBytes > residentMatPayload_.size() - matOffset) {
+                return TilePayloadLoadStatus::Failed;
+            }
+            activeMatPayload_.assign(
+                residentMatPayload_.begin() + matOffset,
+                residentMatPayload_.begin() + matOffset + matBytes);
+        } else {
+            globalMem_->rd_from_globalmem(
+                mat_addr, static_cast<size_t>(current_.mat_stride_bytes),
+                activeMatPayload_);
         }
-        return true;
+        if (usesAttentionPvPanels()) {
+            if (attentionPvVectorReadFailed_) {
+                return TilePayloadLoadStatus::Failed;
+            }
+            if (attentionPvVectorPanelPrefetchReady_ &&
+                attentionPvVectorPanelPrefetchTile_ == activeComputeTileIndex_ &&
+                attentionPvVectorPanelPrefetchReuseN_ == reuseNIndex_) {
+                activeVecPayload_ = std::move(attentionPvVectorPanelPrefetchPayload_);
+                attentionPvVectorPanelPrefetchReady_ = false;
+                attentionPvVectorPanelPrefetchTile_ = -1;
+                tryPrefetchAttentionPvPanel(local_tile_idx);
+                return TilePayloadLoadStatus::Ready;
+            }
+            if (attentionPvVectorPanelPrefetchInFlight_ &&
+                attentionPvVectorPanelPrefetchTile_ == activeComputeTileIndex_ &&
+                attentionPvVectorPanelPrefetchReuseN_ == reuseNIndex_) {
+                return TilePayloadLoadStatus::Pending;
+            }
+            if (attentionPvVectorReadInFlight_) {
+                return TilePayloadLoadStatus::Pending;
+            }
+            const uint64_t generation = attentionPvVectorReadGeneration_;
+            const int expectedTile = activeComputeTileIndex_;
+            const bool accepted = globalMem_->localReadAsync(
+                vec_addr, static_cast<size_t>(vec_bytes),
+                LocalMemoryClient::WCP, ++attentionPvVectorReadTag_,
+                [this, generation, expectedTile, vec_bytes](
+                    bool ok, uint64_t, std::vector<uint8_t> bytes) {
+                    if (generation != attentionPvVectorReadGeneration_ ||
+                        expectedTile != activeComputeTileIndex_) {
+                        return;
+                    }
+                    attentionPvVectorReadInFlight_ = false;
+                    if (!ok || bytes.size() < vec_bytes) {
+                        attentionPvVectorReadFailed_ = true;
+                        return;
+                    }
+                    activeVecPayload_ = std::move(bytes);
+                    activeTilePayloadLoaded_ = true;
+                    tryPrefetchAttentionPvPanel(
+                        static_cast<uint32_t>(expectedTile));
+                });
+            if (!accepted) {
+                return TilePayloadLoadStatus::Pending;
+            }
+            attentionPvVectorReadInFlight_ = true;
+            return TilePayloadLoadStatus::Pending;
+        }
+        globalMem_->rd_from_globalmem(
+            vec_addr, static_cast<size_t>(vec_bytes), activeVecPayload_);
+        if (activeMatPayload_.size() < current_.mat_stride_bytes || activeVecPayload_.size() < vec_bytes) {
+            return TilePayloadLoadStatus::Failed;
+        }
+        return TilePayloadLoadStatus::Ready;
     }
 
     bool loadActiveMicroTileToArrays() {
@@ -3287,7 +3728,12 @@ private:
             return false;
         }
         if (!activeTilePayloadLoaded_) {
-            if (!loadTilePayload(static_cast<uint32_t>(activeComputeTileIndex_))) {
+            const TilePayloadLoadStatus loadStatus =
+                loadTilePayload(static_cast<uint32_t>(activeComputeTileIndex_));
+            if (loadStatus == TilePayloadLoadStatus::Pending) {
+                return false;
+            }
+            if (loadStatus == TilePayloadLoadStatus::Failed) {
                 phase_ = Phase::DONE;
                 return false;
             }
@@ -4155,8 +4601,8 @@ private:
                 b_slot++;
             }
         }
-        const uint64_t a_node_base = static_cast<uint64_t>(a_node_idx) * header_.mem_node_size;
-        const uint64_t b_node_base = static_cast<uint64_t>(b_node_idx) * header_.mem_node_size;
+        uint64_t a_node_base = static_cast<uint64_t>(a_node_idx) * header_.mem_node_size;
+        uint64_t b_node_base = static_cast<uint64_t>(b_node_idx) * header_.mem_node_size;
         const uint64_t c_node_base = static_cast<uint64_t>(c_node_idx) * header_.mem_node_size;
         const uint64_t mat_group_slot = static_cast<uint64_t>(a_slot);
         const uint64_t vec_group_slot = static_cast<uint64_t>(b_slot);
@@ -4165,8 +4611,73 @@ private:
             static_cast<uint64_t>(reuseMIndex_) * (reuseN > 1 ? reuseN : 1) + static_cast<uint64_t>(reuseNIndex_);
         current_.task_id = output_task_id;
         current_.task_flags = 0;
-        current_.mat_base_addr = a_node_base + header_.off_gemm_mat_base + mat_group_slot * static_cast<uint64_t>(k_tiles) * header_.mat_stride_bytes;
-        current_.vec_base_addr = b_node_base + header_.off_gemm_vec_base + vec_group_slot * static_cast<uint64_t>(k_tiles * header_.block_n) * header_.vec_stride_bytes;
+        if (usesAttentionRowMajorPanels()) {
+            const uint32_t globalQueryRow = m_tile * header_.block_m;
+            const uint32_t queryHead =
+                globalQueryRow / header_.attention_query_length;
+            const uint32_t queryRow =
+                globalQueryRow % header_.attention_query_length;
+            const uint32_t queryNode =
+                1u + queryRow / header_.attention_rows_per_band;
+            const uint32_t queryLocalRow =
+                queryHead * header_.attention_rows_per_band +
+                queryRow % header_.attention_rows_per_band;
+            const uint32_t keyRow = n_tile * header_.block_n;
+            const uint32_t keyNode =
+                1u + keyRow / header_.attention_rows_per_band;
+            const uint32_t keyLocalRow =
+                keyRow % header_.attention_rows_per_band;
+            a_node_base = static_cast<uint64_t>(queryNode) *
+                header_.attention_node_stride_bytes;
+            b_node_base = static_cast<uint64_t>(keyNode) *
+                header_.attention_node_stride_bytes;
+            const uint64_t sourceRowStride =
+                static_cast<uint64_t>(header_.k) * header_.elem_bytes;
+            current_.mat_base_addr = a_node_base + header_.off_gemm_mat_base +
+                static_cast<uint64_t>(queryLocalRow) * sourceRowStride;
+            current_.vec_base_addr = b_node_base + header_.off_gemm_vec_base +
+                static_cast<uint64_t>(keyLocalRow) * sourceRowStride;
+        } else if (usesAttentionPackedPanels()) {
+            const uint32_t globalQueryRow = m_tile * header_.block_m;
+            const uint32_t queryHead =
+                globalQueryRow / header_.attention_query_length;
+            const uint32_t queryRow =
+                globalQueryRow % header_.attention_query_length;
+            const uint32_t queryBand = coreId_ %
+                std::max<uint32_t>(header_.total_groups, 1u);
+            const uint32_t queryLocalTile =
+                (queryRow % header_.attention_rows_per_band) / header_.block_m;
+            const uint32_t keyRow = n_tile * header_.block_n;
+            const uint32_t keyBand = keyRow / header_.attention_rows_per_band;
+            const uint32_t keyLocalTile =
+                (keyRow % header_.attention_rows_per_band) / header_.block_n;
+            const uint32_t queryTilesPerBand =
+                header_.attention_rows_per_band / header_.block_m;
+            const uint32_t keyTilesPerBand =
+                header_.attention_rows_per_band / header_.block_n;
+            const uint64_t panelBytes = static_cast<uint64_t>(header_.block_m) *
+                header_.block_k * header_.elem_bytes;
+            a_node_base = static_cast<uint64_t>(1u + queryBand) *
+                header_.attention_node_stride_bytes;
+            b_node_base = static_cast<uint64_t>(1u + keyBand) *
+                header_.attention_node_stride_bytes;
+            current_.mat_base_addr = a_node_base + header_.off_gemm_mat_base +
+                (static_cast<uint64_t>(queryHead) * queryTilesPerBand +
+                 queryLocalTile) * k_tiles * panelBytes;
+            current_.vec_base_addr = b_node_base + header_.off_gemm_vec_base +
+                (static_cast<uint64_t>(keyLocalTile) * k_tiles) * panelBytes;
+        } else if (usesAttentionPvPanels()) {
+            current_.mat_base_addr = header_.local_mat_ping_gm_addr;
+            current_.vec_base_addr = header_.off_gemm_vec_base +
+                static_cast<uint64_t>(n_tile) * k_tiles *
+                    header_.block_n * header_.block_k * header_.elem_bytes;
+        } else {
+            current_.mat_base_addr = a_node_base + header_.off_gemm_mat_base +
+                mat_group_slot * static_cast<uint64_t>(k_tiles) * header_.mat_stride_bytes;
+            current_.vec_base_addr = b_node_base + header_.off_gemm_vec_base +
+                vec_group_slot * static_cast<uint64_t>(k_tiles * header_.block_n) *
+                    header_.vec_stride_bytes;
+        }
         const uint64_t out_bytes = static_cast<uint64_t>(header_.block_m) * static_cast<uint64_t>(header_.block_n) * static_cast<uint64_t>(header_.elem_bytes);
         const uint64_t out_stride = ((out_bytes + 0xffULL) / 0x100ULL) * 0x100ULL;
         current_.c_base_addr = c_node_base + header_.off_gemm_out_base + out_group_slot * out_stride;
@@ -4206,6 +4717,7 @@ private:
     uint32_t attentionClusterQkArrays_ = 16;
     uint32_t prefetchWindowDepth_ = 1;
     bool crossMacroPrefetch_ = false;
+    bool attentionPvPanelPrefetch_ = false;
     uint32_t windowKtiles_ = 4;
     uint64_t cBufferBytes_ = 0;
     uint64_t cBufferReadBytesPerCycle_ = 256;
@@ -4222,6 +4734,8 @@ private:
     bool fusionDumpEnable_ = false;
     std::string fusionDumpDir_;
     std::ofstream fusionDump_;
+    WindowFusionTileCallback windowFusionTileCallback_;
+    WindowCompleteCallback windowCompleteCallback_;
     uint64_t cBufferNextReadCycle_ = 0;
     uint64_t cBufferNextWriteCycle_ = 0;
     std::vector<uint8_t> cBufferStorage_;
@@ -4359,7 +4873,155 @@ private:
     std::vector<uint8_t> activeTxnTileRetired_;
     std::vector<uint8_t> windowReuseDone_;
     std::vector<uint8_t> activeMatPayload_;
+    struct AttentionPvVectorCacheEntry {
+        bool valid = false;
+        uint64_t sourceBase = 0;
+        uint64_t vecStrideBytes = 0;
+        uint64_t localSlotStride = 0;
+        uint64_t lastUse = 0;
+        uint32_t k = 0;
+        uint32_t n = 0;
+        uint32_t blockN = 0;
+        uint32_t blockK = 0;
+        uint32_t elemBytes = 0;
+        uint32_t reuseN = 0;
+    };
+
+    bool attentionPvVectorMatches(
+        const AttentionPvVectorCacheEntry& entry,
+        const WorkerTaskListHeader& header) const {
+        return entry.valid &&
+            entry.sourceBase == header.off_gemm_vec_base &&
+            entry.k == header.k && entry.n == header.n &&
+            entry.blockN == header.block_n && entry.blockK == header.block_k &&
+            entry.elemBytes == header.elem_bytes &&
+            entry.vecStrideBytes == header.vec_stride_bytes &&
+            entry.localSlotStride == header.local_vec_slot_stride_bytes &&
+            entry.reuseN == std::max<uint32_t>(header.a_reuse_n_tiles, 1u);
+    }
+
+    AttentionPvVectorCacheEntry makeAttentionPvVectorCacheEntry(
+        const WorkerTaskListHeader& header) {
+        AttentionPvVectorCacheEntry entry;
+        entry.valid = true;
+        entry.sourceBase = header.off_gemm_vec_base;
+        entry.vecStrideBytes = header.vec_stride_bytes;
+        entry.localSlotStride = header.local_vec_slot_stride_bytes;
+        entry.lastUse = ++attentionPvVectorCacheClock_;
+        entry.k = header.k;
+        entry.n = header.n;
+        entry.blockN = header.block_n;
+        entry.blockK = header.block_k;
+        entry.elemBytes = header.elem_bytes;
+        entry.reuseN = std::max<uint32_t>(header.a_reuse_n_tiles, 1u);
+        return entry;
+    }
+
+    bool prefetchAttentionPvVectorImpl(
+        const WorkerTaskListHeader& header,
+        AttentionPvPrefetchCallback callback) {
+        constexpr size_t cacheEntries = 4;
+        if (globalMem_ == nullptr || header.operand_layout != 3 ||
+            attentionPvVectorPrefetchInFlight_) {
+            return false;
+        }
+        const uint32_t reuseN = std::max<uint32_t>(header.a_reuse_n_tiles, 1u);
+        const uint32_t kTiles = header.block_k == 0 ? 0 : header.k / header.block_k;
+        const uint64_t entryBytes = static_cast<uint64_t>(reuseN) * kTiles *
+            header.local_vec_slot_stride_bytes;
+        const uint64_t gmBase = globalMem_->getBaseAddr();
+        const uint64_t gmSize = globalMem_->getSize();
+        if (entryBytes == 0 || header.attention_pv_cache_gm_addr < gmBase ||
+            header.attention_pv_cache_bytes < cacheEntries * entryBytes ||
+            header.attention_pv_cache_gm_addr - gmBase > gmSize ||
+            cacheEntries * entryBytes >
+                gmSize - (header.attention_pv_cache_gm_addr - gmBase)) {
+            return false;
+        }
+        for (auto& entry : attentionPvVectorCache_) {
+            if (attentionPvVectorMatches(entry, header)) {
+                entry.lastUse = ++attentionPvVectorCacheClock_;
+                if (callback) callback(true);
+                return true;
+            }
+        }
+
+        int32_t target = -1;
+        for (size_t index = 0; index < cacheEntries; ++index) {
+            if (!attentionPvVectorCache_[index].valid &&
+                static_cast<int32_t>(index) != attentionPvVectorCacheIndex_) {
+                target = static_cast<int32_t>(index);
+                break;
+            }
+        }
+        if (target < 0) {
+            uint64_t oldest = UINT64_MAX;
+            for (size_t index = 0; index < cacheEntries; ++index) {
+                if (static_cast<int32_t>(index) == attentionPvVectorCacheIndex_) {
+                    continue;
+                }
+                if (attentionPvVectorCache_[index].lastUse < oldest) {
+                    oldest = attentionPvVectorCache_[index].lastUse;
+                    target = static_cast<int32_t>(index);
+                }
+            }
+        }
+        if (target < 0) return false;
+
+        const uint64_t generation = ++attentionPvVectorPrefetchGeneration_;
+        attentionPvVectorPrefetchInFlight_ = true;
+        attentionPvVectorPrefetchIndex_ = target;
+        const uint64_t destination = header.attention_pv_cache_gm_addr +
+            static_cast<uint64_t>(target) * entryBytes;
+        globalMem_->dma_read_from_host_to_globalmem(
+            header.off_gemm_vec_base, static_cast<size_t>(entryBytes), destination,
+            [this, generation, target, header, callback = std::move(callback)](bool ok) mutable {
+                if (generation != attentionPvVectorPrefetchGeneration_) return;
+                attentionPvVectorPrefetchInFlight_ = false;
+                attentionPvVectorPrefetchIndex_ = -1;
+                if (ok) {
+                    attentionPvVectorCache_[static_cast<size_t>(target)] =
+                        makeAttentionPvVectorCacheEntry(header);
+                }
+                if (callback) callback(ok);
+            },
+            DmaRequestKind::AttentionKvPrefetch);
+        return true;
+    }
+
+    void commitAttentionPvVectorCache() {
+        constexpr size_t cacheEntries = 4;
+        if (attentionPvVectorCacheIndex_ < 0 ||
+            static_cast<size_t>(attentionPvVectorCacheIndex_) >= cacheEntries) {
+            return;
+        }
+        AttentionPvVectorCacheEntry entry =
+            makeAttentionPvVectorCacheEntry(header_);
+        const size_t index = static_cast<size_t>(attentionPvVectorCacheIndex_);
+        if (index < attentionPvVectorCache_.size()) {
+            attentionPvVectorCache_[index] = std::move(entry);
+        }
+    }
+
+    std::vector<uint8_t> residentMatPayload_;
     std::vector<uint8_t> activeVecPayload_;
+    bool attentionPvVectorResidentHit_ = false;
+    int32_t attentionPvVectorCacheIndex_ = -1;
+    uint64_t attentionPvVectorCacheClock_ = 0;
+    uint64_t attentionPvVectorReadGeneration_ = 0;
+    uint64_t attentionPvVectorReadTag_ = 0;
+    bool attentionPvVectorReadInFlight_ = false;
+    bool attentionPvVectorReadFailed_ = false;
+    bool attentionPvVectorPanelPrefetchInFlight_ = false;
+    bool attentionPvVectorPanelPrefetchReady_ = false;
+    int32_t attentionPvVectorPanelPrefetchTile_ = -1;
+    uint32_t attentionPvVectorPanelPrefetchReuseN_ = 0;
+    std::vector<uint8_t> attentionPvVectorPanelPrefetchPayload_;
+    std::array<AttentionPvVectorCacheEntry, 4> attentionPvVectorCache_ = {};
+    uint64_t attentionPvVectorPrefetchGeneration_ = 0;
+    bool attentionPvVectorPrefetchInFlight_ = false;
+    int32_t attentionPvVectorPrefetchIndex_ = -1;
+    bool attentionPvVectorInstallInFlight_ = false;
     std::vector<MicroOp> activeTileMicroOps_;
     size_t activeTileMicroOpCursor_ = 0;
     KStepScoreboard activeTileScoreboard_;

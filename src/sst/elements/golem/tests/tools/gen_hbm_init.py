@@ -64,6 +64,18 @@ ATTENTION_NUM_KV_HEADS = int(os.getenv(
 ))
 ATTENTION_HEAD_DIM = int(os.getenv("GOLEM_ATTENTION_HEAD_DIM", "64"))
 ATTENTION_HBM_STRIPED = int(os.getenv("GOLEM_ATTENTION_HBM_STRIPED", "0")) != 0
+ATTENTION_REUSE_WINDOW_PANEL_LAYOUT = (
+    int(os.getenv("GOLEM_ATTENTION_REUSE_WINDOW_PANEL_LAYOUT", "0")) != 0
+)
+ATTENTION_PANEL_Q_OFFSET = int(
+    os.getenv("GOLEM_ATTENTION_PANEL_Q_OFFSET", "0x04000000"), 0
+)
+ATTENTION_PANEL_K_OFFSET = int(
+    os.getenv("GOLEM_ATTENTION_PANEL_K_OFFSET", "0x05000000"), 0
+)
+ATTENTION_PANEL_V_OFFSET = int(
+    os.getenv("GOLEM_ATTENTION_PANEL_V_OFFSET", "0x06000000"), 0
+)
 SOFTMAX_LOGITS_FILE = os.getenv("GOLEM_SOFTMAX_LOGITS_FILE", "")
 SFU_SOFTMAX_HBM_LAYOUT = os.getenv("GOLEM_SFU_SOFTMAX_HBM_LAYOUT", "single_node")
 SFU_SOFTMAX_STAGING_ROWS = max(
@@ -398,6 +410,79 @@ def _preload_fused_attention(node_buffers):
                         f"attention_{name.lower()}_head{head}_band{band}",
                     )
         print("Preloaded fused Attention Q/K/V bands across four HBM data nodes")
+        if ATTENTION_REUSE_WINDOW_PANEL_LAYOUT:
+            block = 64
+            elem_bytes = 4
+            if (ATTENTION_QUERY_LENGTH % (4 * block) != 0 or
+                    ATTENTION_KV_LENGTH % (4 * block) != 0 or
+                    ATTENTION_HEAD_DIM % block != 0):
+                raise ValueError(
+                    "reuse-window Attention panels require Sq/Skv divisible by 256 "
+                    "and Dh divisible by 64"
+                )
+            q_tiles_per_band = ATTENTION_QUERY_LENGTH // (4 * block)
+            kv_tiles_per_band = ATTENTION_KV_LENGTH // (4 * block)
+            k_tiles = ATTENTION_HEAD_DIM // block
+            panel_bytes = block * block * elem_bytes
+
+            def write_panels(name, raw, base_offset, heads, rows, tiles_per_band):
+                row_bytes = ATTENTION_HEAD_DIM * elem_bytes
+                head_bytes = rows * row_bytes
+                for head in range(heads):
+                    for band, node_idx in enumerate(DATA_NODE_IDS):
+                        for local_tile in range(tiles_per_band):
+                            global_tile = band * tiles_per_band + local_tile
+                            for k_tile in range(k_tiles):
+                                panel = bytearray()
+                                for row in range(block):
+                                    source = (head * head_bytes +
+                                              (global_tile * block + row) * row_bytes +
+                                              k_tile * block * elem_bytes)
+                                    panel.extend(raw[source:source + block * elem_bytes])
+                                slot = ((head * tiles_per_band + local_tile) *
+                                        k_tiles + k_tile)
+                                _write_block(
+                                    node_buffers[node_idx],
+                                    base_offset + slot * panel_bytes,
+                                    bytes(panel),
+                                    f"attention_{name.lower()}_panel_h{head}_t{global_tile}_k{k_tile}",
+                                )
+
+            write_panels(
+                "Q", loaded["Q"][1], ATTENTION_PANEL_Q_OFFSET,
+                ATTENTION_NUM_QUERY_HEADS, ATTENTION_QUERY_LENGTH,
+                q_tiles_per_band,
+            )
+            write_panels(
+                "K", loaded["K"][1], ATTENTION_PANEL_K_OFFSET,
+                ATTENTION_NUM_KV_HEADS, ATTENTION_KV_LENGTH,
+                kv_tiles_per_band,
+            )
+            v_raw = loaded["V"][1]
+            v_row_bytes = ATTENTION_HEAD_DIM * elem_bytes
+            v_head_bytes = ATTENTION_KV_LENGTH * v_row_bytes
+            dim_tiles = ATTENTION_HEAD_DIM // block
+            for head in range(ATTENTION_NUM_KV_HEADS):
+                for band, node_idx in enumerate(DATA_NODE_IDS):
+                    for dim_tile in range(dim_tiles):
+                        for key_tile in range(kv_tiles_per_band):
+                            panel = bytearray()
+                            global_key_tile = band * kv_tiles_per_band + key_tile
+                            for dim in range(block):
+                                for key in range(block):
+                                    source = (head * v_head_bytes +
+                                              (global_key_tile * block + key) * v_row_bytes +
+                                              (dim_tile * block + dim) * elem_bytes)
+                                    panel.extend(v_raw[source:source + elem_bytes])
+                            slot = ((head * dim_tiles + dim_tile) *
+                                    kv_tiles_per_band + key_tile)
+                            _write_block(
+                                node_buffers[node_idx],
+                                ATTENTION_PANEL_V_OFFSET + slot * panel_bytes,
+                                bytes(panel),
+                                f"attention_v_panel_h{head}_d{dim_tile}_k{global_key_tile}",
+                            )
+            print("Preloaded reuse-window Q/K/V 64x64 panels across four HBM data nodes")
     else:
         for name, (offset, data) in loaded.items():
             _write_block(node_buffers[1], offset, data, f"fused_attention_{name}")

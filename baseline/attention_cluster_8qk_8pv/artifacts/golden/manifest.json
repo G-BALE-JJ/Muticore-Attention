@@ -1,0 +1,73 @@
+{
+  "archive_version": 1,
+  "captured_on": "2026-09-19",
+  "branch": "softmax-update",
+  "source_base_commit": "392a789",
+  "source_revision": "the archive commit containing this manifest",
+  "shape": {
+    "batch": 1,
+    "query_heads": 4,
+    "kv_heads": 2,
+    "query_length": 1024,
+    "kv_length": 1024,
+    "head_dim": 128,
+    "dtype": "fp32",
+    "causal": false
+  },
+  "topology": {
+    "managers": 4,
+    "qk_sfu_workers": 8,
+    "pv_workers": 8,
+    "qk_workers_per_manager": 2,
+    "mpi_ranks": 1
+  },
+  "stable_policy": {
+    "row_priority": true,
+    "v_broadcast": true,
+    "dynamic_pv": false,
+    "qk_input_pipeline": true,
+    "kv_buffer_count": 2,
+    "pv_panel_prefetch": true,
+    "dma_window_k_tiles": 4
+  },
+  "bandwidth": {
+    "noc_link": "512GB/s",
+    "noc_xbar": "1024GB/s",
+    "global_memory_link": "256GB/s",
+    "directory_highlink": "512GB/s",
+    "local_sram_bytes_per_cycle": 256
+  },
+  "queueing": {
+    "request_scheduler_depth": 2048,
+    "dma_node_chunk_credits": 128,
+    "scheduler_issue_budget_per_tick": 2,
+    "scheduler_submit_batch_size": 4,
+    "scheduler_done_batch_size": 4
+  },
+  "measurement": {
+    "end_to_end_cycles": 47193,
+    "theoretical_resource_floor_cycles": 32768,
+    "excess_over_floor_cycles": 14425,
+    "actual_over_floor_ratio": 1.440216064453125,
+    "qk_jobs": 16,
+    "pv_windows": 256,
+    "pv_windows_per_core": 32
+  },
+  "dynamic_pv_ablation": {
+    "global_allocator_cycles": 48286,
+    "manager_local_allocator_cycles": 47890,
+    "stable_static_cycles": 47193,
+    "decision": "keep static allocation as the default for this regular workload"
+  },
+  "reproduce": {
+    "command": "GOLEM_MPI_RANKS=1 baseline/attention_cluster_8qk_8pv/run_sst.sh --artifact-root /tmp/attention_cluster_8qk_8pv --query-length 1024 --kv-length 1024 --num-query-heads 4 --num-kv-heads 2 --head-dim 128",
+    "result": "/tmp/attention_cluster_8qk_8pv/sst_qk_bridge_result.json"
+  },
+  "validation": {
+    "sst_status": "PASS",
+    "functional_schedule_model": "PASS",
+    "python_contract_tests": 105,
+    "build": "PASS",
+    "git_diff_check": "PASS"
+  }
+}

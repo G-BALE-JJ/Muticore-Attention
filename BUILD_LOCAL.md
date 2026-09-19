@@ -89,8 +89,8 @@ files.
 
 ## FlashAttention regression
 
-After building and installing the local elements library, run the active E3
-baseline with:
+After building and installing the local elements library, run the default
+`Sq=Skv=1024,Dh=128` Attention case with:
 
 ```bash
 scripts/test_flash_attention.sh

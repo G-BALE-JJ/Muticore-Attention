@@ -29,7 +29,10 @@ constexpr uint64_t SCHED_LOCAL_DONE_ID_OFF = 0x00;
 constexpr uint64_t SCHED_LOCAL_SUBMIT_RING_DEPTH = 8;
 constexpr uint64_t SCHED_LOCAL_DONE_RING_DEPTH = 8;
 constexpr uint8_t SCHED_PAIR_SLOT_MARKER = 0xFE;
-constexpr uint32_t WINDOW_REQUEST_TILE_BITS = 8;
+// A row-major Attention panel expands one logical tile into as many as 64
+// independent row transfers. Keep enough low bits for the expanded request
+// ordinal while retaining 20 bits for the transaction sequence.
+constexpr uint32_t WINDOW_REQUEST_TILE_BITS = 12;
 constexpr uint64_t WINDOW_REQUEST_TILE_MASK = (1ULL << WINDOW_REQUEST_TILE_BITS) - 1ULL;
 
 int makeMerlinTraceId(uint64_t requestId) {
@@ -696,14 +699,22 @@ void RequestSchedulerEndpoint::enqueueWindowTiles(WorkerWindowTxnState& state)
         const uint32_t vecGroupIdx = state.txn.useIndependentMatVecTiles ? (i / kWindowTiles) : 0;
         const uint32_t vecKIdx = state.txn.useIndependentMatVecTiles ? (i % kWindowTiles) : i;
 
-        const uint64_t matSrcBase = state.txn.matBaseAddr +
-            static_cast<uint64_t>(state.txn.useIndependentMatVecTiles
-                                      ? (matGroupIdx * totalKTileCount + matKIdx)
-                                      : i) * state.txn.matStrideBytes;
-        const uint64_t vecSrcBase = state.txn.vecBaseAddr +
-            static_cast<uint64_t>(state.txn.useIndependentMatVecTiles
-                                      ? (vecGroupIdx * totalKTileCount + vecKIdx)
-                                      : i) * state.txn.vecStrideBytes;
+        const uint64_t matSrcBase = state.txn.rowMajorPanels
+            ? state.txn.matBaseAddr +
+                static_cast<uint64_t>(matGroupIdx) * state.txn.matGroupStrideBytes +
+                static_cast<uint64_t>(matKIdx) * state.txn.kSliceStrideBytes
+            : state.txn.matBaseAddr +
+                static_cast<uint64_t>(state.txn.useIndependentMatVecTiles
+                                          ? (matGroupIdx * totalKTileCount + matKIdx)
+                                          : i) * state.txn.matStrideBytes;
+        const uint64_t vecSrcBase = state.txn.rowMajorPanels
+            ? state.txn.vecBaseAddr +
+                static_cast<uint64_t>(vecGroupIdx) * state.txn.vecGroupStrideBytes +
+                static_cast<uint64_t>(vecKIdx) * state.txn.kSliceStrideBytes
+            : state.txn.vecBaseAddr +
+                static_cast<uint64_t>(state.txn.useIndependentMatVecTiles
+                                          ? (vecGroupIdx * totalKTileCount + vecKIdx)
+                                          : i) * state.txn.vecStrideBytes;
         const uint64_t matDstBase = state.txn.localMatBaseAddr + static_cast<uint64_t>(slotIdx) * state.txn.localMatSlotStrideBytes;
         const uint64_t vecDstBase = state.txn.localVecBaseAddr + static_cast<uint64_t>(slotIdx) * state.txn.localVecSlotStrideBytes;
 
@@ -737,11 +748,13 @@ void RequestSchedulerEndpoint::enqueueWindowTiles(WorkerWindowTxnState& state)
                                 uint64_t srcAddr,
                                 uint64_t dstAddr,
                                 uint32_t bytes,
-                                uint16_t targetNode) {
+                                uint16_t targetNode,
+                                uint32_t requestOrdinal) {
             if (bytes == 0) {
                 return;
             }
-            const uint64_t requestId = composeWindowRequestId(slot, targetNode, state.txnId, i);
+            const uint64_t requestId = composeWindowRequestId(
+                slot, targetNode, state.txnId, requestOrdinal);
             const uint64_t flagAddr = gm_->ctrlGetReadFlagAddr(slot);
             gm_->ctrlRegisterPendingReadRequest(requestId, dstAddr, flagAddr, requestId & 0xffffffffULL, bytes);
             PendingTransfer pending{
@@ -761,13 +774,45 @@ void RequestSchedulerEndpoint::enqueueWindowTiles(WorkerWindowTxnState& state)
             }
         };
 
-        if (matValid) {
-            enqueuePanel(0, matSrcBase, matDstBase,
-                         static_cast<uint32_t>(state.txn.matStrideBytes), matTargetNode);
-        }
-        if (vecValid) {
-            enqueuePanel(1, vecSrcBase, vecDstBase,
-                         static_cast<uint32_t>(state.txn.vecStrideBytes), vecTargetNode);
+        if (state.txn.rowMajorPanels) {
+            const uint32_t rowBytes = state.txn.blockK * state.txn.elemBytes;
+            if (matValid) {
+                for (uint32_t row = 0; row < state.txn.matPanelRows; ++row) {
+                    const uint64_t src = matSrcBase +
+                        static_cast<uint64_t>(row) * state.txn.matSourceRowStrideBytes;
+                    const uint64_t dst = matDstBase +
+                        static_cast<uint64_t>(row) * rowBytes;
+                    const uint16_t node = state.txn.memNodeSize > 0
+                        ? static_cast<uint16_t>((src / state.txn.memNodeSize) %
+                            std::max<uint32_t>(numMemoryNodes_, 1u))
+                        : 0;
+                    enqueuePanel(0, src, dst, rowBytes, node, i * 128u + row);
+                }
+            }
+            if (vecValid) {
+                for (uint32_t row = 0; row < state.txn.vecPanelRows; ++row) {
+                    const uint64_t src = vecSrcBase +
+                        static_cast<uint64_t>(row) * state.txn.vecSourceRowStrideBytes;
+                    const uint64_t dst = vecDstBase +
+                        static_cast<uint64_t>(row) * rowBytes;
+                    const uint16_t node = state.txn.memNodeSize > 0
+                        ? static_cast<uint16_t>((src / state.txn.memNodeSize) %
+                            std::max<uint32_t>(numMemoryNodes_, 1u))
+                        : 0;
+                    enqueuePanel(1, src, dst, rowBytes, node, i * 128u + row);
+                }
+            }
+        } else {
+            if (matValid) {
+                enqueuePanel(0, matSrcBase, matDstBase,
+                             static_cast<uint32_t>(state.txn.matStrideBytes),
+                             matTargetNode, i);
+            }
+            if (vecValid) {
+                enqueuePanel(1, vecSrcBase, vecDstBase,
+                             static_cast<uint32_t>(state.txn.vecStrideBytes),
+                             vecTargetNode, i);
+            }
         }
     }
 }

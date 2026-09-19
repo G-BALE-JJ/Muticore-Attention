@@ -229,10 +229,37 @@ process_env_keys = [
     "GOLEM_STAGE_PROGRESS",
     "GOLEM_RUNTIME_SILENT",
     "GOLEM_SILENT",
+    "GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE",
 ]
 process_env_entries = [
     f"{key}={os.environ[key]}" for key in process_env_keys if key in os.environ
 ]
+attention_guest_args = []
+if _env_flag("GOLEM_ATTENTION_FUSED", False):
+    attention_guest_arg_names = (
+        ("GOLEM_ATTENTION_GUEST_MANAGER_QUERY_ROWS", "GOLEM_ATTENTION_GUEST_MANAGER_QUERIES"),
+        ("GOLEM_ATTENTION_GUEST_KV_LENGTH", "GOLEM_ATTENTION_GUEST_KEYS"),
+        ("GOLEM_ATTENTION_GUEST_NUM_QUERY_HEADS", "GOLEM_ATTENTION_GUEST_QUERY_HEADS"),
+        ("GOLEM_ATTENTION_GUEST_NUM_KV_HEADS", "GOLEM_ATTENTION_GUEST_KV_HEADS"),
+        ("GOLEM_ATTENTION_GUEST_HEAD_DIM",),
+        ("GOLEM_ATTENTION_GUEST_KV_TILE_ROWS", "GOLEM_ATTENTION_GUEST_KEY_BLOCK_ROWS"),
+        ("GOLEM_ATTENTION_GUEST_Q_OFFSET",),
+        ("GOLEM_ATTENTION_GUEST_K_OFFSET",),
+        ("GOLEM_ATTENTION_GUEST_V_OFFSET",),
+        ("GOLEM_ATTENTION_GUEST_O_OFFSET",),
+    )
+    missing_attention_args = [
+        names[0] for names in attention_guest_arg_names
+        if not any(name in os.environ for name in names)
+    ]
+    if missing_attention_args:
+        raise ValueError(
+            "missing Attention guest arguments: " + ", ".join(missing_attention_args)
+        )
+    attention_guest_args = [
+        next(os.environ[name] for name in names if name in os.environ)
+        for names in attention_guest_arg_names
+    ]
 processList = []
 for core_id in range(numCpus):
     process_params = {
@@ -240,8 +267,10 @@ for core_id in range(numCpus):
         "exe": full_exe_name,
         "arg0": exe_name,
         "arg1": str(core_id),
-        "argc": 2,
+        "argc": 2 + len(attention_guest_args),
     }
+    for arg_idx, arg_value in enumerate(attention_guest_args, start=2):
+        process_params[f"arg{arg_idx}"] = arg_value
     for idx, env_entry in enumerate(process_env_entries):
         process_params[f"env{idx}"] = env_entry
     processList.append((1, process_params))

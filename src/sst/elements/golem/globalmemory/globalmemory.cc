@@ -400,7 +400,9 @@ bool GlobalMemoryImplement::sendControlMessage(uint32_t destinationCore,
         return false;
     }
 
-    req->size_in_bits = sizeof(ControlTransportMessage) * 8;
+    req->size_in_bits = (sizeof(ControlTransportMessage) +
+        stampedMessage.payload.size() * sizeof(float) +
+        stampedMessage.scales.size() * sizeof(float)) * 8;
     req->src = network_id;
     req->dest = static_cast<SST::Interfaces::SimpleNetwork::nid_t>(destination->second);
     req->vn = control_vn;

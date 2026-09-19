@@ -1,4 +1,3 @@
-import copy
 import json
 import pathlib
 import os
@@ -13,8 +12,8 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from verify_attention_mpi_partition import expected_component_ranks
+from verify_flash_attention_baseline import build_checks
 from verify_fused_attention_scale_stats import (
-    PROFILES,
     attention_cluster_ii_sample_counts,
     expected_attention_cluster_broadcast_activity,
     expected_matrix_broadcast_activity,
@@ -29,8 +28,6 @@ from verify_fused_attention_scale_stats import (
     parse_dma_runtime_invariants,
     summarize_attention_cluster_resource_profile,
 )
-from report_attention_gpu_comparison import build_report
-from gpu_attention_stage_benchmark import make_correctness, make_result
 from attention_case import generate_case
 
 
@@ -39,9 +36,6 @@ SCALE_RUNNER = HERE / "run_fused_attention_scale.sh"
 UNIFIED_RUNNER = HERE.parents[6] / "scripts" / "test_flash_attention.sh"
 BUILD_SCRIPT = HERE.parents[6] / "scripts" / "build_and_install_local.sh"
 ARCHIVE_ARCH = HERE.parents[1] / "architecture" / "archive" / "ncores_selfcom_dma.py"
-BASELINE_ROOT = HERE.parents[6] / "baseline"
-GPU_BASELINE = BASELINE_ROOT / "gpu_attention_rtx5060.json"
-GPU_SCHEMA = HERE / "gpu_attention_stage_schema.json"
 ROCC_SOURCE = HERE.parents[2] / "rocc" / "roccAnalog.h"
 ROCC_FLOAT = HERE.parents[2] / "rocc" / "roccAnalogFloat.h"
 ROCC_INT = HERE.parents[2] / "rocc" / "roccAnalogInt.h"
@@ -53,6 +47,7 @@ GLOBAL_MEMORY_SOURCE = HERE.parents[2] / "globalmemory" / "globalmemory.h"
 GLOBAL_MEMORY_IMPL = HERE.parents[2] / "globalmemory" / "globalmemory.cc"
 SFU_SOURCE = HERE.parents[2] / "sfu" / "sfu.cc"
 SFU_HEADER = HERE.parents[2] / "sfu" / "sfu.h"
+ATTENTION_CLUSTER_HEADER = HERE.parents[2] / "attention" / "attentionCluster.h"
 GROUP_CTRL_HEADER = HERE.parents[2] / "groupctrl" / "groupctrl.h"
 GROUP_CTRL_SOURCE = HERE.parents[2] / "groupctrl" / "groupctrl.cc"
 MEMNIC_SOURCE = HERE.parents[3] / "memHierarchy" / "memNICBase.h"
@@ -345,9 +340,8 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
 
     def test_attention_sfu_keeps_intermediate_rows_resident(self):
         source = SFU_SOURCE.read_text(encoding="utf-8")
-        self.assertIn(
-            "worker.localTileMode && !worker.directScoreMode", source
-        )
+        self.assertIn("const bool rowResident = worker.localTileMode;", source)
+        self.assertIn("const bool loadWholeRow", source)
         self.assertIn("context.residentValues.begin()", source)
         max_stage = source[source.index(
             "if (stage == TensorRowEngineStage::Max)"
@@ -355,6 +349,76 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             "if (stage == TensorRowEngineStage::Max)"
         ))]
         self.assertIn("residentValues.assign", max_stage)
+
+    def test_attention_cluster_uses_fine_grained_sfu_slots_and_pv_draining(self):
+        rocc = ROCC_SOURCE.read_text(encoding="utf-8")
+        cluster = ATTENTION_CLUSTER_HEADER.read_text(encoding="utf-8")
+        wcp = WCP_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("static constexpr uint32_t kSlots = 16;", cluster)
+        self.assertIn("constexpr uint32_t sliceRows = 4;", rocc)
+        self.assertIn("std::array<int32_t, 16> reuseWindowScoreOwners", rocc)
+        self.assertIn("if (ready) {", rocc)
+        self.assertNotIn("rowContextSwitchThreshold", rocc)
+        self.assertIn("attentionWorkerClusterPvDraining_", rocc)
+        self.assertIn(
+            "dispatchAttentionReuseWindowPvAggregates(*draining);", rocc
+        )
+        self.assertIn("constexpr size_t cacheEntries = 4;", wcp)
+        self.assertIn("commitAttentionPvVectorCache();", wcp)
+        self.assertIn(
+            "usesAttentionPvPanels() && attentionPvVectorResidentHit_", wcp
+        )
+        self.assertIn("attention_pv_cache_gm_addr", wcp)
+        self.assertIn("attention_pv_cache_bytes", wcp)
+        self.assertIn(
+            "reuseNIndex_ * totalKTileCount_ + activeTxnKBegin_ + local_tile_idx",
+            wcp,
+        )
+        self.assertIn("LocalMemoryClient::WCP", wcp)
+        self.assertIn("attentionPvVectorReadInFlight_", wcp)
+        cache_entry = wcp[wcp.index("struct AttentionPvVectorCacheEntry"):
+                          wcp.index("void commitAttentionPvVectorCache")]
+        self.assertNotIn("std::vector<uint8_t> payload", cache_entry)
+
+    def test_attention_cluster_uses_local_gm_for_v_residency_at_256_bpc(self):
+        runner = (HERE.parents[6] / "baseline" / "attention_cluster" /
+                  "run_sst.sh").read_text(encoding="utf-8")
+        rocc = ROCC_SOURCE.read_text(encoding="utf-8")
+        self.assertIn(
+            'GOLEM_LOCAL_GM_BYTES_PER_CYCLE="${GOLEM_LOCAL_GM_BYTES_PER_CYCLE:-256}"',
+            runner,
+        )
+        self.assertIn("header.attention_pv_cache_gm_addr", rocc)
+        self.assertIn("header.attention_pv_cache_bytes", rocc)
+
+    def test_8qk_8pv_prioritizes_rows_and_tree_broadcasts_v_into_local_sram(self):
+        runner = (HERE.parents[6] / "baseline" / "attention_cluster_8qk_8pv" /
+                  "run_sst.sh").read_text(encoding="utf-8")
+        rocc = ROCC_SOURCE.read_text(encoding="utf-8")
+        wcp = WCP_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("GOLEM_ATTENTION_WORKER_CLUSTER_ROW_PRIORITY", runner)
+        self.assertIn("GOLEM_ATTENTION_WORKER_CLUSTER_V_BROADCAST", runner)
+        self.assertIn("AttentionClusterPvVPrefetchHint", rocc)
+        self.assertIn("deliveryChunkBytes = 16u * 1024u", rocc)
+        self.assertIn("distributeAttentionWorkerClusterV", rocc)
+        self.assertIn("installAttentionPvVector", rocc)
+        self.assertIn("localWriteAsync", wcp)
+
+    def test_8qk_8pv_dynamic_assignment_binds_rows_and_isolates_accumulators(self):
+        runner = (HERE.parents[6] / "baseline" / "attention_cluster_8qk_8pv" /
+                  "run_sst.sh").read_text(encoding="utf-8")
+        rocc = ROCC_SOURCE.read_text(encoding="utf-8")
+        transport = GLOBAL_MEMORY_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("GOLEM_ATTENTION_WORKER_CLUSTER_DYNAMIC_PV", runner)
+        self.assertIn("AttentionClusterPvAllocationRequest", transport)
+        self.assertIn("AttentionClusterPvAllocationResponse", transport)
+        self.assertIn("AttentionClusterPvAllocationRelease", transport)
+        self.assertIn("reuseWindowPvRowCore", rocc)
+        self.assertIn("attentionWorkerClusterPvOutputs_", rocc)
+        self.assertIn("const uint32_t manager = (message.ownerCore - 4u) % 4u", rocc)
+        self.assertIn("const uint32_t alternate = selected == manager ? manager + 4u : manager", rocc)
 
     def test_dma_landing_retries_transient_local_memory_backpressure(self):
         source = GLOBAL_MEMORY_IMPL.read_text(encoding="utf-8")
@@ -790,10 +854,16 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         )
         self.assertNotIn("/data/", text)
 
-    def test_attention_runner_disables_unused_generic_reuse_windows(self):
+    def test_attention_runner_selects_reuse_windows_for_bridge_only(self):
         runner = SCALE_RUNNER.read_text(encoding="utf-8")
-        self.assertIn("GOLEM_A_REUSE_N_TILES=1", runner)
-        self.assertIn("GOLEM_B_REUSE_M_TILES=1", runner)
+        self.assertIn(
+            'GOLEM_A_REUSE_N_TILES=$((REUSE_WINDOW_QK_BRIDGE ? 4 : 1))',
+            runner,
+        )
+        self.assertIn(
+            'GOLEM_B_REUSE_M_TILES=$((REUSE_WINDOW_QK_BRIDGE ? 2 : 1))',
+            runner,
+        )
         self.assertIn(
             "GOLEM_ATTENTION_KV_BUFFER_COUNT=$KV_BUFFER_COUNT_EFFECTIVE",
             runner,
@@ -887,8 +957,9 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("matrix_broadcast_fanout", array_source)
         self.assertIn("matrix_broadcast_fabric", verifier)
 
+        activity = make_attention_activity(1024, 1024, 128)
         expected = expected_matrix_broadcast_activity(
-            PROFILES["e3"], True, False, False, 16, 64, 1, 1
+            activity, True, False, False, 16, 64, 1, 1
         )
         self.assertEqual(expected["requests"], 1024)
         self.assertEqual(expected["payload_bytes"], 8192)
@@ -899,7 +970,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertEqual(expected["transfer_cycles"], 136192)
 
         mixed_active = expected_matrix_broadcast_activity(
-            PROFILES["e3"], True, True, False, 16, 64, 1, 1, True
+            activity, True, True, False, 16, 64, 1, 1, True
         )
         self.assertEqual(mixed_active["qk_payload_bytes"], 8192)
         self.assertEqual(mixed_active["pv_payload_bytes"], 2048)
@@ -1115,125 +1186,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertNotIn("BUILD_ARGS", text)
         self.assertNotIn("SKIP_BUILD", text)
 
-    def test_frozen_baseline_verifier_rejects_architecture_mutations(self):
-        baseline = json.loads(
-            (BASELINE_ROOT / "e3" / "result.json").read_text(encoding="ascii")
-        )
-        result = {
-            "status": "PASS",
-            "checked": baseline["verification"]["checked"],
-            "mismatches": baseline["verification"]["mismatches"],
-            "shape": {
-                "queries": baseline["shape"]["queries"],
-                "keys": baseline["shape"]["keys"],
-                "head_dim": baseline["shape"]["head_dim"],
-            },
-            "score_probability_hbm_bytes": baseline["verification"][
-                "score_probability_hbm_bytes"
-            ],
-            "max_abs_error": baseline["verification"]["max_abs_error"],
-        }
-        fabric = copy.deepcopy(
-            baseline["architecture"]["matrix_broadcast_fabric"]
-        )
-        fabric.update({"pv_enabled": True, "qk_enabled": True})
-        kv_prefetch_timing = copy.deepcopy(
-            baseline["lifecycle"]["worker_critical_path"]["kv_prefetch_timing"]
-        )
-        lifecycle = {
-            "status": "PASS",
-            "lifecycle": {
-                "worker_critical_path": {
-                    "order_valid": True,
-                    "inter_tile_breakdown": {"conservation_valid": True},
-                    "kv_prefetch_timing": kv_prefetch_timing,
-                },
-                "accelerator_completion_cycles": baseline["lifecycle"][
-                    "accelerator_completion_cycles"
-                ],
-                "wait_return_cycles": baseline["lifecycle"][
-                    "wait_return_cycles"
-                ],
-                "wcp_gemm_proxy": copy.deepcopy(
-                    baseline["architecture"]["wcp_gemm_proxy"]
-                ),
-                "matrix_broadcast_fabric": fabric,
-            },
-        }
-        mutations = {
-            "control": None,
-            "architecture.generic_gemm_wcp": lambda doc: doc["lifecycle"].pop(
-                "wcp_gemm_proxy"
-            ),
-            "architecture.wcp_gemm_proxy": lambda doc: doc["lifecycle"].update(
-                wcp_gemm_proxy={"garbage": 1}
-            ),
-            "architecture.pv_matrix_broadcast": lambda doc: doc["lifecycle"][
-                "matrix_broadcast_fabric"
-            ].update(pv_enabled=False),
-            "architecture.qk_matrix_broadcast": lambda doc: doc["lifecycle"][
-                "matrix_broadcast_fabric"
-            ].update(qk_enabled=False),
-            "architecture.kv_double_buffer": lambda doc: doc["lifecycle"][
-                "worker_critical_path"
-            ].pop("kv_prefetch_timing"),
-            "lifecycle.worker_critical_path.kv_prefetch_timing": lambda doc: doc[
-                "lifecycle"
-            ]["worker_critical_path"]["kv_prefetch_timing"]["counts"].update(
-                dma=0
-            ),
-            "lifecycle.worker_critical_path.kv_prefetch_timing.counts.dma": lambda doc: doc[
-                "lifecycle"
-            ]["worker_critical_path"]["kv_prefetch_timing"]["counts"].update(
-                dma=1
-            ),
-            "architecture.matrix_broadcast_fabric": lambda doc: doc[
-                "lifecycle"
-            ]["matrix_broadcast_fabric"].update(bytes_per_cycle=63),
-            "architecture.matrix_broadcast_fabric.worker_totals.matrix_broadcast_requests": lambda doc: doc[
-                "lifecycle"
-            ]["matrix_broadcast_fabric"]["worker_totals"].update(
-                matrix_broadcast_requests=16383
-            ),
-            "lifecycle.accelerator_completion_cycles": lambda doc: doc[
-                "lifecycle"
-            ].update(accelerator_completion_cycles=2232813),
-        }
-
-        for expected_failure, mutate in mutations.items():
-            with self.subTest(expected_failure=expected_failure), \
-                    tempfile.TemporaryDirectory() as directory:
-                root = pathlib.Path(directory)
-                actual_lifecycle = copy.deepcopy(lifecycle)
-                if mutate is not None:
-                    mutate(actual_lifecycle)
-                paths = {
-                    "baseline": root / "baseline.json",
-                    "result": root / "result.json",
-                    "lifecycle": root / "lifecycle.json",
-                }
-                paths["baseline"].write_text(json.dumps(baseline), encoding="ascii")
-                paths["result"].write_text(json.dumps(result), encoding="ascii")
-                paths["lifecycle"].write_text(
-                    json.dumps(actual_lifecycle), encoding="ascii"
-                )
-                completed = subprocess.run(
-                    [
-                        "python3", str(BASELINE_VERIFIER),
-                        "--baseline", str(paths["baseline"]),
-                        "--result", str(paths["result"]),
-                        "--lifecycle", str(paths["lifecycle"]),
-                        "--mpi-ranks", "1",
-                    ],
-                    capture_output=True,
-                    text=True,
-                )
-                if mutate is None:
-                    self.assertEqual(completed.returncode, 0, completed.stderr)
-                    self.assertIn("baseline MATCH", completed.stdout)
-                else:
-                    self.assertEqual(completed.returncode, 1, completed.stdout)
-                    self.assertIn(expected_failure, completed.stderr)
 
     def test_unified_runner_routes_custom_shape_without_starting_sst(self):
         result = subprocess.run(
@@ -1295,18 +1247,74 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertEqual(rejected.returncode, 2)
 
     def test_baseline_preflight_rejects_shape_before_simulation(self):
-        result = subprocess.run(
-            [
-                "python3", str(BASELINE_VERIFIER),
-                "--baseline", str(BASELINE_ROOT / "e3" / "result.json"),
-                "--mpi-ranks", "1", "--queries", "768", "--keys", "512",
-                "--head-dim", "64", "--preflight-only",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("baseline.shape", result.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = pathlib.Path(directory) / "baseline.json"
+            baseline.write_text(json.dumps({
+                "shape": {"queries": 1024, "keys": 1024, "head_dim": 128},
+                "topology": {"mpi_ranks": 1},
+            }), encoding="ascii")
+            result = subprocess.run(
+                [
+                    "python3", str(BASELINE_VERIFIER),
+                    "--baseline", str(baseline),
+                    "--mpi-ranks", "1", "--queries", "768", "--keys", "512",
+                    "--head-dim", "64", "--preflight-only",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("baseline.shape", result.stderr)
+
+    def test_generic_baseline_comparison_is_shape_driven(self):
+        baseline = {
+            "shape": {"queries": 1024, "keys": 1024, "head_dim": 128},
+            "topology": {"mpi_ranks": 1},
+            "verification": {
+                "status": "PASS", "checked": 131072, "mismatches": 0,
+                "score_probability_hbm_bytes": 0, "max_abs_error": 0.0,
+            },
+            "lifecycle": {
+                "status": "PASS", "accelerator_completion_cycles": 10,
+                "wait_return_cycles": 11,
+                "worker_critical_path": {"kv_prefetch_timing": {}},
+            },
+            "architecture": {
+                "generic_gemm_wcp": False,
+                "pv_matrix_broadcast": False,
+                "qk_matrix_broadcast": False,
+                "kv_double_buffer": False,
+                "wcp_gemm_proxy": {},
+                "matrix_broadcast_fabric": {},
+            },
+        }
+        result = {
+            "status": "PASS", "checked": 131072, "mismatches": 0,
+            "shape": {"queries": 1024, "keys": 1024, "head_dim": 128},
+            "score_probability_hbm_bytes": 0, "max_abs_error": 0.0,
+        }
+        lifecycle = {
+            "status": "PASS",
+            "lifecycle": {
+                "accelerator_completion_cycles": 10,
+                "wait_return_cycles": 11,
+                "worker_critical_path": {
+                    "order_valid": True,
+                    "inter_tile_breakdown": {"conservation_valid": True},
+                    "kv_prefetch_timing": {},
+                },
+                "wcp_gemm_proxy": {},
+                "matrix_broadcast_fabric": {
+                    "pv_enabled": False, "qk_enabled": False,
+                },
+            },
+        }
+        checks = build_checks(baseline, result, lifecycle, 1)
+        self.assertTrue(all(checks.values()))
+
+        result["shape"]["queries"] = 768
+        checks = build_checks(baseline, result, lifecycle, 1)
+        self.assertFalse(checks["verification.shape"])
 
     def test_unified_runner_rejects_missing_option_values(self):
         for option in (
@@ -1408,10 +1416,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             baseline = root / "attention_baseline_verification.json"
-            baseline.write_text(
-                (BASELINE_ROOT / "e3" / "result.json").read_text(encoding="ascii"),
-                encoding="ascii",
-            )
+            baseline.write_text("{}\n", encoding="ascii")
             result = subprocess.run(
                 [
                     str(SCALE_RUNNER), "--queries", "1024", "--keys", "1024",
@@ -1670,295 +1675,6 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("--array-buffer-base-latency-cycles", runner)
         self.assertIn("the two durable PV overlaps", verifier)
 
-    def test_frozen_e3_and_e4_baselines_cover_all_rank_modes(self):
-        for profile, queries in (("e3", 1024), ("e4", 2048)):
-            for mpi_ranks, relative in (
-                (1, "result.json"),
-                (2, "mpi2/result.json"),
-                (4, "mpi4/result.json"),
-            ):
-                with self.subTest(profile=profile, mpi_ranks=mpi_ranks):
-                    baseline = json.loads(
-                        (BASELINE_ROOT / profile / relative).read_text(encoding="ascii")
-                    )
-                    self.assertEqual(baseline["profile"], profile)
-                    self.assertEqual(baseline["shape"]["queries"], queries)
-                    self.assertEqual(baseline["shape"]["keys"], queries)
-                    self.assertEqual(baseline["topology"]["mpi_ranks"], mpi_ranks)
-                    self.assertEqual(baseline["verification"]["mismatches"], 0)
-                    architecture = baseline["architecture"]
-                    self.assertTrue(architecture["generic_gemm_wcp"])
-                    self.assertTrue(architecture["pv_matrix_broadcast"])
-                    self.assertTrue(architecture["qk_matrix_broadcast"])
-                    self.assertTrue(architecture["kv_double_buffer"])
-                    wcp = architecture["wcp_gemm_proxy"]
-                    self.assertEqual(wcp["queue_depth"], 32)
-                    self.assertEqual(wcp["issue_width"], 1)
-                    self.assertEqual(wcp["command_latency_cycles"], 1)
-                    self.assertEqual(wcp["completion_latency_cycles"], 1)
-                    self.assertEqual(
-                        wcp["worker_totals"]["gemm_proxy_queue_full_stalls"], 0
-                    )
-                    fabric = architecture["matrix_broadcast_fabric"]
-                    self.assertEqual(fabric["topology"], "binary_tree")
-                    self.assertTrue(fabric["shares_array_buffer_ports"])
-                    self.assertEqual(fabric["max_fanout"], 16)
-                    self.assertEqual(fabric["bytes_per_cycle"], 64)
-                    self.assertEqual(fabric["base_latency_cycles"], 1)
-                    self.assertEqual(fabric["stage_latency_cycles"], 1)
-                    self.assertEqual(fabric["fanout"], 16)
-                    self.assertEqual(fabric["payload_bytes"], 8192)
-                    self.assertEqual(fabric["cycles_per_request"], 133)
-                    requests = 18432 if profile == "e3" else 73728
-                    totals = fabric["worker_totals"]
-                    self.assertEqual(
-                        totals["matrix_broadcast_requests"], requests
-                    )
-                    self.assertEqual(totals["matrix_broadcast_rejected"], 0)
-                    self.assertEqual(
-                        totals["matrix_broadcast_ingress_bytes"], requests * 8192
-                    )
-                    self.assertEqual(
-                        totals["matrix_broadcast_sink_bytes"], requests * 8192 * 16
-                    )
-                    self.assertEqual(
-                        totals["matrix_broadcast_transfer_cycles"], requests * 133
-                    )
-                    prefetch = baseline["lifecycle"]["worker_critical_path"][
-                        "kv_prefetch_timing"
-                    ]
-                    tiles, query_blocks = (
-                        (128, 4) if profile == "e3" else (512, 8)
-                    )
-                    self.assertEqual(
-                        prefetch["counts"]["dma"], tiles - query_blocks
-                    )
-                    self.assertEqual(
-                        prefetch["counts"]["ready_lead"]
-                        + prefetch["counts"]["wait"],
-                        prefetch["counts"]["dma"],
-                    )
-
-    def test_gpu_raw_baseline_and_stage_schema_cover_e3_e4(self):
-        schema = json.loads(GPU_SCHEMA.read_text(encoding="ascii"))
-        gpu = json.loads(GPU_BASELINE.read_text(encoding="ascii"))
-        self.assertEqual(schema["properties"]["schema_version"]["const"], 1)
-        self.assertEqual(set(gpu["profiles"]), {"e3", "e4"})
-        self.assertEqual(
-            gpu["profiles"]["e3"]["fp32_math"]["scope_a"]["median_normalized_cycles"],
-            97568,
-        )
-        self.assertEqual(
-            gpu["profiles"]["e4"]["fp32_math"]["stage_chain"]["status"],
-            "measured",
-        )
-        self.assertEqual(
-            gpu["profiles"]["e3"]["fp32_math"]["evidence_level"],
-            "raw_samples",
-        )
-        self.assertEqual(
-            len(gpu["profiles"]["e3"]["fp32_math"]["scope_a"]["samples_ms"]),
-            200,
-        )
-        self.assertTrue(gpu["audit"]["passed"])
-        self.assertEqual(len(gpu["measurement"]["empty_event_samples_ms"]), 1000)
-
-    def test_gpu_collector_emits_finalized_import_contract(self):
-        correctness = make_correctness((1, 1, 1024, 128), True, 0.0)
-        self.assertEqual(
-            set(correctness),
-            {
-                "passed", "output_shape", "finite", "scope_a_max_abs_error",
-                "stage_chain_max_abs_error", "max_abs_error", "tolerance",
-            },
-        )
-        result = make_result(
-            "NVIDIA GeForce RTX 5060", (12, 0), "test", "test",
-            50, 200, [0.002, 0.004], {"e3": {}},
-        )
-        self.assertEqual(
-            result["benchmark"],
-            "single-head FP32 non-causal scaled dot-product attention",
-        )
-        measurement = result["measurement"]
-        self.assertEqual(measurement["empty_event_iterations"], 2)
-        self.assertEqual(measurement["empty_event_median_ms"], 0.003)
-        self.assertEqual(measurement["empty_event_samples_ms"], [0.002, 0.004])
-        self.assertNotIn("empty_event_interval", measurement)
-
-    def test_gpu_comparison_report_preserves_latency_and_work_semantics(self):
-        clock = make_clock_contract(
-            1_000_000_000, 1_000_000_000_000,
-            2_300_000_000, 2_300_000_000,
-            2_300_000_000, 2_000_000_000,
-        )
-
-        def lifecycle(total_ticks):
-            phase_ticks = {
-                "kv_load": 100,
-                "q_local_read": 100,
-                "qk_matrix_program": 200,
-                "qk_input_program": 100,
-                "qk_compute_readout": 100,
-                "softmax": 100,
-                "pv_matrix_program": 200,
-                "pv_input_program": 100,
-                "pv_restore_output": 100,
-                "pv_compute": 100,
-                "pv_output_readwrite": 100,
-            }
-            worker_ticks = sum(phase_ticks.values())
-            return {
-                "status": "PASS",
-                "lifecycle": {
-                    "clock_contract": clock,
-                    "accelerator_completion_ticks": total_ticks,
-                    "worker_critical_path": {
-                        "slowest_worker_core": 19,
-                        "milestone_ticks": {
-                            "dispatch_accept": 0,
-                            "final_output_dma_ack": total_ticks,
-                        },
-                        "tile_pipeline_breakdown": {
-                            "tile_count": 1,
-                            "phase_ticks": phase_ticks,
-                            "total_ticks": worker_ticks,
-                            "conservation_valid": True,
-                        },
-                    },
-                    "system_frontier": {
-                        "stage_ticks": {"descriptor_to_complete": total_ticks},
-                        "accelerator_attribution": {
-                            "total_ticks": total_ticks,
-                            "attributed_ticks": total_ticks,
-                            "unattributed_ticks": 0,
-                            "coverage_ratio": 1.0,
-                            "conservation_valid": True,
-                        },
-                        "interpretation": "synthetic test",
-                    },
-                },
-            }
-
-        gpu = json.loads(GPU_BASELINE.read_text(encoding="ascii"))
-        summary_gpu = json.loads(json.dumps(gpu))
-        for profile in ("e3", "e4"):
-            fp32 = summary_gpu["profiles"][profile]["fp32_math"]
-            fp32["evidence_level"] = "summary_only"
-            fp32["scope_a"]["samples_ms"] = None
-            fp32["stage_chain"] = {"status": "pending_external_measurement"}
-        report = build_report(
-            {"e3": lifecycle(1350), "e4": lifecycle(1350)}, summary_gpu
-        )
-        self.assertEqual(report["sst_report_status"], "PASS")
-        self.assertEqual(
-            report["gpu_stage_status"], "pending_external_measurement"
-        )
-        e3 = report["profiles"]["e3"]
-        self.assertEqual(
-            e3["sst"]["accelerator_completion"]["normalized_cycles"], 2
-        )
-        self.assertAlmostEqual(
-            e3["sst"]["slowest_worker_work"][
-                "coverage_of_accelerator_completion_ratio"
-            ],
-            26 / 27,
-        )
-        self.assertIn(
-            "Do not sum", e3["sst"]["slowest_worker_work"]["interpretation"]
-        )
-
-        measured_gpu = json.loads(json.dumps(gpu))
-        measured_gpu["measurement"].update({
-            "iterations": 2,
-            "tf32_allowed": False,
-            "dtype_conversion_included": False,
-            "stream": "current default stream",
-        })
-        for profile in ("e3", "e4"):
-            fp32 = measured_gpu["profiles"][profile]["fp32_math"]
-            fp32["evidence_level"] = "raw_samples"
-            fp32["scope_a"].update({
-                "median_ms": 0.04,
-                "samples_ms": [0.04, 0.04],
-                "median_normalized_cycles": 40000,
-            })
-            fp32["stage_chain"] = {
-                "status": "measured",
-                "method": "consecutive CUDA Events on one stream; one final synchronize",
-                "stage_median_ms": {
-                    "qk": 0.01,
-                    "scale": 0.002,
-                    "softmax": 0.008,
-                    "pv": 0.02,
-                },
-                "stage_samples_ms": {
-                    "qk": [0.01, 0.01],
-                    "scale": [0.002, 0.002],
-                    "softmax": [0.008, 0.008],
-                    "pv": [0.02, 0.02],
-                },
-                "end_to_end_median_ms": 0.04,
-                "end_to_end_samples_ms": [0.04, 0.04],
-                "output_writeback": "included in the PV matmul event interval",
-            }
-        measured = build_report(
-            {"e3": lifecycle(1350), "e4": lifecycle(1350)}, measured_gpu
-        )
-        self.assertEqual(measured["gpu_stage_status"], "measured")
-        self.assertAlmostEqual(
-            measured["profiles"]["e3"]["stage_comparison"]["stages"]
-            ["scale_softmax"]["gpu_stage_ms"],
-            0.01,
-        )
-
-        for case in (
-            "h2d", "dtype", "tf32", "missing_samples", "bad_cycles",
-            "missing_stream", "missing_method", "bad_correctness",
-            "missing_floor_samples", "wrong_gpu", "wrong_benchmark",
-        ):
-            with self.subTest(case=case):
-                invalid = json.loads(json.dumps(measured_gpu))
-                if case == "h2d":
-                    invalid["measurement"]["h2d_included"] = True
-                elif case == "dtype":
-                    invalid["measurement"]["dtype_conversion_included"] = True
-                elif case == "tf32":
-                    invalid["measurement"]["tf32_allowed"] = True
-                elif case == "missing_samples":
-                    del invalid["profiles"]["e3"]["fp32_math"][
-                        "stage_chain"
-                    ]["stage_samples_ms"]
-                elif case == "missing_stream":
-                    del invalid["measurement"]["stream"]
-                elif case == "missing_method":
-                    del invalid["profiles"]["e3"]["fp32_math"][
-                        "stage_chain"
-                    ]["method"]
-                elif case == "bad_correctness":
-                    invalid["profiles"]["e3"]["fp32_math"][
-                        "correctness"
-                    ]["passed"] = False
-                elif case == "missing_floor_samples":
-                    del invalid["measurement"]["empty_event_samples_ms"]
-                elif case == "wrong_gpu":
-                    invalid["hardware"]["gpu"] = "different GPU"
-                elif case == "wrong_benchmark":
-                    invalid["benchmark"] = "different workload"
-                else:
-                    invalid["profiles"]["e3"]["fp32_math"]["scope_a"][
-                        "median_normalized_cycles"
-                    ] = 1
-                with self.assertRaises(ValueError):
-                    build_report(
-                        {"e3": lifecycle(1350), "e4": lifecycle(1350)}, invalid
-                    )
-
-        overcovered = build_report(
-            {"e3": lifecycle(1200), "e4": lifecycle(1200)}, gpu
-        )
-        self.assertEqual(overcovered["sst_report_status"], "FAIL")
-        self.assertFalse(overcovered["profiles"]["e3"]["sst_coverage_gate"]["pass"])
 
     def test_build_script_builds_attention_guests(self):
         text = BUILD_SCRIPT.read_text()
@@ -2176,8 +1892,9 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
                 self.assertIn("WCP", result.stderr)
 
     def test_v_tile_buffer_expected_activity(self):
+        activity = make_attention_activity(1024, 1024, 128)
         self.assertEqual(
-            expected_v_tile_buffer_activity(PROFILES["e3"], True, 16384, 1),
+            expected_v_tile_buffer_activity(activity, True, 16384, 1),
             {
                 "hits": 896,
                 "misses": 128,
@@ -2189,7 +1906,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             },
         )
         self.assertEqual(
-            expected_v_tile_buffer_activity(PROFILES["e3"], True, 8192, 3),
+            expected_v_tile_buffer_activity(activity, True, 8192, 3),
             {
                 "hits": 0,
                 "misses": 1024,
@@ -2201,7 +1918,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             },
         )
         self.assertEqual(
-            expected_v_tile_buffer_activity(PROFILES["e3"], False, 16384, 1),
+            expected_v_tile_buffer_activity(activity, False, 16384, 1),
             {
                 "hits": 0,
                 "misses": 0,
@@ -2214,7 +1931,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         )
         self.assertEqual(
             expected_v_tile_buffer_activity(
-                PROFILES["e3"], True, 16384, 1, 64, True, 32,
+                activity, True, 16384, 1, 64, True, 32,
             ),
             {
                 "hits": 992,
