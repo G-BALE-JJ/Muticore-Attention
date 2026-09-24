@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+export GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE=0
 ATTENTION_RUNNER="$ROOT/src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh"
 ARTIFACT_ROOT="${GOLEM_ARTIFACT_ROOT:-$SCRIPT_DIR/artifacts/sst_qk_bridge}"
 

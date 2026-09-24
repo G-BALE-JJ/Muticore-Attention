@@ -10448,7 +10448,7 @@ public:
                    arrayInputSize * 2 != static_cast<int>(message.headDim) ||
                    arrayOutputSize !=
                        static_cast<int>(attentionClusterConfig_.arrayOutputs))
-                : (attentionSequential64Enable_ ?
+                : (attentionSequential64Enable_ || attentionReuseWindowQkBridge_ ?
                    (numArrays < 64 || arrayInputSize != 64 ||
                     arrayOutputSize != 64) :
                   (numArrays < 16 ||

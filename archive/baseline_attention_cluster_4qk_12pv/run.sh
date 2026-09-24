@@ -3,8 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARTIFACT_ROOT="${GOLEM_ARTIFACT_ROOT:-$SCRIPT_DIR/artifacts/latest}"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-exec python3 "$SCRIPT_DIR/attention_cluster.py" \
+exec python3 "$ROOT/baseline/attention_cluster_8qk_8pv/attention_cluster_model.py" \
   --artifact-root "$ARTIFACT_ROOT" \
   --query-length "${GOLEM_QUERY_LENGTH:-1024}" \
   --kv-length "${GOLEM_KV_LENGTH:-1024}" \

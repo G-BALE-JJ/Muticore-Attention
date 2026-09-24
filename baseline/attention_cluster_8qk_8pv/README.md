@@ -1,6 +1,19 @@
 # 8 QK/SFU + 8 PV attention cluster
 
-This experiment changes only the worker split of `attention_cluster`:
+This is the final worker-cluster architecture. The archived 4:12 comparison is
+in `../../archive/baseline_attention_cluster_4qk_12pv/`.
+
+## Current SST verification
+
+A 2026-09-24 rerun of Hq4/Hkv2/Q1024/K1024/D128 completed all 16 QK jobs,
+256 PV windows, and 16 end-to-end jobs on cores 4..11 and 12..19. The
+measured critical path was 50,329 cycles (`start=63,668`, `end=113,997`).
+The PV WCP stall was caused by requesting a 16 KiB V panel through a local
+SRAM interface limited to 4 KiB per request; the WCP now reads each panel in
+bounded chunks. The `47,193`-cycle value below remains the frozen
+2026-09-19 comparison, not a measurement of this worktree. The worker-cluster
+runner verifies completion and timing; it does not export the accumulated PV
+output to HBM for numerical verification.
 
 ```text
 managers 0..3

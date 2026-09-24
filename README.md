@@ -27,66 +27,33 @@ The integrated development branch is `softmax-update` in
 [`G-BALE-JJ/Muticore-Attention`](https://github.com/G-BALE-JJ/Muticore-Attention).
 It combines the Golem generic GEMM/WCP path, deterministic MPI partitioning,
 Ramulator2-backed memory timing, bounded resource models, and the current
-single-head FP32 FlashAttention dataflow.
+FP32 GQA FlashAttention dataflow.
 
-The primary Attention comparison is `B=1,Hq=Hkv=1,Dh=128`, non-causal, with SST
+The primary Attention comparison is `B=1,Hq=4,Hkv=2,Sq=Skv=1024,Dh=128`, non-causal, with SST
 normalized cycles interpreted at 1 GHz. Host wall time is simulator execution
 time and is not accelerator latency.
 
-The current default is a worker-local sequential architecture with four
-control-only managers and 16 workers. Every worker has 64 physical 64x64 arrays
-and reuses all of them in the dependency order `QK^T` -> online softmax -> PV.
-Br64/Bc64/D128 uses two accumulated QK D64 reduction slices and two PV D64
-output slices. The SFU has 64 online row contexts, balanced 16-lane vector/EXP
-paths, and row-resident intermediate storage. This is the only supported
-Attention worker dataflow.
+The current default is the 8+8 worker-cluster architecture: four managers each
+dispatch two QK/SFU workers and two PV workers, for eight workers in each role.
+QK results flow through bounded Score/P FIFOs into a pipelined PV stage. The
+SFU uses row-priority scheduling, and each distinct V window is fetched once
+and broadcast into the eight PV workers' existing local SRAM. This is the
+supported Attention worker dataflow.
 
-| Workload | Current SST cycles | Status |
+| Workload | Archived SST cycles | Status |
 |---|---:|---|
-| Sq=Skv=1024 | **31,197** | numerical/lifecycle/backend PASS |
+| Hq=4, Hkv=2, Sq=Skv=1024, Dh=128 | **47,193** | frozen result PASS |
 
-The implementation uses worker-local 64-array `QK^T` -> softmax -> PV
-execution, grouped score readout, 256 B/cycle matrix/vector/O fabrics, grouped
-running-output restore/writeback, and shared-node K/V delivery.
-
-The current multi-head path supports GQA with independent `Hq` and `Hkv`
-(`Hq/Hkv` equal to 1, 2, or 4). One composite job shares each K/V head across
-its Query-head group, heads are spatially distributed over the 16 workers, and
-each worker still uses all 64 arrays for every QK and PV operation. Output is
-written directly as `[Sq,Hq,Dh]`, so there is no serial concatenation copy.
-
-For Q1024/K1024, every 32 KiB K or V tile is split into two 16 KiB chunks.
-Identical requests from all 16 workers are coalesced at the shared memory node;
-completed chunks remain resident for launch-skewed consumers and are delivered
-through a 256 B/cycle multicast stream. The final run performs exactly 64
-physical K/V reads for 1 MiB of unique data, versus 1,024 logical deliveries.
-All 15 critical-worker prefetches hit and exposed K/V wait is zero.
-
-The current dependency/resource lower bound is 20,600 cycles: 16,384 cycles for
-the 16-tile operand/compute path plus 4,216 cycles for grouped O movement. The
-measured critical-worker phases are 137 input, 6,736 QK, 12,567 softmax, and
-9,848 PV cycles. End-to-end latency is 31,197 cycles, down 30.35% from the
-44,790-cycle grouped-O baseline. Softmax accounts for 8,135 of the remaining
-10,597 cycles above the bound.
-Performance experiments and cycle acceptance remain fixed to
-`Sq=Skv=1024,Dh=128`;
-other shapes remain available only for correctness contracts.
+The 8+8 result uses 16 QK jobs and 256 PV windows, with a theoretical resource
+floor of 32,768 cycles. Its static PV assignment balances 32 windows per PV
+worker. The frozen measurement is 25,929 cycles faster than the archived 4:12
+result at the same shape and hardware parameters.
 
 See
-[`src/sst/elements/golem/tests/small/muticore_attention/README.md`](src/sst/elements/golem/tests/small/muticore_attention/README.md)
-for the runner contract,
-[`attention_sequential_64/README.md`](attention_sequential_64/README.md)
-for the single-head architecture evolution,
-[`attention_sequential_64/GQA_ARCHITECTURE.md`](attention_sequential_64/GQA_ARCHITECTURE.md)
-for the parallel GQA dataflow, cycle derivation, and measurements,
-[`baseline/reuse_window_flash_attention/README.md`](baseline/reuse_window_flash_attention/README.md)
-for the independent `2x4` generic-GEMM reuse-window FlashAttention baseline,
-[`baseline/attention_cluster/README.md`](baseline/attention_cluster/README.md)
-for the 4 QK/SFU + 12 PV worker-cluster baseline, and
 [`baseline/attention_cluster_8qk_8pv/README.md`](baseline/attention_cluster_8qk_8pv/README.md)
-for the frozen 8 QK/SFU + 8 PV comparison and its `47,193`-cycle SST archive,
-[`attention_sequential_64/ATTENTION_TERMINOLOGY.md`](attention_sequential_64/ATTENTION_TERMINOLOGY.md)
-for the canonical terminology and compatibility map.
+for the final 8 QK/SFU + 8 PV architecture, its frozen `47,193`-cycle SST
+result, and the runnable contract. Historical sequential, 4:12, and reuse-window
+materials are retained under [`archive/`](archive/) for reference only.
 
 ## Portable Muticore-Attention build
 

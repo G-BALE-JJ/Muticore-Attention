@@ -20,7 +20,7 @@ if [[ "$WORKER_CLUSTER_QK_WORKERS_PER_MANAGER" != "1" &&
   echo "GOLEM_ATTENTION_WORKER_CLUSTER_QK_WORKERS_PER_MANAGER must be 1 or 2" >&2
   exit 2
 fi
-ATTENTION_SEQUENTIAL_64=1
+ATTENTION_SEQUENTIAL_64="${GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE:-1}"
 GENERIC_GEMM=1
 PV_MATRIX_BROADCAST=1
 QK_MATRIX_BROADCAST=1
@@ -222,12 +222,12 @@ while [[ $# -gt 0 ]]; do
     --no-pv-matrix-softmax-overlap) PV_MATRIX_SOFTMAX_OVERLAP=0; shift ;;
     --pv-active-k) PV_ACTIVE_K=1; shift ;;
     --no-pv-active-k) PV_ACTIVE_K=0; shift ;;
-    --sequential-64) shift ;;
+    --sequential-64) ATTENTION_SEQUENTIAL_64=1; shift ;;
     --generic-gemm) GENERIC_GEMM=1; shift ;;
     --direct-gemm) GENERIC_GEMM=0; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help)
-      echo "Worker dataflow: sequential-64"
+      echo "Worker dataflow: selected by the architecture wrapper"
       echo "KV tile override: [--kv-tile-rows 32|64]"
       echo "Usage: run_fused_attention_scale.sh [--query-length N] [--kv-length N] [--num-query-heads N] [--num-kv-heads N] [--head-dim N] [--qk-score-row-burst|--no-qk-score-row-burst] [--artifact-root DIR] [--timeout SEC] [--dry-run]"
       exit 0 ;;
@@ -1121,7 +1121,7 @@ if (( REUSE_WINDOW_QK_BRIDGE )); then
   QK_BRIDGE_RESULT="$ARTIFACT_ROOT/sst_qk_bridge_result.json"
   if (( WORKER_CLUSTER_BRIDGE )); then
     run_attention_stage worker_cluster_report \
-      python3 "$WORKTREE_ROOT/baseline/attention_cluster/report_sst.py" \
+      python3 "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/report_sst.py" \
         --log "$SST_RUNTIME_LOG" --num-kv-heads "$NUM_KV_HEADS" \
         --qk-workers-per-manager "$WORKER_CLUSTER_QK_WORKERS_PER_MANAGER" \
         --output "$QK_BRIDGE_RESULT"
@@ -1130,7 +1130,7 @@ if (( REUSE_WINDOW_QK_BRIDGE )); then
     exit 0
   fi
   run_attention_stage qk_bridge_report \
-    python3 "$WORKTREE_ROOT/baseline/reuse_window_flash_attention/report_sst_qk_bridge.py" \
+    python3 "$WORKTREE_ROOT/archive/reuse_window_flash_attention/report_sst_qk_bridge.py" \
       --log "$SST_RUNTIME_LOG" --num-kv-heads "$NUM_KV_HEADS" \
       --output "$QK_BRIDGE_RESULT"
   run_attention_stage numerical_verify "${VERIFY_CMD[@]}"

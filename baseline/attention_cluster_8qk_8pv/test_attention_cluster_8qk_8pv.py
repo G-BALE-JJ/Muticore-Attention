@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 
-MODEL = Path(__file__).parents[1] / "attention_cluster" / "attention_cluster.py"
+MODEL = Path(__file__).with_name("attention_cluster_model.py")
 WCP_SOURCE = Path(__file__).parents[2] / "src/sst/elements/golem/workercmdproc/workercmdproc.h"
 RUNNER_SOURCE = Path(__file__).with_name("run_sst.sh")
 GOLDEN_RESULT = Path(__file__).parent / "artifacts/golden/sst_result.json"

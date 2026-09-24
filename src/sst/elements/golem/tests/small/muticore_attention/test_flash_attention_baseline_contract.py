@@ -321,15 +321,12 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertNotIn("arrayIDs.size() != 64", body)
         self.assertIn("arrayIDs.size() > 64", body)
 
-    def test_public_attention_runner_defaults_to_sequential_64(self):
+    def test_public_attention_runner_defaults_to_8qk_8pv(self):
         runner = WRAPPER.read_text(encoding="utf-8")
         unified = UNIFIED_RUNNER.read_text(encoding="utf-8")
-        self.assertIn("GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE", runner)
-        self.assertNotIn("--attention-cluster", runner)
-        self.assertNotIn("--partitioned-qk-pv", runner)
-        self.assertNotIn("--no-sequential-64", runner)
-        self.assertIn("KV_PAIR_REUSE=0", unified)
-        self.assertIn("KV_QUERY_GROUP_SIZE=1", unified)
+        self.assertIn("baseline/attention_cluster_8qk_8pv/run_sst.sh", runner)
+        self.assertIn('"ATTENTION_DATAFLOW=8qk_8pv"', unified)
+        self.assertIn('"WORKER_CLUSTER_QK_WORKERS_PER_MANAGER=2"', unified)
 
         rejected = subprocess.run(
             [str(WRAPPER), "--attention-cluster", "--show-config"],
@@ -337,6 +334,18 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         )
         self.assertEqual(rejected.returncode, 2)
         self.assertIn("Unknown", rejected.stderr)
+
+    def test_8qk_8pv_uses_wcp_on_64_input_arrays(self):
+        rocc = ROCC_SOURCE.read_text(encoding="utf-8")
+        builder = CPU_BUILDER.read_text(encoding="utf-8")
+        self.assertIn(
+            "attentionSequential64Enable_ || attentionReuseWindowQkBridge_",
+            rocc,
+        )
+        self.assertNotIn(
+            '"attention_cluster_enable": attention_worker_cluster_bridge',
+            builder[:builder.index("arrayParams =")],
+        )
 
     def test_attention_sfu_keeps_intermediate_rows_resident(self):
         source = SFU_SOURCE.read_text(encoding="utf-8")
@@ -381,7 +390,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertNotIn("std::vector<uint8_t> payload", cache_entry)
 
     def test_attention_cluster_uses_local_gm_for_v_residency_at_256_bpc(self):
-        runner = (HERE.parents[6] / "baseline" / "attention_cluster" /
+        runner = (HERE.parents[6] / "baseline" / "attention_cluster_8qk_8pv" /
                   "run_sst.sh").read_text(encoding="utf-8")
         rocc = ROCC_SOURCE.read_text(encoding="utf-8")
         self.assertIn(
@@ -847,10 +856,10 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("GOLEM_ATTENTION_GUEST_MANAGER_QUERIES=256", result.stdout)
         self.assertNotIn("PROFILE=", WRAPPER.read_text())
 
-    def test_wrapper_targets_local_scale_runner(self):
+    def test_wrapper_targets_8qk_8pv_runner(self):
         text = WRAPPER.read_text()
         self.assertIn(
-            'exec "$SCRIPT_DIR/run_fused_attention_scale.sh" "$@"', text
+            'exec "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/run_sst.sh" "$@"', text
         )
         self.assertNotIn("/data/", text)
 
@@ -883,7 +892,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("--mpi-partitioner sst.self", result.stdout)
         self.assertIn("--lib-path=", result.stdout)
         self.assertIn("/install/lib/sst-elements-library", result.stdout)
-        self.assertIn("architecture/archive/ncores_selfcom_dma.py", result.stdout)
+        self.assertIn("architecture/ncores_selfcom_dma_ctrl.py", result.stdout)
         self.assertIn("GOLEM_ATTENTION_QUERY_BLOCK_MPI=1", result.stdout)
         self.assertIn("verify_attention_mpi_partition.py", result.stdout)
         self.assertNotIn("/data/shun/", result.stdout)
@@ -1162,16 +1171,8 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertNotIn('BASELINE_DIR="$WORKTREE_ROOT/baseline/$PROFILE"', text)
         self.assertNotIn('--profile', text)
         self.assertIn('"verification.score_probability_hbm_bytes"', verifier)
-        self.assertIn(
-            '--generic-gemm --pv-matrix-broadcast --qk-matrix-broadcast '
-            '--kv-double-buffer',
-            text,
-        )
-        self.assertIn('GOLEM_MATRIX_BROADCAST_MAX_FANOUT=16', text)
-        self.assertIn('GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256', text)
-        self.assertIn('GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE=256', text)
-        self.assertIn('GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1', text)
-        self.assertIn('GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1', text)
+        self.assertIn('"ATTENTION_DATAFLOW=8qk_8pv"', text)
+        self.assertIn('"WORKER_CLUSTER_QK_WORKERS_PER_MANAGER=2"', text)
         self.assertIn('"architecture.pv_matrix_broadcast"', verifier)
         self.assertIn('"architecture.kv_double_buffer"', verifier)
         self.assertIn('"architecture.wcp_gemm_proxy"', verifier)
@@ -1215,8 +1216,8 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertEqual(config["ARTIFACT_ROOT"], "/tmp/attention-custom")
         self.assertEqual(config["QK_MATRIX_BROADCAST"], "1")
         self.assertEqual(config["KV_DOUBLE_BUFFER"], "1")
-        self.assertEqual(config["KV_PAIR_REUSE"], "0")
-        self.assertEqual(config["KV_QUERY_GROUP_SIZE"], "1")
+        self.assertEqual(config["KV_PAIR_REUSE"], "1")
+        self.assertEqual(config["KV_QUERY_GROUP_SIZE"], "4")
 
         group_one = subprocess.run(
             [str(UNIFIED_RUNNER), "--show-config"],
@@ -1514,11 +1515,15 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             "--keys", "1024", "--head-dim", "128", "--dry-run",
         ]
         enabled = subprocess.run(
-            base_args, cwd=HERE, check=True, capture_output=True, text=True,
+            base_args, cwd=HERE,
+            env={**os.environ, "GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE": "1"},
+            check=True, capture_output=True, text=True,
         )
         disabled = subprocess.run(
             base_args[:-1] + ["--no-kv-shared-stream", "--dry-run"],
-            cwd=HERE, check=True, capture_output=True, text=True,
+            cwd=HERE,
+            env={**os.environ, "GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE": "1"},
+            check=True, capture_output=True, text=True,
         )
         self.assertIn("GOLEM_ATTENTION_KV_SHARED_STREAM_ENABLE=1", enabled.stdout)
         self.assertIn("GOLEM_ATTENTION_KV_STREAM_BYTES_PER_CYCLE=256", enabled.stdout)

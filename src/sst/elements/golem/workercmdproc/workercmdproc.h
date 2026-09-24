@@ -3521,6 +3521,46 @@ private:
         Failed,
     };
 
+    bool readAttentionPvPanelAsync(
+        uint64_t addr, size_t bytes,
+        std::function<void(bool, std::vector<uint8_t>)> callback) {
+        if (globalMem_ == nullptr || bytes == 0 ||
+            globalMem_->localMaxRequestBytes() == 0) return false;
+        struct ReadState {
+            std::vector<uint8_t> data;
+            size_t pending = 0;
+            bool ok = true;
+        };
+        auto state = std::make_shared<ReadState>();
+        state->data.resize(bytes);
+        const size_t chunkMax = globalMem_->localMaxRequestBytes();
+        state->pending = (bytes + chunkMax - 1) / chunkMax;
+        for (size_t offset = 0; offset < bytes; offset += chunkMax) {
+            const size_t chunk = std::min(chunkMax, bytes - offset);
+            const bool accepted = globalMem_->localReadAsync(
+                addr + offset, chunk, LocalMemoryClient::WCP,
+                ++attentionPvVectorReadTag_,
+                [state, offset, chunk, callback](
+                    bool ok, uint64_t, const std::vector<uint8_t>& data) {
+                    state->ok = state->ok && ok && data.size() == chunk;
+                    if (ok && data.size() == chunk) {
+                        std::copy(data.begin(), data.end(),
+                                  state->data.begin() + offset);
+                    }
+                    if (--state->pending == 0) {
+                        callback(state->ok, std::move(state->data));
+                    }
+                });
+            if (!accepted) {
+                state->ok = false;
+                if (--state->pending == 0) {
+                    callback(false, std::move(state->data));
+                }
+            }
+        }
+        return true;
+    }
+
     void tryPrefetchAttentionPvPanel(uint32_t currentTile) {
         if (!attentionPvPanelPrefetch_ || !usesAttentionPvPanels() ||
             globalMem_ == nullptr ||
@@ -3543,11 +3583,10 @@ private:
             static_cast<uint64_t>(vecSlotIdx) * header_.local_vec_slot_stride_bytes;
         const size_t vecBytes = static_cast<size_t>(current_.vec_stride_bytes);
         const uint64_t generation = attentionPvVectorReadGeneration_;
-        const bool accepted = globalMem_->localReadAsync(
-            vecAddr, vecBytes, LocalMemoryClient::WCP,
-            ++attentionPvVectorReadTag_,
+        const bool accepted = readAttentionPvPanelAsync(
+            vecAddr, vecBytes,
             [this, generation, nextTile, nextReuseN, vecBytes](
-                bool ok, uint64_t, std::vector<uint8_t> bytes) {
+                bool ok, std::vector<uint8_t> bytes) {
                 if (generation != attentionPvVectorReadGeneration_) return;
                 attentionPvVectorPanelPrefetchInFlight_ = false;
                 if (!ok || bytes.size() < vecBytes) {
@@ -3622,11 +3661,10 @@ private:
             }
             const uint64_t generation = attentionPvVectorReadGeneration_;
             const int expectedTile = activeComputeTileIndex_;
-            const bool accepted = globalMem_->localReadAsync(
+            const bool accepted = readAttentionPvPanelAsync(
                 vec_addr, static_cast<size_t>(vec_bytes),
-                LocalMemoryClient::WCP, ++attentionPvVectorReadTag_,
                 [this, generation, expectedTile, vec_bytes](
-                    bool ok, uint64_t, std::vector<uint8_t> bytes) {
+                    bool ok, std::vector<uint8_t> bytes) {
                     if (generation != attentionPvVectorReadGeneration_ ||
                         expectedTile != activeComputeTileIndex_) {
                         return;

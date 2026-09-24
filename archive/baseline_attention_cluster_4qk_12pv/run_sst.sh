@@ -6,6 +6,7 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNNER="$ROOT/src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh"
 
 export GOLEM_ATTENTION_REUSE_WINDOW_QK_BRIDGE=1
+export GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE=0
 export GOLEM_ATTENTION_WORKER_CLUSTER_BRIDGE=1
 export GOLEM_ATTENTION_QK_INPUT_PIPELINE=1
 export GOLEM_ATTENTION_KV_BUFFER_COUNT=2
