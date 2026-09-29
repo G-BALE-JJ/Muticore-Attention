@@ -1404,6 +1404,8 @@ public:
         ropePayloadPending_ = false;
         ropeMatCache_.clear();
         ropeVecCache_.clear();
+        ropeCacheOrder_.clear();
+        ropeCacheUsedBytes_ = 0;
         busy_ = true;
         if (reuseM > 1 && reuseN > 1) {
             cBufferMode_ = CBufferMode::GEMM_PARTIAL_C;
@@ -3692,6 +3694,26 @@ private:
         }
     }
 
+    void cacheRopePanel(bool matrix, uint64_t key,
+                        const std::vector<uint8_t>& payload) {
+        // Fits below the 1 MiB table staging area beside existing QK work buffers.
+        constexpr size_t cacheCapacityBytes = 320u * 1024u;
+        if (payload.size() > cacheCapacityBytes) return;
+        auto& cache = matrix ? ropeMatCache_ : ropeVecCache_;
+        if (cache.find(key) != cache.end()) return;
+        while (ropeCacheUsedBytes_ + payload.size() > cacheCapacityBytes) {
+            const auto oldest = ropeCacheOrder_.front();
+            ropeCacheOrder_.pop_front();
+            auto& oldestCache = oldest.first ? ropeMatCache_ : ropeVecCache_;
+            auto entry = oldestCache.find(oldest.second);
+            ropeCacheUsedBytes_ -= entry->second.size();
+            oldestCache.erase(entry);
+        }
+        cache.emplace(key, payload);
+        ropeCacheOrder_.emplace_back(matrix, key);
+        ropeCacheUsedBytes_ += payload.size();
+    }
+
     TilePayloadLoadStatus loadTilePayload(uint32_t local_tile_idx) {
         if (ropePayloadPending_) {
             if (getCurrentSimCycle() < ropePayloadReadyTick_) {
@@ -3709,11 +3731,11 @@ private:
             };
             if (!ropeMatResult_.values.empty()) {
                 pack(ropeMatResult_.values, &activeMatPayload_);
-                ropeMatCache_[ropeMatKey_] = activeMatPayload_;
+                cacheRopePanel(true, ropeMatKey_, activeMatPayload_);
             }
             if (!ropeVecResult_.values.empty()) {
                 pack(ropeVecResult_.values, &activeVecPayload_);
-                ropeVecCache_[ropeVecKey_] = activeVecPayload_;
+                cacheRopePanel(false, ropeVecKey_, activeVecPayload_);
             }
             ropePayloadPending_ = false;
             return TilePayloadLoadStatus::Ready;
@@ -3833,18 +3855,30 @@ private:
                 }
                 return values;
             };
+            const auto issueRope = [this, &decode, dimOffset](
+                    const std::vector<uint8_t>& bytes,
+                    const std::vector<uint32_t>& positions,
+                    SFUVectorResult* result) {
+                const std::vector<double> values = decode(bytes);
+                SFUVectorRequest request{};
+                request.op = SFUVectorOp::Rope;
+                request.input = &values;
+                request.coefficients = &header_.attention_rope_table;
+                request.positions = &positions;
+                request.rowWidth = header_.block_k;
+                request.activeWidth = header_.block_k;
+                request.coefficientStride = header_.k;
+                request.coefficientOffset = dimOffset;
+                return vectorEngine_->issueVectorOp(request, result);
+            };
             ropeMatResult_ = {};
             ropeVecResult_ = {};
             if ((matCached == ropeMatCache_.end() &&
-                 !vectorEngine_->issueVectorOp(SFUVectorOp::Rope,
-                     decode(activeMatPayload_), header_.attention_rope_table,
-                     queryPositions, header_.block_k, header_.block_k,
-                     header_.k, dimOffset, &ropeMatResult_)) ||
+                 !issueRope(activeMatPayload_, queryPositions,
+                            &ropeMatResult_)) ||
                 (vecCached == ropeVecCache_.end() &&
-                 !vectorEngine_->issueVectorOp(SFUVectorOp::Rope,
-                     decode(activeVecPayload_), header_.attention_rope_table,
-                     keyPositions, header_.block_k, header_.block_k,
-                     header_.k, dimOffset, &ropeVecResult_))) {
+                 !issueRope(activeVecPayload_, keyPositions,
+                            &ropeVecResult_))) {
                 return TilePayloadLoadStatus::Failed;
             }
             ropePayloadReadyTick_ = std::max(
@@ -5263,6 +5297,8 @@ private:
     uint64_t ropeVecKey_ = 0;
     std::unordered_map<uint64_t, std::vector<uint8_t>> ropeMatCache_;
     std::unordered_map<uint64_t, std::vector<uint8_t>> ropeVecCache_;
+    std::deque<std::pair<bool, uint64_t>> ropeCacheOrder_;
+    size_t ropeCacheUsedBytes_ = 0;
     bool taskAccumInitialized_ = false;
     std::vector<CBufferPrefetch> cBufferPrefetches_;
     std::vector<uint8_t> partialValid_;

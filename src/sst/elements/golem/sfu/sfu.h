@@ -22,6 +22,7 @@
 
 #include <sst/elements/golem/globalmemory/globalmemory.h>
 #include <sst/elements/golem/attention/attentionCluster.h>
+#include <sst/elements/golem/sfu/vector_math.h>
 
 namespace SST {
 namespace Golem {
@@ -364,10 +365,6 @@ struct AttentionTileResult {
     std::array<float, 64> oldOutputScale = {};
 };
 
-enum class SFUVectorOp : uint8_t {
-    Rope = 1,
-};
-
 struct SFUVectorResult {
     std::vector<double> values;
     uint64_t modeledCycles = 0;
@@ -387,11 +384,8 @@ public:
     virtual bool issueJob(uint64_t descAddr, uint64_t tag) = 0;
     virtual bool issueAttentionTile(const AttentionTileRequest& request,
         std::function<void(bool, const AttentionTileResult&)> callback) = 0;
-    virtual bool issueVectorOp(SFUVectorOp op,
-        const std::vector<double>& input, const std::vector<double>& sincos,
-        const std::vector<uint32_t>& positions, uint32_t headDim,
-        uint32_t rotaryDim, uint32_t tableStride, uint32_t dimOffset,
-        SFUVectorResult* result) = 0;
+    virtual bool issueVectorOp(const SFUVectorRequest& request,
+                               SFUVectorResult* result) = 0;
     virtual AttentionClusterAdmission attentionTileAdmission(
         const AttentionTileRequest& request) const = 0;
     using AttentionScoreWriteCallback = std::function<void(bool, uint64_t)>;
@@ -445,6 +439,8 @@ public:
         {"vector_op_lanes", "Generic vector operation lanes", "16"},
         {"vector_op_latency", "Generic vector operation pipeline latency", "3"},
         {"vector_op_ii", "Generic vector operation initiation interval", "1"},
+        {"vector_reduce_latency", "Vector reduction stage latency", "4"},
+        {"vector_rsqrt_latency", "Vector reciprocal square-root latency", "8"},
         {"exp_lanes", "FP32 EXP issue lanes per physical Row Engine", "4"},
         {"exp_latency", "Row Engine EXP pipeline latency in accelerator cycles", "8"},
         {"scale_latency", "Scale/mask FP32 multiply pipeline latency", "3"},
@@ -578,11 +574,8 @@ public:
     bool issueJob(uint64_t descAddr, uint64_t tag) override;
     bool issueAttentionTile(const AttentionTileRequest& request,
         std::function<void(bool, const AttentionTileResult&)> callback) override;
-    bool issueVectorOp(SFUVectorOp op,
-        const std::vector<double>& input, const std::vector<double>& sincos,
-        const std::vector<uint32_t>& positions, uint32_t headDim,
-        uint32_t rotaryDim, uint32_t tableStride, uint32_t dimOffset,
-        SFUVectorResult* result) override;
+    bool issueVectorOp(const SFUVectorRequest& request,
+                       SFUVectorResult* result) override;
     AttentionClusterAdmission attentionTileAdmission(
         const AttentionTileRequest& request) const override;
     bool reserveAttentionScoreSlot(
@@ -864,6 +857,8 @@ private:
     uint64_t rowEngineAcceleratorClockHz_;
     uint32_t rowEngineVectorLanes_;
     uint32_t vectorOpLanes_;
+    uint32_t vectorReduceLatency_;
+    uint32_t vectorRsqrtLatency_;
     uint32_t rowEngineExpLanes_;
     uint32_t rowEngineExpLatency_;
     uint32_t rowEngineReciprocalLatency_;

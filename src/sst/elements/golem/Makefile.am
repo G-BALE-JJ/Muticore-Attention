@@ -25,6 +25,7 @@ libgolem_la_SOURCES = \
 	requestscheduler/requestscheduler.h \
 	requestscheduler/requestscheduler.cc \
 	sfu/sfu.h \
+	sfu/vector_math.h \
 	sfu/sfu.cc \
 	workercmdproc/workercmdproc.h \
 	attention/attentionCluster.h \

@@ -66,9 +66,15 @@ skips fully future QK tiles and PV windows. FP16 output is checked against a
 causal NumPy reference. Add `--rope` to rotate raw Q/K on the device before
 QK multiplication. The host script generates an FP16 interleaved cos/sin table
 at HBM node 1 offset `0x07000000`; a programmable SFU vector pipeline performs
-the FP16 rotation, with transformed panels reused within each QK window.
+the FP16 rotation, with transformed panels reused through a bounded 320 KiB
+worker cache within each QK window.
 RoPE currently uses full-head interleaved pairs, base 10000, and zero position
 offset. RMSNorm remains outside this Attention workload.
+The SFU vector pipeline also provides an FP16 RMSNorm opcode with FP32
+reduction and FP16 output; the Attention guest does not issue RMSNorm because
+its Q/K/V inputs are already projected tensors. Causal RoPE measurements and
+the static-partition EXP floor are recorded in
+[`rope_sweep.md`](baseline/attention_cluster_8qk_8pv/rope_sweep.md).
 
 See
 [`baseline/attention_cluster_8qk_8pv/README.md`](baseline/attention_cluster_8qk_8pv/README.md)

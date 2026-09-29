@@ -1983,6 +1983,7 @@ public:
         ControlTransportMessage dispatch = {};
         bool ropeTableReady = false;
         bool ropeTableLoading = false;
+        uint64_t ropeTableLoadStartCycle = 0;
         std::vector<double> ropeTable;
         uint64_t generation = 0;
         AttentionWorkerPhase phase = AttentionWorkerPhase::Idle;
@@ -10273,35 +10274,54 @@ public:
                 state.dispatch.headDim * sizeof(uint16_t);
             if (tableOffset + tableBytes > state.dispatch.nodeStrideBytes ||
                 localOffset + tableBytes > globalMem->getSize()) return false;
-            state.ropeTableLoading = true;
-            AttentionWorkerState* const target = &state;
-            const uint64_t generation = state.generation;
-            const uint64_t localAddr = globalMem->getBaseAddr() + localOffset;
-            globalMem->dma_read_from_host_to_globalmem(
-                state.dispatch.nodeStrideBytes + tableOffset, tableBytes,
-                localAddr, [this, target, generation, localAddr, tableBytes](bool ok) {
-                    if (!attentionReuseWindowStateValid(target, generation)) return;
-                    target->ropeTableLoading = false;
-                    std::vector<uint8_t> bytes;
-                    if (ok) {
-                        globalMem->rd_from_globalmem(
-                            localAddr, static_cast<size_t>(tableBytes), bytes);
-                    }
-                    if (!ok || bytes.size() != tableBytes) {
-                        if (attentionWorker_.get() == target) finishAttentionWorker(false);
-                        return;
-                    }
-                    target->ropeTable.resize(bytes.size() / sizeof(uint16_t));
-                    for (size_t i = 0; i < target->ropeTable.size(); ++i) {
-                        uint16_t bits;
-                        std::memcpy(&bits, bytes.data() + i * sizeof(bits), sizeof(bits));
-                        target->ropeTable[i] = golem_fp16_to_float(bits);
-                    }
-                    target->ropeTableReady = true;
-                    if (!startAttentionReuseWindowQkBridge(*target) &&
-                        attentionWorker_.get() == target) finishAttentionWorker(false);
-                }, DmaRequestKind::AttentionQuery);
-            return true;
+            if (attentionRopeTableCacheBytes_ == tableBytes &&
+                attentionRopeTableCacheNodeStride_ == state.dispatch.nodeStrideBytes &&
+                attentionRopeTableCacheHeadDim_ == state.dispatch.headDim) {
+                state.ropeTable = attentionRopeTableCache_;
+                state.ropeTableReady = true;
+                output->output("[ATTENTION_ROPE_TABLE_CACHE] core=%" PRIu64
+                    " bytes=%" PRIu64 "\n", coreID, tableBytes);
+            } else {
+                state.ropeTableLoading = true;
+                state.ropeTableLoadStartCycle = LastTickCycle;
+                AttentionWorkerState* const target = &state;
+                const uint64_t generation = state.generation;
+                const uint64_t localAddr = globalMem->getBaseAddr() + localOffset;
+                globalMem->dma_read_from_host_to_globalmem(
+                    state.dispatch.nodeStrideBytes + tableOffset, tableBytes,
+                    localAddr, [this, target, generation, localAddr, tableBytes](bool ok) {
+                        if (!attentionReuseWindowStateValid(target, generation)) return;
+                        target->ropeTableLoading = false;
+                        std::vector<uint8_t> bytes;
+                        if (ok) {
+                            globalMem->rd_from_globalmem(
+                                localAddr, static_cast<size_t>(tableBytes), bytes);
+                        }
+                        if (!ok || bytes.size() != tableBytes) {
+                            if (attentionWorker_.get() == target) finishAttentionWorker(false);
+                            return;
+                        }
+                        output->output("[ATTENTION_ROPE_TABLE] core=%" PRIu64
+                            " bytes=%" PRIu64 " cycles=%" PRIu64 "\n",
+                            coreID, tableBytes,
+                            LastTickCycle - target->ropeTableLoadStartCycle);
+                        target->ropeTable.resize(bytes.size() / sizeof(uint16_t));
+                        for (size_t i = 0; i < target->ropeTable.size(); ++i) {
+                            uint16_t bits;
+                            std::memcpy(&bits, bytes.data() + i * sizeof(bits), sizeof(bits));
+                            target->ropeTable[i] = golem_fp16_to_float(bits);
+                        }
+                        attentionRopeTableCache_ = target->ropeTable;
+                        attentionRopeTableCacheBytes_ = tableBytes;
+                        attentionRopeTableCacheNodeStride_ =
+                            target->dispatch.nodeStrideBytes;
+                        attentionRopeTableCacheHeadDim_ = target->dispatch.headDim;
+                        target->ropeTableReady = true;
+                        if (!startAttentionReuseWindowQkBridge(*target) &&
+                            attentionWorker_.get() == target) finishAttentionWorker(false);
+                    }, DmaRequestKind::AttentionQuery);
+                return true;
+            }
         }
         const uint32_t groupSize =
             state.dispatch.numQueryHeads / state.dispatch.numKvHeads;
@@ -12182,9 +12202,13 @@ public:
                         state.active.pReadyCycle, state.active.pvDispatchCycle,
                         state.active.pvReceiveCycle, state.startCycle);
                     const uint32_t manager = (state.active.ownerCore - 4) % 4;
+                    const uint32_t groupSize =
+                        state.active.numQueryHeads / state.active.numKvHeads;
+                    const uint32_t localBegin =
+                        state.active.row - manager * state.active.queryLength * groupSize +
+                        state.active.groupQueryRowBegin;
                     const uint32_t lastQuery = manager * state.active.queryLength +
-                        (state.active.groupQueryRowBegin + 63) %
-                            state.active.queryLength;
+                        (localBegin + 63) % state.active.queryLength;
                     const uint32_t finalWindow =
                         (state.active.flags & GOLEM_ATTENTION_FLAG_CAUSAL)
                             ? lastQuery / 256 + 1
@@ -12196,9 +12220,6 @@ public:
                                 state.active.ownerCore,
                                 state.active.groupQueryRowBegin);
                         const auto& msg = state.active;
-                        const uint32_t groupSize = msg.numQueryHeads / msg.numKvHeads;
-                        const uint32_t localBegin = msg.row - manager * msg.queryLength * groupSize +
-                            msg.groupQueryRowBegin;
                         auto remaining = std::make_shared<uint32_t>(64);
                         auto success = std::make_shared<bool>(true);
                         const auto& output = attentionWorkerClusterPvOutputs_.at(outputKey);
@@ -13656,6 +13677,10 @@ private:
     std::unordered_map<uint64_t, ManagerTensorJobState> managerTensorJobs_;
     std::unordered_map<uint64_t, ManagerAttentionJobState> managerAttentionJobs_;
     std::unique_ptr<AttentionWorkerState> attentionWorker_;
+    std::vector<double> attentionRopeTableCache_;
+    uint64_t attentionRopeTableCacheBytes_ = 0;
+    uint64_t attentionRopeTableCacheNodeStride_ = 0;
+    uint32_t attentionRopeTableCacheHeadDim_ = 0;
     std::deque<ControlTransportMessage> attentionPendingDispatches_;
     uint64_t nextAttentionWorkerGeneration_ = 1;
     std::vector<uint8_t> attentionArrayPending_;

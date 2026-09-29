@@ -546,6 +546,8 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
       rowEngineAcceleratorClockHz_(params.find<uint64_t>("accelerator_clock_hz", 2300000000ULL)),
       rowEngineVectorLanes_(params.find<uint32_t>("vector_lanes", 16)),
       vectorOpLanes_(params.find<uint32_t>("vector_op_lanes", 16)),
+      vectorReduceLatency_(params.find<uint32_t>("vector_reduce_latency", 4)),
+      vectorRsqrtLatency_(params.find<uint32_t>("vector_rsqrt_latency", 8)),
       rowEngineExpLanes_(params.find<uint32_t>("exp_lanes", 4)),
       rowEngineExpLatency_(params.find<uint32_t>("exp_latency", 8)),
       rowEngineReciprocalLatency_(params.find<uint32_t>("reciprocal_latency", 8)),
@@ -2363,49 +2365,40 @@ void SFU::cancelAttentionClusterGeneration(uint64_t generation)
     }
 }
 
-bool SFU::issueVectorOp(SFUVectorOp op,
-    const std::vector<double>& input, const std::vector<double>& sincos,
-    const std::vector<uint32_t>& positions, uint32_t headDim,
-    uint32_t rotaryDim, uint32_t tableStride, uint32_t dimOffset,
-    SFUVectorResult* result)
+bool SFU::issueVectorOp(const SFUVectorRequest& request,
+                       SFUVectorResult* result)
 {
-    if (op != SFUVectorOp::Rope || result == nullptr || positions.empty() || headDim == 0 ||
-        rotaryDim == 0 || rotaryDim > headDim || (rotaryDim & 1u) != 0 ||
-        tableStride == 0 || dimOffset + rotaryDim > tableStride ||
-        input.size() != static_cast<size_t>(positions.size()) * headDim ||
-        sincos.size() % tableStride != 0) return false;
-    const size_t tablePositions = sincos.size() / tableStride;
-    for (uint32_t position : positions) {
-        if (position >= tablePositions) return false;
+    if (result == nullptr || vectorOpLanes_ == 0 ||
+        vectorReduceLatency_ == 0 || vectorRsqrtLatency_ == 0 ||
+        !evaluateSFUVectorOp(request, &result->values)) return false;
+    uint64_t activeElements = 0;
+    if (request.op == SFUVectorOp::Rope) {
+        activeElements = static_cast<uint64_t>(request.positions->size()) *
+            request.activeWidth;
+        result->modeledCycles = vectorOpPipeline_.latency +
+            ceilDiv(activeElements / 2, vectorOpLanes_) *
+                vectorOpPipeline_.initiationInterval;
+    } else {
+        activeElements = request.input->size();
+        uint64_t reductionStages = 0;
+        for (uint32_t remaining = request.rowWidth; remaining > 1;
+             remaining = (remaining + 1) / 2) ++reductionStages;
+        const uint64_t chunks = ceilDiv(request.rowWidth, vectorOpLanes_);
+        const uint64_t rowCycles =
+            3 * chunks * vectorOpPipeline_.initiationInterval +
+            reductionStages * vectorReduceLatency_ + vectorRsqrtLatency_;
+        result->modeledCycles = vectorOpPipeline_.latency +
+            (activeElements / request.rowWidth) * rowCycles;
     }
-    result->values = input;
-    for (size_t row = 0; row < positions.size(); ++row) {
-        const size_t inputBase = row * headDim;
-        const size_t tableBase = static_cast<size_t>(positions[row]) *
-            tableStride + dimOffset;
-        for (uint32_t dim = 0; dim < rotaryDim; dim += 2) {
-            const float even = static_cast<float>(input[inputBase + dim]);
-            const float odd = static_cast<float>(input[inputBase + dim + 1]);
-            const float cosine = static_cast<float>(sincos[tableBase + dim]);
-            const float sine = static_cast<float>(sincos[tableBase + dim + 1]);
-            const float rotatedEven = even * cosine - odd * sine;
-            const float rotatedOdd = even * sine + odd * cosine;
-            result->values[inputBase + dim] = golem_fp16_to_float(
-                golem_float_to_fp16(rotatedEven));
-            result->values[inputBase + dim + 1] = golem_fp16_to_float(
-                golem_float_to_fp16(rotatedOdd));
-        }
-    }
-    const uint64_t pairs = static_cast<uint64_t>(positions.size()) *
-        (rotaryDim / 2);
-    result->modeledCycles = vectorOpPipeline_.latency +
-        ceilDiv(pairs, vectorOpLanes_) * vectorOpPipeline_.initiationInterval;
     const uint64_t now = getCurrentSimCycle();
+    const uint64_t modeledTicks = ceilMulDiv(
+        result->modeledCycles, rowEngineTimebaseTicksPerSecond_,
+        rowEngineAcceleratorClockHz_);
     result->readyTick = std::max(now, vectorOpFreeTick_) +
-        result->modeledCycles;
+        modeledTicks;
     vectorOpFreeTick_ = result->readyTick;
     statVectorOps_->addData(1);
-    statVectorElems_->addData(pairs * 2);
+    statVectorElems_->addData(activeElements);
     return true;
 }
 

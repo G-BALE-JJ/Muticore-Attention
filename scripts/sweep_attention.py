@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -111,10 +112,77 @@ def theoretical_floor(hq: int, query_length: int, kv_length: int, head_dim: int,
     return max(qk_or_pv, softmax_exp)
 
 
+def static_causal_exp_floor(hq: int, hkv: int, query_length: int) -> int:
+    """Minimum EXP cycles on the busiest fixed QK worker, including all head jobs."""
+    group_size = hq // hkv
+    rows_per_band = query_length // 4
+    rows_per_worker = rows_per_band * group_size // 2
+    if rows_per_worker % 64:
+        raise ValueError("fixed QK worker rows must be divisible by 64")
+    busiest_tiles = 0
+    for manager in range(4):
+        for worker in range(2):
+            tiles_per_job = sum(
+                (manager * rows_per_band +
+                 (worker * rows_per_worker + row) % rows_per_band) // 64 + 1
+                for row in range(0, rows_per_worker, 64)
+            )
+            busiest_tiles = max(busiest_tiles, tiles_per_job * hkv)
+    return busiest_tiles * (64 * 64 // 16)
+
+
 def case_id(hq: int, hkv: int, query_length: int, kv_length: int,
-            head_dim: int = 128, dtype: str = "fp16", causal: bool = False) -> str:
+            head_dim: int = 128, dtype: str = "fp16", causal: bool = False,
+            rope: bool = False) -> str:
     mode = "causal_" if causal else ""
-    return f"{dtype}_{mode}hq{hq}_hkv{hkv}_q{query_length}_k{kv_length}_d{head_dim}"
+    rotary = "rope_" if rope else ""
+    return f"{dtype}_{mode}{rotary}hq{hq}_hkv{hkv}_q{query_length}_k{kv_length}_d{head_dim}"
+
+
+def load_rope_metrics(artifact: Path) -> dict:
+    stats = {"vector_ops": 0, "vector_elements": 0,
+             "rope_table_loads": 0, "rope_table_load_max_cycles": 0,
+             "rope_table_load_total_cycles": 0, "rope_table_bytes": 0,
+             "rope_table_cache_hits": 0,
+             "worker_dispatch_to_complete_cycles": None}
+    for path in artifact.glob("stats/**/stats_selfcom_*.txt"):
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                fields = line.rstrip("\n").split(",")
+                if len(fields) < 7:
+                    continue
+                if fields[1] == "sfu_vector_ops":
+                    stats["vector_ops"] += int(fields[6])
+                elif fields[1] == "sfu_vector_elems":
+                    stats["vector_elements"] += int(fields[6])
+    pattern = re.compile(r"\[ATTENTION_ROPE_TABLE\] core=\d+ bytes=(\d+) cycles=(\d+)")
+    cache_hit = re.compile(r"\[ATTENTION_ROPE_TABLE_CACHE\] core=\d+ bytes=\d+")
+    milestone = re.compile(
+        r"\[ATTENTION_MILESTONE\] stage=(worker_dispatch_accept|worker_complete) "
+        r"status=done .*?rocc_cycle=(\d+)")
+    dispatch_cycles = []
+    complete_cycles = []
+    for path in (artifact / "logs").glob("attention-sst*.log"):
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                match = pattern.search(line)
+                if match:
+                    size, cycles = map(int, match.groups())
+                    stats["rope_table_loads"] += 1
+                    stats["rope_table_bytes"] += size
+                    stats["rope_table_load_total_cycles"] += cycles
+                    stats["rope_table_load_max_cycles"] = max(
+                        stats["rope_table_load_max_cycles"], cycles)
+                match = milestone.search(line)
+                if cache_hit.search(line):
+                    stats["rope_table_cache_hits"] += 1
+                if match:
+                    (dispatch_cycles if match.group(1) == "worker_dispatch_accept"
+                     else complete_cycles).append(int(match.group(2)))
+    if dispatch_cycles and complete_cycles:
+        stats["worker_dispatch_to_complete_cycles"] = (
+            max(complete_cycles) - min(dispatch_cycles))
+    return stats
 
 
 def load_result(path: Path) -> dict:
@@ -130,10 +198,13 @@ def load_result(path: Path) -> dict:
 def run_case(args: argparse.Namespace, output_root: Path, hq: int, hkv: int,
              query_length: int, kv_length: int,
              previous: dict | None = None) -> dict:
-    identifier = case_id(hq, hkv, query_length, kv_length, args.head_dim, args.dtype, args.causal)
+    identifier = case_id(hq, hkv, query_length, kv_length, args.head_dim,
+                         args.dtype, args.causal, args.rope)
     artifact = output_root / identifier
     result_path = artifact / "sst_qk_bridge_result.json"
     floor = theoretical_floor(hq, query_length, kv_length, args.head_dim, args.causal)
+    static_floor = (static_causal_exp_floor(hq, hkv, query_length)
+                    if args.causal else None)
     base = {
         "case_id": identifier,
         "Hq": hq,
@@ -143,6 +214,7 @@ def run_case(args: argparse.Namespace, output_root: Path, hq: int, hkv: int,
         "head_dim": args.head_dim,
         "dtype": args.dtype,
         "causal": args.causal,
+        "rope": args.rope,
         "mpi_ranks": args.mpi_ranks,
         "local_gm_queue_depth": args.local_gm_queue_depth,
         "element_library_sha256": args.element_library_sha256,
@@ -151,12 +223,13 @@ def run_case(args: argparse.Namespace, output_root: Path, hq: int, hkv: int,
         "window_major": int(os.environ.get("GOLEM_ATTENTION_WORKER_CLUSTER_WINDOW_MAJOR", "1")),
         "cross_macro_prefetch": int(os.environ.get("GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE", "0")),
         "theoretical_resource_floor_cycles": floor,
+        "static_sfu_exp_floor_cycles": static_floor,
         "artifact_root": str(artifact),
     }
     same_config = previous is not None and all(
         previous.get(key) == base[key]
         for key in ("case_id", "Hq", "Hkv", "query_length", "kv_length",
-                    "head_dim", "dtype", "causal", "mpi_ranks", "local_gm_queue_depth",
+                    "head_dim", "dtype", "causal", "rope", "mpi_ranks", "local_gm_queue_depth",
                     "element_library_sha256", "row_priority", "v_broadcast", "window_major",
                     "cross_macro_prefetch")
     )
@@ -171,7 +244,9 @@ def run_case(args: argparse.Namespace, output_root: Path, hq: int, hkv: int,
         result = load_result(result_path)
         numerical = load_result(numerical_path)
         layout = load_result(layout_path)
-        return {**base, **summarize_result(result, floor),
+        return {**base, **summarize_result(result, floor), **load_rope_metrics(artifact),
+                "actual_over_static_sfu_exp_floor_ratio":
+                    result["end_to_end_cycles"] / static_floor if static_floor else None,
                 "numerical_status": "PASS", "mpi_status": "PASS",
                 "layout_status": "PASS", "runner_returncode": 0,
                 "max_abs_error": numerical.get("max_abs_error"),
@@ -218,7 +293,10 @@ def run_case(args: argparse.Namespace, output_root: Path, hq: int, hkv: int,
     summary["runner_returncode"] = returncode
     if returncode != 0 and summary["status"] == "PASS":
         summary["status"] = "RUNNER_FAILED"
-    return {**base, **summary}
+    return {**base, **summary, **load_rope_metrics(artifact),
+            "actual_over_static_sfu_exp_floor_ratio":
+                summary["end_to_end_cycles"] / static_floor
+                if static_floor and summary["status"] == "PASS" else None}
 
 
 def command(args: argparse.Namespace, artifact: Path, hq: int, hkv: int,
@@ -232,6 +310,8 @@ def command(args: argparse.Namespace, artifact: Path, hq: int, hkv: int,
     ]
     if args.causal:
         command_line.append("--causal")
+    if args.rope:
+        command_line.append("--rope")
     return command_line
 
 
@@ -266,15 +346,20 @@ def summarize_result(result: dict, floor: int) -> dict:
 
 FIELDS = [
     "case_id", "Hq", "Hkv", "query_length", "kv_length", "head_dim",
-    "mpi_ranks", "local_gm_queue_depth", "dtype", "causal", "status",
+    "mpi_ranks", "local_gm_queue_depth", "dtype", "causal", "rope", "status",
     "numerical_status", "max_abs_error", "checked_elements", "mpi_status",
     "layout_status", "layout_checked_bytes",
     "element_library_sha256", "row_priority", "v_broadcast", "window_major", "cross_macro_prefetch",
     "theoretical_resource_floor_cycles", "end_to_end_cycles", "excess_over_floor_cycles",
+    "static_sfu_exp_floor_cycles", "actual_over_static_sfu_exp_floor_ratio",
     "actual_over_floor_ratio", "slowest_job_cycles", "qk_span_cycles", "sfu_span_cycles",
     "pv_span_cycles", "pv_receive_to_start_avg_cycles", "pv_receive_to_start_max_cycles",
     "qk_jobs", "pv_windows", "v_cache_hits", "v_cache_misses",
     "pv_average_window_cycles", "pv_tail_after_sfu_cycles",
+    "vector_ops", "vector_elements", "rope_table_loads", "rope_table_bytes",
+    "rope_table_cache_hits",
+    "rope_table_load_max_cycles", "rope_table_load_total_cycles",
+    "worker_dispatch_to_complete_cycles",
     "artifact_root", "runner_returncode", "error",
 ]
 
@@ -290,6 +375,7 @@ def main() -> int:
     parser.add_argument("--head-dim", type=int, default=128)
     parser.add_argument("--dtype", choices=("fp16", "fp32"), default="fp16")
     parser.add_argument("--causal", action="store_true")
+    parser.add_argument("--rope", action="store_true")
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -298,6 +384,8 @@ def main() -> int:
     args.element_library_sha256 = hashlib.sha256(library.read_bytes()).hexdigest() if library.exists() else None
     if args.head_dim not in (64, 128):
         parser.error("--head-dim must be 64 or 128")
+    if args.rope and args.dtype != "fp16":
+        parser.error("--rope requires --dtype fp16")
     if args.mpi_ranks not in (1, 4):
         parser.error("--mpi-ranks must be 1 or 4 for this topology")
     if args.local_gm_queue_depth <= 0:
@@ -335,7 +423,9 @@ def main() -> int:
                 raise SystemExit("lengths must satisfy query % 256 == 0 and kv % 128 == 0")
             print(f"[{len(rows)+1}/{total}] Hq={hq} Hkv={hkv} Q={query_length} K={kv_length}", flush=True)
             row = run_case(args, output_root, hq, hkv, query_length, kv_length,
-                           previous_rows.get(case_id(hq, hkv, query_length, kv_length, args.head_dim, args.dtype, args.causal)))
+                           previous_rows.get(case_id(hq, hkv, query_length, kv_length,
+                                                     args.head_dim, args.dtype,
+                                                     args.causal, args.rope)))
             rows.append(row)
             print(json.dumps({k: row.get(k) for k in ("case_id", "status", "end_to_end_cycles", "actual_over_floor_ratio")}, sort_keys=True), flush=True)
             write_summary(rows, output_root, csv_path, json_path)
