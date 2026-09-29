@@ -107,6 +107,14 @@ struct GolemFp16 {
     }
 };
 
+inline GolemFp16 operator+(GolemFp16 lhs, const GolemFp16& rhs) {
+    lhs += rhs;
+    return lhs;
+}
+inline GolemFp16 operator*(const GolemFp16& lhs, const GolemFp16& rhs) {
+    return GolemFp16(static_cast<float>(lhs) * static_cast<float>(rhs));
+}
+
 static_assert(sizeof(GolemFp16) == 2, "GolemFp16 must remain a 16-bit storage type");
 
 } // namespace Golem

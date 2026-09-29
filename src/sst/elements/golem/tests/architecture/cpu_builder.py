@@ -150,7 +150,9 @@ def _default_rocc_type(dtype: str) -> str:
 
 
 def _default_array_type(dtype: str) -> str:
-    if dtype in {"fp16", "fp32"}:
+    if dtype == "fp16":
+        return "golem.MVMFp16Array"
+    if dtype == "fp32":
         return "golem.MVMFloatArray"
     return "golem.MVMIntArray"
 

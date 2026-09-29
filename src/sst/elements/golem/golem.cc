@@ -19,6 +19,7 @@
 #include <sst/elements/golem/array/computeArray.h>
 #include <sst/elements/golem/array/mvmComputeArray.h>
 #include <sst/elements/golem/array/mvmFloatArray.h>
+#include <sst/elements/golem/array/mvmFp16Array.h>
 #include <sst/elements/golem/array/mvmIntArray.h>
 #include <sst/elements/golem/groupctrl/groupctrl.h>
 #include <sst/elements/golem/requestscheduler/requestscheduler.h>
