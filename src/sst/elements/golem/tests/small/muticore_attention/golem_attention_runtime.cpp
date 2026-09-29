@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <sched.h>
 
 #ifndef GOLEM_ATTENTION_Q_ADDR
@@ -95,7 +96,7 @@ int main(int argc, char** argv) {
     uint64_t k_offset = GOLEM_ATTENTION_K_OFFSET;
     uint64_t v_offset = GOLEM_ATTENTION_V_OFFSET;
     uint64_t o_offset = GOLEM_ATTENTION_O_OFFSET;
-    if (GOLEM_ATTENTION_SCALE && argc != 12) {
+    if (GOLEM_ATTENTION_SCALE && argc != 12 && argc != 13) {
         std::fprintf(stderr, "Attention guest expects core-id, manager-query-rows, kv-length, num-query-heads, num-kv-heads, head-dim, kv-tile-rows, q/k/v/o-offsets\n");
         return 1;
     }
@@ -140,11 +141,14 @@ int main(int argc, char** argv) {
         static_cast<uint64_t>(manager_id + 1) * GOLEM_ATTENTION_MEM_NODE_BYTES;
     const uint64_t firstDataNodeBase = GOLEM_ATTENTION_MEM_NODE_BYTES;
     attention_write_metadata(topology_gm, topology);
+    const char* dtype = argc == 13 ? argv[12] : std::getenv("GOLEM_ATTENTION_DTYPE");
+    if (dtype && std::strcmp(dtype, "fp16") != 0 && std::strcmp(dtype, "fp32") != 0) return 1;
+    const uint32_t elem_bytes = dtype && std::strcmp(dtype, "fp16") == 0 ? 2u : 4u;
     const uint64_t query_head_stride =
-        static_cast<uint64_t>(manager_query_rows) * head_dim * sizeof(float);
+        static_cast<uint64_t>(manager_query_rows) * head_dim * elem_bytes;
     const uint64_t kv_head_stride =
         static_cast<uint64_t>(kv_length / (GOLEM_ATTENTION_SCALE ? 4u : 1u)) *
-        head_dim * sizeof(float);
+        head_dim * elem_bytes;
     const char* sequential64 = std::getenv("GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE");
     const uint32_t gqa_group_size = num_query_heads / num_kv_heads;
     for (uint32_t kv_head = 0; kv_head < num_kv_heads; ++kv_head) {

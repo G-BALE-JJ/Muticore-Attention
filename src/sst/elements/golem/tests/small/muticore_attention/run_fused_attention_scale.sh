@@ -141,10 +141,11 @@ KV_LENGTH=1024
 NUM_QUERY_HEADS=1
 NUM_KV_HEADS=1
 HEAD_DIM=128
+ATTENTION_DTYPE="${GOLEM_ATTENTION_DTYPE:-fp16}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --artifact-root|--baseline|--timeout|--query-length|--kv-length|--num-query-heads|--num-kv-heads|--queries|--keys|--heads|--query-heads|--kv-heads|--head-dim|--kv-tile-rows|--key-block-rows|--kv-query-group-size)
+    --artifact-root|--baseline|--timeout|--query-length|--kv-length|--num-query-heads|--num-kv-heads|--queries|--keys|--heads|--query-heads|--kv-heads|--head-dim|--kv-tile-rows|--key-block-rows|--kv-query-group-size|--dtype)
       option="$1"
       if [[ $# -lt 2 ]]; then
         echo "Missing value for $option" >&2
@@ -165,6 +166,7 @@ while [[ $# -gt 0 ]]; do
           KV_QUERY_GROUP_SIZE="$2"
           KV_QUERY_GROUP_SIZE_EXPLICIT=1
           ;;
+        --dtype) ATTENTION_DTYPE="$2" ;;
       esac
       shift 2
       ;;
@@ -234,6 +236,14 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+if [[ "$ATTENTION_DTYPE" != "fp16" && "$ATTENTION_DTYPE" != "fp32" ]]; then
+  echo "--dtype must be fp16 or fp32" >&2
+  exit 2
+fi
+ELEMENT_BYTES=4
+if [[ "$ATTENTION_DTYPE" == "fp16" ]]; then
+  ELEMENT_BYTES=2
+fi
 
 if (( ATTENTION_SEQUENTIAL_64 )); then
   GENERIC_GEMM=1
@@ -537,11 +547,11 @@ if (( GQA_GROUP_SIZE != 1 && GQA_GROUP_SIZE != 2 && GQA_GROUP_SIZE != 4 )); then
   exit 2
 fi
 MANAGER_QUERY_ROWS=$((QUERY_LENGTH / 4))
-if (( MANAGER_QUERY_ROWS * HEAD_DIM * 4 > 1024 * 1024 )); then
+if (( MANAGER_QUERY_ROWS * HEAD_DIM * ELEMENT_BYTES > 1024 * 1024 )); then
   echo "query band exceeds the 1 MiB per-manager tensor window" >&2
   exit 2
 fi
-if (( (KV_LENGTH / 4) * HEAD_DIM * 4 > 1024 * 1024 )); then
+if (( (KV_LENGTH / 4) * HEAD_DIM * ELEMENT_BYTES > 1024 * 1024 )); then
   echo "K/V shard exceeds the 1 MiB per-memory-node tensor window" >&2
   exit 2
 fi
@@ -560,7 +570,7 @@ if (( KEY_BLOCK_ROWS != 32 && KEY_BLOCK_ROWS != 64 )); then
   exit 2
 fi
 KV_BUFFER_COUNT_EFFECTIVE=$((KV_DOUBLE_BUFFER ? KV_BUFFER_COUNT : 1))
-KV_DISTRIBUTION_TILE_BYTES=$((KEY_BLOCK_ROWS * HEAD_DIM * 4))
+KV_DISTRIBUTION_TILE_BYTES=$((KEY_BLOCK_ROWS * HEAD_DIM * ELEMENT_BYTES))
 KV_DISTRIBUTION_SCRATCH_BYTES=$((2 * KV_DISTRIBUTION_SLOTS * KV_DISTRIBUTION_TILE_BYTES))
 if (( KV_DISTRIBUTION )) &&
    (( KV_DISTRIBUTION_SCRATCH_OFFSET < 0x2000 ||
@@ -582,6 +592,7 @@ if (( ATTENTION_WINDOW_BYTES > 0x40000 )); then
 fi
 
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-${TMPDIR:-/tmp}/$RUN_ID}"
+ARTIFACT_ROOT="$(realpath -m "$ARTIFACT_ROOT")"
 Q_FILE="$ARTIFACT_ROOT/q_${NUM_QUERY_HEADS}x${QUERY_LENGTH}x${HEAD_DIM}.bin"
 K_FILE="$ARTIFACT_ROOT/k_${NUM_KV_HEADS}x${KV_LENGTH}x${HEAD_DIM}.bin"
 V_FILE="$ARTIFACT_ROOT/v_${NUM_KV_HEADS}x${KV_LENGTH}x${HEAD_DIM}.bin"
@@ -605,8 +616,8 @@ MODEL_PLATFORM_CLOCK="${VANADIS_CPU_CLOCK:-2.0GHz}"
 NORMALIZATION_CLOCK="${GOLEM_ATTENTION_NORMALIZATION_CLOCK:-${VANADIS_CPU_CLOCK:-1.0GHz}}"
 TENSOR_ALIGNMENT=$((0x100000))
 Q_OFFSET=$((0x02000000))
-Q_NODE_BYTES=$((NUM_QUERY_HEADS * MANAGER_QUERY_ROWS * HEAD_DIM * 4))
-KV_NODE_BYTES=$((NUM_KV_HEADS * (KV_LENGTH / 4) * HEAD_DIM * 4))
+Q_NODE_BYTES=$((NUM_QUERY_HEADS * MANAGER_QUERY_ROWS * HEAD_DIM * ELEMENT_BYTES))
+KV_NODE_BYTES=$((NUM_KV_HEADS * (KV_LENGTH / 4) * HEAD_DIM * ELEMENT_BYTES))
 K_OFFSET=$((((Q_OFFSET + Q_NODE_BYTES + TENSOR_ALIGNMENT - 1) / TENSOR_ALIGNMENT) * TENSOR_ALIGNMENT))
 V_OFFSET=$((((K_OFFSET + KV_NODE_BYTES + TENSOR_ALIGNMENT - 1) / TENSOR_ALIGNMENT) * TENSOR_ALIGNMENT))
 O_OFFSET=$((((V_OFFSET + KV_NODE_BYTES + TENSOR_ALIGNMENT - 1) / TENSOR_ALIGNMENT) * TENSOR_ALIGNMENT))
@@ -625,6 +636,7 @@ GENERATE_CMD=(python3 "$SCRIPT_DIR/attention_case.py" generate
   --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
   --num-query-heads "$NUM_QUERY_HEADS" --num-kv-heads "$NUM_KV_HEADS" \
   --head-dim "$HEAD_DIM"
+  --dtype "$ATTENTION_DTYPE" \
   --q-file "$Q_FILE" --k-file "$K_FILE" --v-file "$V_FILE")
 
 RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
@@ -653,6 +665,7 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ATTENTION_KV_HEADS=$NUM_KV_HEADS"
   "GOLEM_ATTENTION_KV_CONSUMERS_PER_NODE=$((16 * GQA_GROUP_SIZE))"
   "GOLEM_ATTENTION_HEAD_DIM=$HEAD_DIM"
+  "GOLEM_ATTENTION_DTYPE=$ATTENTION_DTYPE"
   "GOLEM_ATTENTION_GUEST_MANAGER_QUERY_ROWS=$MANAGER_QUERY_ROWS"
   "GOLEM_ATTENTION_GUEST_KV_LENGTH=$KV_LENGTH"
   "GOLEM_ATTENTION_GUEST_NUM_QUERY_HEADS=$NUM_QUERY_HEADS"
@@ -739,6 +752,7 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ATTENTION_WORKER_CLUSTER_BRIDGE=$WORKER_CLUSTER_BRIDGE"
   "GOLEM_ATTENTION_WORKER_CLUSTER_QK_WORKERS_PER_MANAGER=$WORKER_CLUSTER_QK_WORKERS_PER_MANAGER"
   "GOLEM_ATTENTION_WORKER_CLUSTER_ROW_PRIORITY=${GOLEM_ATTENTION_WORKER_CLUSTER_ROW_PRIORITY:-0}"
+  "GOLEM_ATTENTION_WORKER_CLUSTER_WINDOW_MAJOR=${GOLEM_ATTENTION_WORKER_CLUSTER_WINDOW_MAJOR:-1}"
   "GOLEM_ATTENTION_WORKER_CLUSTER_V_BROADCAST=${GOLEM_ATTENTION_WORKER_CLUSTER_V_BROADCAST:-0}"
   "GOLEM_ATTENTION_WORKER_CLUSTER_DYNAMIC_PV=${GOLEM_ATTENTION_WORKER_CLUSTER_DYNAMIC_PV:-0}"
   "GOLEM_ATTENTION_REUSE_WINDOW_PANEL_LAYOUT=$REUSE_WINDOW_QK_BRIDGE"
@@ -772,11 +786,12 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_DMA_WINDOW_K_TILES=${GOLEM_DMA_WINDOW_K_TILES:-$((REUSE_WINDOW_QK_BRIDGE ? 2 : 4))}"
   "GOLEM_WCP_PREFETCH_WINDOWS=2"
   "GOLEM_OUTPUT_MODE=$([[ $REUSE_WINDOW_QK_BRIDGE == 1 ]] && echo fusion || echo hbm)"
+  GOLEM_KEEP_HBM_DUMP_IN_FUSION=1
   "GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE=$((GENERIC_GEMM || REUSE_WINDOW_QK_BRIDGE))"
   GOLEM_SFU_ENABLE=1
   GOLEM_SFU_DISTRIBUTED_REDUCTION_TRANSPORT=explicit_noc
   bash "$BASE_RUNNER"
-  --dtype fp32 --tensor-source file --tensor-a "$Q_FILE" --tensor-b "$K_FILE"
+  --dtype "$ATTENTION_DTYPE" --tensor-source file --tensor-a "$Q_FILE" --tensor-b "$K_FILE"
   --transpose-b 1 --hbm-dump-output 1
   --gemm-m "$QUERY_LENGTH" --gemm-n "$KV_LENGTH" --gemm-k "$HEAD_DIM"
   --orig-m "$QUERY_LENGTH" --orig-n "$KV_LENGTH" --orig-k "$HEAD_DIM"
@@ -795,7 +810,7 @@ VERIFY_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_output.py"
   --q-file "$Q_FILE" --k-file "$K_FILE" --v-file "$V_FILE"
   --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
   --num-query-heads "$NUM_QUERY_HEADS" --num-kv-heads "$NUM_KV_HEADS" \
-  --head-dim "$HEAD_DIM"
+  --head-dim "$HEAD_DIM" --dtype "$ATTENTION_DTYPE"
   --band-rows "$MANAGER_QUERY_ROWS" --hbm-dir "$HBM_DIR"
   --output-offset "$O_OFFSET" --result-json "$RESULT_JSON")
 VERIFY_STATS_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_stats.py"
@@ -960,8 +975,6 @@ if (( PV_OUTPUT_PIPELINE )); then
 fi
 if (( PV_O_ROW_FUSION )); then
   VERIFY_STATS_CMD+=(--pv-o-row-fusion)
-else
-  VERIFY_STATS_CMD+=(--no-pv-o-row-fusion)
 fi
 if (( PV_EARLY_COMPUTE )); then
   VERIFY_STATS_CMD+=(--pv-early-compute)
@@ -1039,6 +1052,7 @@ attention_stage_label() {
     lifecycle_verify) echo "lifecycle verification" ;;
     mpi_partition_verify) echo "MPI partition verification" ;;
     baseline_verify) echo "baseline verification" ;;
+    worker_cluster_report) echo "worker-cluster report" ;;
     metrics_report) echo "metrics report" ;;
     *) echo "$1" ;;
   esac
@@ -1097,6 +1111,42 @@ run_attention_stage() {
   fi
 }
 
+attention_print_worker_cluster_summary() {
+  local result_file="$1"
+  local summary label value
+  summary="$(python3 - "$result_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as report_file:
+    report = json.load(report_file)
+for stage, label, unit in (
+    ("qk", "QK WCP", "jobs"),
+    ("sfu", "Online SFU", "jobs"),
+    ("pv", "PV WCP", "windows"),
+):
+    span = report["stage_spans"][stage]
+    print(f"{label}\t{span['elapsed_cycles']:,} cycles ({span['count']} {unit})")
+print(f"End-to-end\t{report['end_to_end_cycles']:,} cycles ({report['completed_jobs']} jobs)")
+for key, label in (
+    ("p_ready_to_dispatch", "P ready -> dispatch"),
+    ("dispatch_to_receive", "dispatch -> PV receive"),
+    ("receive_to_start", "PV receive -> start"),
+):
+    wait = report.get("pv_transport_waits", {}).get(key)
+    if wait:
+        print(f"{label}\tavg {wait['average_cycles']:.1f} cycles, max {wait['max_cycles']} cycles")
+PY
+)"
+  printf '\n%s\n' "$(attention_ui_color '1;36' 'Worker-cluster cycles (stage spans overlap)')"
+  while IFS=$'\t' read -r label value; do
+    attention_ui_key_value "$label" "$value"
+  done <<< "$summary"
+  attention_ui_key_value "SST wall time" "${SST_WALL_SECONDS}s"
+  attention_ui_key_value "Total wall time" \
+    "$(attention_elapsed_seconds "$TEST_START_NS" "$(date +%s%N)")s"
+}
+
 TEST_START_NS="$(date +%s%N)"
 mkdir -p "$ARTIFACT_ROOT" "$DRIVER_LOG_DIR"
 rm -f "$RESULT_JSON" "$LIFECYCLE_JSON" "$METRICS_JSON" "$METRICS_CSV" \
@@ -1123,8 +1173,23 @@ if (( REUSE_WINDOW_QK_BRIDGE )); then
     run_attention_stage worker_cluster_report \
       python3 "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/report_sst.py" \
         --log "$SST_RUNTIME_LOG" --num-kv-heads "$NUM_KV_HEADS" \
+        --num-query-heads "$NUM_QUERY_HEADS" \
+        --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
+        --head-dim "$HEAD_DIM" \
         --qk-workers-per-manager "$WORKER_CLUSTER_QK_WORKERS_PER_MANAGER" \
         --output "$QK_BRIDGE_RESULT"
+    attention_print_worker_cluster_summary "$QK_BRIDGE_RESULT"
+    run_attention_stage backend_verify \
+      verify_attention_memory_backend "$SST_RUNTIME_LOG" ramulator2
+    run_attention_stage numerical_verify "${VERIFY_CMD[@]}"
+    run_attention_stage mpi_partition_verify "${VERIFY_MPI_CMD[@]}"
+    run_attention_stage hbm_layout_verify python3 "$SCRIPT_DIR/verify_attention_hbm_layout.py" \
+      --q-file "$Q_FILE" --k-file "$K_FILE" --v-file "$V_FILE" --hbm-dir "$HBM_DIR" \
+      --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
+      --num-query-heads "$NUM_QUERY_HEADS" --num-kv-heads "$NUM_KV_HEADS" \
+      --head-dim "$HEAD_DIM" --dtype "$ATTENTION_DTYPE" \
+      --q-offset "$Q_OFFSET" --k-offset "$K_OFFSET" --v-offset "$V_OFFSET" --o-offset "$O_OFFSET" \
+      --result-json "$ARTIFACT_ROOT/attention_hbm_layout.json"
     attention_ui_key_value "Artifacts" "$ARTIFACT_ROOT"
     attention_ui_key_value "Worker-cluster result" "$QK_BRIDGE_RESULT"
     exit 0

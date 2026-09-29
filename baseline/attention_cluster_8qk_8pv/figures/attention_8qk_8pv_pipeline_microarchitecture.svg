@@ -1,0 +1,290 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200" viewBox="0 0 1600 1200">
+  <defs>
+    <style>
+      .title { font: 700 30px Arial, sans-serif; fill: #17212b; }
+      .subtitle { font: 400 15px Arial, sans-serif; fill: #52606d; }
+      .section { font: 700 18px Arial, sans-serif; fill: #17212b; }
+      .label { font: 600 14px Arial, sans-serif; fill: #17212b; }
+      .small { font: 400 12px Arial, sans-serif; fill: #394957; }
+      .tiny { font: 400 11px Arial, sans-serif; fill: #52606d; }
+      .mono { font: 600 12px 'Courier New', monospace; fill: #17212b; }
+      .panel { fill: #ffffff; stroke: #b8c2cc; stroke-width: 1.5; rx: 6; }
+      .manager { fill: #edf2f7; stroke: #718096; stroke-width: 1.4; rx: 4; }
+      .qk { fill: #e7f5f3; stroke: #16877b; stroke-width: 1.5; rx: 4; }
+      .sfu { fill: #f1ebfa; stroke: #7651a8; stroke-width: 1.5; rx: 4; }
+      .pv { fill: #fff0e6; stroke: #cf642e; stroke-width: 1.5; rx: 4; }
+      .mem { fill: #eef7e8; stroke: #5c8f42; stroke-width: 1.5; rx: 4; }
+      .buffer { fill: #f8fafc; stroke: #82909e; stroke-width: 1.2; rx: 3; }
+      .output { fill: #fff7d6; stroke: #b28704; stroke-width: 1.5; rx: 4; }
+      .callout { fill: #ffffff; stroke: #52606d; stroke-width: 1.2; rx: 12; }
+      .data { fill: none; stroke: #334e68; stroke-width: 2.2; marker-end: url(#arrow); }
+      .pdata { fill: none; stroke: #7651a8; stroke-width: 2.5; marker-end: url(#arrow-purple); }
+      .vdata { fill: none; stroke: #5c8f42; stroke-width: 2.5; marker-end: url(#arrow-green); }
+      .prefetch { fill: none; stroke: #5c8f42; stroke-width: 2; stroke-dasharray: 7 5; marker-end: url(#arrow-green); }
+      .control { fill: none; stroke: #718096; stroke-width: 1.5; stroke-dasharray: 5 4; marker-end: url(#arrow-gray); }
+      .timeline { stroke: #d5dce3; stroke-width: 1; }
+    </style>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#334e68"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#7651a8"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5c8f42"/>
+    </marker>
+    <marker id="arrow-gray" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#718096"/>
+    </marker>
+    <pattern id="grid64" width="18" height="18" patternUnits="userSpaceOnUse">
+      <rect width="18" height="18" fill="#e7f5f3" stroke="#7fc7bf" stroke-width="0.6"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="1200" fill="#f7f9fb"/>
+  <text x="70" y="48" class="title">8 QK/SFU + 8 PV Pipelined Attention Architecture</text>
+  <text x="70" y="74" class="subtitle">2x4 QK reuse, bounded Score/P flow, online rescaling, tree-broadcast V supply, and dual-context PV execution</text>
+
+  <!-- A: system pipeline -->
+  <rect x="55" y="100" width="1490" height="315" class="panel"/>
+  <text x="75" y="128" class="section">A. End-to-end spatial pipeline</text>
+
+  <rect x="85" y="151" width="205" height="64" class="mem"/>
+  <text x="187" y="177" text-anchor="middle" class="label">4 HBM2E Nodes</text>
+  <text x="187" y="197" text-anchor="middle" class="small">striped Q/K/V storage</text>
+
+  <rect x="345" y="151" width="340" height="64" class="manager"/>
+  <text x="515" y="177" text-anchor="middle" class="label">4 Control Managers</text>
+  <text x="515" y="197" text-anchor="middle" class="small">each owns 2 QK/SFU + 2 PV workers</text>
+
+  <rect x="335" y="250" width="420" height="125" class="qk"/>
+  <text x="545" y="274" text-anchor="middle" class="label">8 QK/SFU Workers (cores 4-11)</text>
+  <rect x="355" y="291" width="94" height="55" fill="url(#grid64)" stroke="#16877b"/>
+  <text x="402" y="315" text-anchor="middle" class="small">64 arrays</text>
+  <text x="402" y="332" text-anchor="middle" class="tiny">2x4 QK WCP</text>
+  <rect x="470" y="291" width="95" height="55" class="buffer"/>
+  <text x="518" y="314" text-anchor="middle" class="small">Score FIFO</text>
+  <text x="518" y="332" text-anchor="middle" class="tiny">16 slots</text>
+  <rect x="586" y="291" width="84" height="55" class="sfu"/>
+  <text x="628" y="313" text-anchor="middle" class="small">SFU</text>
+  <text x="628" y="331" text-anchor="middle" class="tiny">64 contexts</text>
+  <rect x="691" y="291" width="44" height="55" class="buffer"/>
+  <text x="713" y="313" text-anchor="middle" class="small">P</text>
+  <text x="713" y="331" text-anchor="middle" class="tiny">FIFO</text>
+  <path d="M449 319 H470 M565 319 H586 M670 319 H691" class="data"/>
+
+  <rect x="840" y="250" width="450" height="125" class="pv"/>
+  <text x="1065" y="274" text-anchor="middle" class="label">8 PV Workers (cores 12-19)</text>
+  <rect x="860" y="291" width="95" height="55" class="buffer"/>
+  <text x="908" y="313" text-anchor="middle" class="small">P + alpha</text>
+  <text x="908" y="331" text-anchor="middle" class="tiny">resident payload</text>
+  <rect x="976" y="291" width="95" height="55" class="mem"/>
+  <text x="1024" y="313" text-anchor="middle" class="small">V SRAM</text>
+  <text x="1024" y="331" text-anchor="middle" class="tiny">4 x 128 KiB</text>
+  <rect x="1092" y="291" width="84" height="55" fill="url(#grid64)" stroke="#cf642e"/>
+  <text x="1134" y="313" text-anchor="middle" class="small">64 arrays</text>
+  <text x="1134" y="331" text-anchor="middle" class="tiny">1x2 PV WCP</text>
+  <rect x="1197" y="291" width="73" height="55" class="output"/>
+  <text x="1234" y="313" text-anchor="middle" class="small">Z, l</text>
+  <text x="1234" y="331" text-anchor="middle" class="tiny">resident</text>
+  <path d="M955 319 H1092 M1071 319 H1092 M1176 319 H1197" class="data"/>
+
+  <rect x="1355" y="278" width="155" height="75" class="output"/>
+  <text x="1432" y="306" text-anchor="middle" class="label">Final Output</text>
+  <text x="1432" y="328" text-anchor="middle" class="mono">O = Z / l</text>
+  <path d="M1290 319 H1355" class="data"/>
+
+  <path d="M290 183 H345" class="control"/>
+  <path d="M187 215 V235 H400 V250" class="data"/>
+  <text x="212" y="232" class="tiny">Q, K</text>
+  <path d="M755 319 H840" class="pdata"/>
+  <text x="797" y="305" text-anchor="middle" class="small">P[64,256]</text>
+  <text x="797" y="341" text-anchor="middle" class="small">alpha[64]</text>
+
+  <rect x="1310" y="145" width="200" height="82" class="mem"/>
+  <text x="1410" y="169" text-anchor="middle" class="label">PV Leader + Tree</text>
+  <text x="1410" y="188" text-anchor="middle" class="small">one 128 KiB HBM fetch</text>
+  <text x="1410" y="207" text-anchor="middle" class="small">8 x 16 KiB NoC packets</text>
+  <path d="M290 163 V138 H1288 V163 H1310" class="vdata"/>
+  <text x="800" y="133" text-anchor="middle" class="small">V window</text>
+  <path d="M1410 227 V240 H1024 V291" class="vdata"/>
+  <path d="M628 291 V239 H1370 V227" class="prefetch"/>
+  <text x="1010" y="234" class="tiny">early V-prefetch hint when Softmax starts</text>
+
+  <!-- B: QK/SFU microarchitecture -->
+  <rect x="55" y="440" width="720" height="375" class="panel"/>
+  <text x="75" y="469" class="section">B. QK/SFU producer microarchitecture</text>
+
+  <rect x="82" y="493" width="125" height="53" class="mem"/>
+  <text x="145" y="515" text-anchor="middle" class="label">Q Buffer</text>
+  <text x="145" y="533" text-anchor="middle" class="tiny">prefetch once</text>
+  <rect x="232" y="493" width="140" height="53" class="mem"/>
+  <text x="302" y="515" text-anchor="middle" class="label">K Ping/Pong</text>
+  <text x="302" y="533" text-anchor="middle" class="tiny">next 256-key window</text>
+
+  <rect x="104" y="583" width="265" height="95" class="qk"/>
+  <text x="236" y="607" text-anchor="middle" class="label">2x4 QK Reuse Window</text>
+  <text x="236" y="630" text-anchor="middle" class="mono">[128,128] x [128,256]</text>
+  <text x="236" y="650" text-anchor="middle" class="small">Q reuse x4, K reuse x2</text>
+  <text x="236" y="668" text-anchor="middle" class="tiny">two D64 reduction slices</text>
+  <path d="M145 546 V565 H190 V583" class="data"/>
+  <path d="M302 546 V565 H280 V583" class="data"/>
+
+  <rect x="397" y="505" width="175" height="67" class="buffer"/>
+  <text x="485" y="529" text-anchor="middle" class="label">Bounded Score FIFO</text>
+  <text x="485" y="549" text-anchor="middle" class="small">16 decoupled slots</text>
+  <path d="M369 630 H385 V539 H397" class="data"/>
+
+  <rect x="397" y="602" width="175" height="88" class="sfu"/>
+  <text x="485" y="626" text-anchor="middle" class="label">Online-Softmax SFU</text>
+  <text x="485" y="647" text-anchor="middle" class="small">16 vector + 16 EXP lanes</text>
+  <text x="485" y="667" text-anchor="middle" class="small">64 row contexts</text>
+  <text x="485" y="684" text-anchor="middle" class="tiny">row-completion priority</text>
+  <path d="M485 572 V602" class="data"/>
+
+  <rect x="597" y="505" width="150" height="78" class="buffer"/>
+  <text x="672" y="529" text-anchor="middle" class="label">Bounded P FIFO</text>
+  <text x="672" y="549" text-anchor="middle" class="mono">P[64,256]</text>
+  <text x="672" y="568" text-anchor="middle" class="mono">alpha[64]</text>
+  <path d="M572 646 H583 V544 H597" class="pdata"/>
+
+  <rect x="597" y="622" width="150" height="91" class="output"/>
+  <text x="672" y="646" text-anchor="middle" class="label">Online Update</text>
+  <text x="672" y="668" text-anchor="middle" class="tiny">m' = max(m, m_tile)</text>
+  <text x="672" y="687" text-anchor="middle" class="tiny">alpha = exp(m - m')</text>
+  <text x="672" y="706" text-anchor="middle" class="tiny">P = exp(S - m')</text>
+  <path d="M572 668 H597" class="control"/>
+
+  <rect x="92" y="727" width="635" height="62" class="callout"/>
+  <circle cx="117" cy="750" r="14" fill="#16877b"/>
+  <text x="117" y="755" text-anchor="middle" font-family="Arial" font-size="13" font-weight="700" fill="#fff">1</text>
+  <text x="140" y="750" class="label">Producer-side overlap:</text>
+  <text x="297" y="750" class="small">QK can fill another Score slot while SFU consumes the previous slot.</text>
+  <text x="140" y="772" class="small">Priority favors rows closest to completing a 256-key P window, exposing PV work earlier.</text>
+
+  <!-- C: PV microarchitecture -->
+  <rect x="800" y="440" width="745" height="375" class="panel"/>
+  <text x="820" y="469" class="section">C. PV consumer microarchitecture</text>
+
+  <rect x="830" y="495" width="148" height="62" class="buffer"/>
+  <text x="904" y="518" text-anchor="middle" class="label">P + alpha Queue</text>
+  <text x="904" y="539" text-anchor="middle" class="tiny">resident; no HBM DMA</text>
+
+  <rect x="1008" y="495" width="190" height="62" class="mem"/>
+  <text x="1103" y="518" text-anchor="middle" class="label">512 KiB Local V SRAM</text>
+  <text x="1103" y="539" text-anchor="middle" class="small">4 entries x 128 KiB</text>
+
+  <rect x="1228" y="495" width="145" height="62" class="mem"/>
+  <text x="1301" y="518" text-anchor="middle" class="label">16 KiB Panels</text>
+  <text x="1301" y="539" text-anchor="middle" class="small">A compute / B read-next</text>
+
+  <rect x="1403" y="495" width="112" height="62" class="pv"/>
+  <text x="1459" y="518" text-anchor="middle" class="label">Dual Context</text>
+  <text x="1459" y="539" text-anchor="middle" class="small">A compute, B prefetch</text>
+
+  <path d="M904 557 V573 H1080 V580" class="pdata"/>
+  <path d="M1198 526 H1228" class="vdata"/>
+  <path d="M1301 557 V570 H1240 V580" class="vdata"/>
+  <path d="M1459 557 V572 H1295 V605" class="control"/>
+
+  <rect x="1055" y="580" width="240" height="97" class="pv"/>
+  <text x="1175" y="605" text-anchor="middle" class="label">1x2 PV Reuse Window</text>
+  <text x="1175" y="629" text-anchor="middle" class="mono">P[64,256] x V[256,128]</text>
+  <text x="1175" y="651" text-anchor="middle" class="small">1 row tile x 2 output-D tiles</text>
+  <text x="1175" y="670" text-anchor="middle" class="tiny">P reused for both D64 outputs</text>
+
+  <rect x="830" y="602" width="178" height="75" class="output"/>
+  <text x="919" y="625" text-anchor="middle" class="label">Resident Numerator Z</text>
+  <text x="919" y="648" text-anchor="middle" class="mono">Z_new = alpha Z_old + PV</text>
+  <text x="919" y="667" text-anchor="middle" class="tiny">same row block stays local</text>
+  <path d="M1055 642 H1008" class="data"/>
+  <path d="M904 557 V580 H1055" class="pdata"/>
+
+  <rect x="1330" y="598" width="185" height="79" class="output"/>
+  <text x="1423" y="622" text-anchor="middle" class="label">Window Completion</text>
+  <text x="1423" y="644" text-anchor="middle" class="small">4 windows / row block</text>
+  <text x="1423" y="663" text-anchor="middle" class="mono">O = Z_final / l_final</text>
+  <path d="M1295 628 H1330" class="data"/>
+
+  <rect x="830" y="721" width="685" height="68" class="callout"/>
+  <circle cx="855" cy="746" r="14" fill="#cf642e"/>
+  <text x="855" y="751" text-anchor="middle" font-family="Arial" font-size="13" font-weight="700" fill="#fff">2</text>
+  <text x="878" y="746" class="label">Consumer-side overlap:</text>
+  <text x="1040" y="746" class="small">context A computes while context B prefetches the next 128 KiB V entry.</text>
+  <text x="878" y="770" class="small">Inside a V entry, panel i is on the arrays while panel i+1 is read from local SRAM.</text>
+
+  <!-- D: timing -->
+  <rect x="55" y="840" width="1490" height="300" class="panel"/>
+  <text x="75" y="869" class="section">D. Steady-state overlap across consecutive 256-key windows</text>
+  <text x="1465" y="869" text-anchor="end" class="tiny">time proceeds left to right; widths are illustrative</text>
+
+  <line x1="230" y1="905" x2="1500" y2="905" class="timeline"/>
+  <line x1="230" y1="949" x2="1500" y2="949" class="timeline"/>
+  <line x1="230" y1="993" x2="1500" y2="993" class="timeline"/>
+  <line x1="230" y1="1037" x2="1500" y2="1037" class="timeline"/>
+  <line x1="230" y1="1081" x2="1500" y2="1081" class="timeline"/>
+  <text x="205" y="921" text-anchor="end" class="label">Q/K supply</text>
+  <text x="205" y="965" text-anchor="end" class="label">QK arrays</text>
+  <text x="205" y="1009" text-anchor="end" class="label">SFU / P FIFO</text>
+  <text x="205" y="1053" text-anchor="end" class="label">V supply</text>
+  <text x="205" y="1097" text-anchor="end" class="label">PV arrays</text>
+
+  <rect x="250" y="887" width="175" height="31" class="mem"/>
+  <text x="338" y="907" text-anchor="middle" class="small">Q prefetch + K0 ping</text>
+  <rect x="440" y="887" width="160" height="31" class="mem"/>
+  <text x="520" y="907" text-anchor="middle" class="small">K1 pong prefetch</text>
+  <rect x="615" y="887" width="160" height="31" class="mem"/>
+  <text x="695" y="907" text-anchor="middle" class="small">K2 ping prefetch</text>
+
+  <rect x="400" y="931" width="190" height="31" class="qk"/>
+  <text x="495" y="951" text-anchor="middle" class="small">QK window 0 (2x4)</text>
+  <rect x="610" y="931" width="190" height="31" class="qk"/>
+  <text x="705" y="951" text-anchor="middle" class="small">QK window 1 (2x4)</text>
+  <rect x="820" y="931" width="190" height="31" class="qk"/>
+  <text x="915" y="951" text-anchor="middle" class="small">QK window 2 (2x4)</text>
+
+  <rect x="590" y="975" width="230" height="31" class="sfu"/>
+  <text x="705" y="995" text-anchor="middle" class="small">SFU W0 + form P0, alpha0</text>
+  <rect x="820" y="975" width="230" height="31" class="sfu"/>
+  <text x="935" y="995" text-anchor="middle" class="small">SFU W1 + form P1, alpha1</text>
+  <rect x="1050" y="975" width="230" height="31" class="sfu"/>
+  <text x="1165" y="995" text-anchor="middle" class="small">SFU W2 + form P2, alpha2</text>
+
+  <rect x="645" y="1019" width="205" height="31" class="mem"/>
+  <text x="748" y="1039" text-anchor="middle" class="small">V0 HBM + tree broadcast</text>
+  <rect x="865" y="1019" width="205" height="31" class="mem"/>
+  <text x="968" y="1039" text-anchor="middle" class="small">V1 prefetch to context B</text>
+  <rect x="1085" y="1019" width="205" height="31" class="mem"/>
+  <text x="1188" y="1039" text-anchor="middle" class="small">V2 prefetch to context A</text>
+
+  <rect x="815" y="1063" width="215" height="31" class="pv"/>
+  <text x="923" y="1083" text-anchor="middle" class="small">PV0: panel read || compute</text>
+  <rect x="1050" y="1063" width="215" height="31" class="pv"/>
+  <text x="1158" y="1083" text-anchor="middle" class="small">PV1: alpha Z + P1V1</text>
+  <rect x="1285" y="1063" width="190" height="31" class="pv"/>
+  <text x="1380" y="1083" text-anchor="middle" class="small">PV2: alpha Z + P2V2</text>
+
+  <path d="M590 947 V972" class="control"/>
+  <path d="M820 991 V1059" class="pdata"/>
+  <path d="M850 1035 V1059" class="vdata"/>
+  <path d="M1050 991 V1059" class="pdata"/>
+  <path d="M1070 1035 V1059" class="vdata"/>
+
+  <circle cx="106" cy="1120" r="14" fill="#7651a8"/>
+  <text x="106" y="1125" text-anchor="middle" font-family="Arial" font-size="13" font-weight="700" fill="#fff">3</text>
+  <text x="130" y="1124" class="small">Three-way overlap: next QK production, current SFU/P transfer, and previous PV consumption proceed concurrently.</text>
+
+  <!-- Legend -->
+  <rect x="965" y="1110" width="18" height="12" class="qk"/>
+  <text x="990" y="1121" class="tiny">QK/arrays</text>
+  <rect x="1070" y="1110" width="18" height="12" class="sfu"/>
+  <text x="1095" y="1121" class="tiny">Score/P/SFU</text>
+  <rect x="1195" y="1110" width="18" height="12" class="mem"/>
+  <text x="1220" y="1121" class="tiny">memory/prefetch</text>
+  <rect x="1330" y="1110" width="18" height="12" class="pv"/>
+  <text x="1355" y="1121" class="tiny">PV</text>
+  <rect x="1410" y="1110" width="18" height="12" class="output"/>
+  <text x="1435" y="1121" class="tiny">online output</text>
+
+  <text x="70" y="1174" class="tiny">Target shape: Hq=4, Hkv=2, Sq=Skv=1024, Dh=128. Score and P remain on chip. The diagram shows the current static row-sticky 8+8 dataflow.</text>
+</svg>

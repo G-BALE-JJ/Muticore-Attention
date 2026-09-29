@@ -1,0 +1,28 @@
+[
+  {
+    "case_id": "hq4_hkv2_q4096_k4096_d128",
+    "Hq": 4,
+    "Hkv": 2,
+    "query_length": 4096,
+    "kv_length": 4096,
+    "head_dim": 128,
+    "mpi_ranks": 4,
+    "local_gm_queue_depth": 256,
+    "theoretical_resource_floor_cycles": 524288,
+    "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/long_sequence_row_priority_off/hq4_hkv2_q4096_k4096_d128",
+    "status": "PASS",
+    "end_to_end_cycles": 1263032,
+    "slowest_job_cycles": 944657,
+    "qk_span_cycles": 788859,
+    "sfu_span_cycles": 953635,
+    "pv_span_cycles": 1258663,
+    "pv_receive_to_start_avg_cycles": 206366.05810546875,
+    "pv_receive_to_start_max_cycles": 394207,
+    "qk_jobs": 16,
+    "pv_windows": 4096,
+    "error": null,
+    "excess_over_floor_cycles": 738744,
+    "actual_over_floor_ratio": 2.4090423583984375,
+    "runner_returncode": 0
+  }
+]

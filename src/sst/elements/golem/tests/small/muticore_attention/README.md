@@ -1,9 +1,10 @@
 # FlashAttention Workload
 
-This directory contains the active FP32, non-causal GQA workload and its SST
+This directory contains the active non-causal GQA workload and its SST
 runner, verification, and reporting tools.
 The optimized point is `B=1,Sq=Skv=1024,Dh=128`. The active interface exposes
-independent `Hq` and `Hkv`.
+independent `Hq` and `Hkv`. FP16 tensor transport is the default; accumulation
+uses FP32, and `--dtype fp32` remains available for comparison runs.
 
 ## Run
 
@@ -80,14 +81,17 @@ windows, and static PV placement.
 ## Verification
 
 The 8+8 SST bridge reports QK jobs, PV windows, assigned worker cores, fusion
-completion, and end-to-end cycles from simulator events. The standalone
-functional model checks online softmax against a full-attention reference.
-The SST bridge currently exits after its cluster report; it does not run the
-separate HBM-output numerical and lifecycle verifiers.
+completion, and end-to-end cycles from simulator events. The runner verifies
+HBM output against an attention reference, checks MPI component placement,
+and verifies the striped HBM input layout. The standalone functional model
+also checks online softmax against a full-attention reference.
 
 | Case | Resource floor | Frozen SST cycles | Status |
 |---|---:|---:|---|
-| Hq4/Hkv2/Sq1024/Skv1024/Dh128 | 32,768 | **47,193** | cluster report PASS |
+| Hq4/Hkv2/Sq1024/Skv1024/Dh128 | 32,768 | **47,193** | frozen FP32 cluster report PASS |
+
+The frozen cycle count predates output DMA and numerical verification. Current
+FP16 results are summarized in `baseline/attention_cluster_8qk_8pv/README.md`.
 
 Historical sequential-64 measurements are in
 `../../../../../../../archive/attention_sequential_64/` and the existing

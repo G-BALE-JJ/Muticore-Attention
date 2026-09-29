@@ -402,6 +402,7 @@ bool GlobalMemoryImplement::sendControlMessage(uint32_t destinationCore,
 
     req->size_in_bits = (sizeof(ControlTransportMessage) +
         stampedMessage.payload.size() * sizeof(float) +
+        stampedMessage.tensorPayload.size() +
         stampedMessage.scales.size() * sizeof(float)) * 8;
     req->src = network_id;
     req->dest = static_cast<SST::Interfaces::SimpleNetwork::nid_t>(destination->second);
@@ -482,7 +483,8 @@ bool GlobalMemoryImplement::flush_send_retry_queue()
 
 bool GlobalMemoryImplement::handle_send_available(int)
 {
-    return flush_send_retry_queue();
+    flush_send_retry_queue();
+    return true;
 }
 
 namespace {

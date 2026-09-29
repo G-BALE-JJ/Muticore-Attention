@@ -707,7 +707,17 @@ void RequestSchedulerEndpoint::enqueueWindowTiles(WorkerWindowTxnState& state)
                 static_cast<uint64_t>(state.txn.useIndependentMatVecTiles
                                           ? (matGroupIdx * totalKTileCount + matKIdx)
                                           : i) * state.txn.matStrideBytes;
-        const uint64_t vecSrcBase = state.txn.rowMajorPanels
+        const uint64_t vecSrcBase = state.txn.attentionPackedVecTilesPerBand != 0
+            ? static_cast<uint64_t>(1u +
+                (state.txn.attentionPackedVecTileBegin + vecGroupIdx) /
+                    state.txn.attentionPackedVecTilesPerBand) *
+                state.txn.attentionPackedVecNodeStrideBytes +
+                state.txn.attentionPackedVecBaseOffset +
+                static_cast<uint64_t>((state.txn.attentionPackedVecTileBegin +
+                    vecGroupIdx) % state.txn.attentionPackedVecTilesPerBand) *
+                    totalKTileCount * state.txn.vecStrideBytes +
+                static_cast<uint64_t>(vecKIdx) * state.txn.vecStrideBytes
+            : state.txn.rowMajorPanels
             ? state.txn.vecBaseAddr +
                 static_cast<uint64_t>(vecGroupIdx) * state.txn.vecGroupStrideBytes +
                 static_cast<uint64_t>(vecKIdx) * state.txn.kSliceStrideBytes

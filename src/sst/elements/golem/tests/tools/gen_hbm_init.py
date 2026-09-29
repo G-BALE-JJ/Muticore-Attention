@@ -63,6 +63,8 @@ ATTENTION_NUM_KV_HEADS = int(os.getenv(
     os.getenv("GOLEM_ATTENTION_KV_HEADS", str(ATTENTION_HEADS)),
 ))
 ATTENTION_HEAD_DIM = int(os.getenv("GOLEM_ATTENTION_HEAD_DIM", "64"))
+ATTENTION_DTYPE = normalize_dtype(os.getenv("GOLEM_ATTENTION_DTYPE", "fp16"))
+ATTENTION_ELEM_BYTES = elem_nbytes(ATTENTION_DTYPE)
 ATTENTION_HBM_STRIPED = int(os.getenv("GOLEM_ATTENTION_HBM_STRIPED", "0")) != 0
 ATTENTION_REUSE_WINDOW_PANEL_LAYOUT = (
     int(os.getenv("GOLEM_ATTENTION_REUSE_WINDOW_PANEL_LAYOUT", "0")) != 0
@@ -367,11 +369,11 @@ def _preload_fused_attention(node_buffers):
         raise ValueError("fused Attention requires HBM data node 1")
     tensors = (
         ("Q", ATTENTION_Q_FILE, ATTENTION_Q_OFFSET,
-         ATTENTION_NUM_QUERY_HEADS * ATTENTION_QUERY_LENGTH * ATTENTION_HEAD_DIM * 4),
+         ATTENTION_NUM_QUERY_HEADS * ATTENTION_QUERY_LENGTH * ATTENTION_HEAD_DIM * ATTENTION_ELEM_BYTES),
         ("K", ATTENTION_K_FILE, ATTENTION_K_OFFSET,
-         ATTENTION_NUM_KV_HEADS * ATTENTION_KV_LENGTH * ATTENTION_HEAD_DIM * 4),
+         ATTENTION_NUM_KV_HEADS * ATTENTION_KV_LENGTH * ATTENTION_HEAD_DIM * ATTENTION_ELEM_BYTES),
         ("V", ATTENTION_V_FILE, ATTENTION_V_OFFSET,
-         ATTENTION_NUM_KV_HEADS * ATTENTION_KV_LENGTH * ATTENTION_HEAD_DIM * 4),
+         ATTENTION_NUM_KV_HEADS * ATTENTION_KV_LENGTH * ATTENTION_HEAD_DIM * ATTENTION_ELEM_BYTES),
     )
     loaded = {}
     for name, path, offset, expected_bytes in tensors:
@@ -387,12 +389,12 @@ def _preload_fused_attention(node_buffers):
     if ATTENTION_HBM_STRIPED:
         if len(DATA_NODE_IDS) != 4 or ATTENTION_QUERY_LENGTH % 4 != 0 or ATTENTION_KV_LENGTH % 4 != 0:
             raise ValueError("striped fused Attention requires four data nodes and /4 shapes")
-        q_band_bytes = (ATTENTION_QUERY_LENGTH // 4) * ATTENTION_HEAD_DIM * 4
-        kv_band_bytes = (ATTENTION_KV_LENGTH // 4) * ATTENTION_HEAD_DIM * 4
+        q_band_bytes = (ATTENTION_QUERY_LENGTH // 4) * ATTENTION_HEAD_DIM * ATTENTION_ELEM_BYTES
+        kv_band_bytes = (ATTENTION_KV_LENGTH // 4) * ATTENTION_HEAD_DIM * ATTENTION_ELEM_BYTES
         for band, node_idx in enumerate(DATA_NODE_IDS):
             q_offset, q_data = loaded["Q"]
             for head in range(ATTENTION_NUM_QUERY_HEADS):
-                q_head_bytes = ATTENTION_QUERY_LENGTH * ATTENTION_HEAD_DIM * 4
+                q_head_bytes = ATTENTION_QUERY_LENGTH * ATTENTION_HEAD_DIM * ATTENTION_ELEM_BYTES
                 q_source = head * q_head_bytes + band * q_band_bytes
                 _write_block(
                     node_buffers[node_idx], q_offset + head * q_band_bytes,
@@ -402,7 +404,7 @@ def _preload_fused_attention(node_buffers):
             for head in range(ATTENTION_NUM_KV_HEADS):
                 for name in ("K", "V"):
                     offset, data = loaded[name]
-                    kv_head_bytes = ATTENTION_KV_LENGTH * ATTENTION_HEAD_DIM * 4
+                    kv_head_bytes = ATTENTION_KV_LENGTH * ATTENTION_HEAD_DIM * ATTENTION_ELEM_BYTES
                     kv_source = head * kv_head_bytes + band * kv_band_bytes
                     _write_block(
                         node_buffers[node_idx], offset + head * kv_band_bytes,
@@ -412,7 +414,7 @@ def _preload_fused_attention(node_buffers):
         print("Preloaded fused Attention Q/K/V bands across four HBM data nodes")
         if ATTENTION_REUSE_WINDOW_PANEL_LAYOUT:
             block = 64
-            elem_bytes = 4
+            elem_bytes = ATTENTION_ELEM_BYTES
             if (ATTENTION_QUERY_LENGTH % (4 * block) != 0 or
                     ATTENTION_KV_LENGTH % (4 * block) != 0 or
                     ATTENTION_HEAD_DIM % block != 0):
@@ -462,20 +464,24 @@ def _preload_fused_attention(node_buffers):
             v_row_bytes = ATTENTION_HEAD_DIM * elem_bytes
             v_head_bytes = ATTENTION_KV_LENGTH * v_row_bytes
             dim_tiles = ATTENTION_HEAD_DIM // block
+            total_windows = ATTENTION_KV_LENGTH // (4 * block)
+            windows_per_node = (total_windows + len(DATA_NODE_IDS) - 1) // len(DATA_NODE_IDS)
             for head in range(ATTENTION_NUM_KV_HEADS):
-                for band, node_idx in enumerate(DATA_NODE_IDS):
+                for window in range(total_windows):
+                    node_idx = DATA_NODE_IDS[window // windows_per_node]
+                    local_window = window % windows_per_node
                     for dim_tile in range(dim_tiles):
-                        for key_tile in range(kv_tiles_per_band):
+                        for key_tile in range(4):
                             panel = bytearray()
-                            global_key_tile = band * kv_tiles_per_band + key_tile
+                            global_key_tile = window * 4 + key_tile
                             for dim in range(block):
                                 for key in range(block):
                                     source = (head * v_head_bytes +
                                               (global_key_tile * block + key) * v_row_bytes +
                                               (dim_tile * block + dim) * elem_bytes)
                                     panel.extend(v_raw[source:source + elem_bytes])
-                            slot = ((head * dim_tiles + dim_tile) *
-                                    kv_tiles_per_band + key_tile)
+                            slot = ((head * windows_per_node + local_window) *
+                                    dim_tiles + dim_tile) * 4 + key_tile
                             _write_block(
                                 node_buffers[node_idx],
                                 ATTENTION_PANEL_V_OFFSET + slot * panel_bytes,

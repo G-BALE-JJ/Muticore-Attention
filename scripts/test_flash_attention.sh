@@ -5,9 +5,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/test_flash_attention.sh [options]
 
-Run one Attention test from this worktree. The current performance and cycle
-acceptance point is fixed at Sq=Skv=1024, Dh=128; dimension overrides are retained
-for correctness-contract use only.
+Run one end-to-end Attention test from this worktree.
 
   --query-length N     Query sequence length Sq (default: 1024)
   --kv-length N        Shared K/V sequence length Skv (default: 1024)
@@ -18,6 +16,7 @@ for correctness-contract use only.
                        Deprecated aliases for the two head counts
   --heads N            Compatibility alias: set Query and K/V heads to N
   --head-dim N         Per-head dimension Dh: 64 or 128 (default: 128)
+  --dtype NAME         Tensor storage: fp16 or fp32 (default: fp16)
   --mpi-ranks N        SST MPI ranks: 1, 2, or 4 (default: 4)
   --timeout SEC        Test timeout (default: 7200)
   --artifact-root DIR  Output directory (default: /tmp/<case-id>[_mpiN])
@@ -34,6 +33,7 @@ KV_LENGTH=1024
 NUM_QUERY_HEADS=1
 NUM_KV_HEADS=1
 HEAD_DIM=128
+DTYPE="${GOLEM_ATTENTION_DTYPE:-fp16}"
 TIMEOUT=7200
 MPI_RANKS=4
 ARTIFACT_ROOT=""
@@ -57,7 +57,7 @@ fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --query-length|--kv-length|--num-query-heads|--num-kv-heads|--queries|--keys|--heads|--query-heads|--kv-heads|--head-dim|--timeout|--mpi-ranks|--artifact-root|--baseline)
+    --query-length|--kv-length|--num-query-heads|--num-kv-heads|--queries|--keys|--heads|--query-heads|--kv-heads|--head-dim|--timeout|--mpi-ranks|--artifact-root|--baseline|--dtype)
       option="$1"
       if [[ $# -lt 2 ]]; then
         echo "Missing value for $option" >&2
@@ -71,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         --num-query-heads|--query-heads) NUM_QUERY_HEADS="$2" ;;
         --num-kv-heads|--kv-heads) NUM_KV_HEADS="$2" ;;
         --head-dim) HEAD_DIM="$2" ;;
+        --dtype) DTYPE="$2" ;;
         --timeout) TIMEOUT="$2" ;;
         --mpi-ranks) MPI_RANKS="$2" ;;
         --artifact-root) ARTIFACT_ROOT="$2" ;;
@@ -83,6 +84,11 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+if [[ "$DTYPE" != "fp16" && "$DTYPE" != "fp32" ]]; then
+  echo "--dtype must be fp16 or fp32" >&2
+  exit 2
+fi
+export GOLEM_ATTENTION_DTYPE="$DTYPE"
 
 for pair in "query-length:$QUERY_LENGTH" "kv-length:$KV_LENGTH" \
             "num-query-heads:$NUM_QUERY_HEADS" "num-kv-heads:$NUM_KV_HEADS" \
@@ -194,6 +200,7 @@ if [[ "$SHOW_CONFIG" == "1" ]]; then
     "KV_HEADS=$NUM_KV_HEADS" \
     "GQA_GROUP_SIZE=$GQA_GROUP_SIZE" \
     "HEAD_DIM=$HEAD_DIM" \
+    "DTYPE=$DTYPE" \
     "MANAGER_QUERY_ROWS=$MANAGER_QUERY_ROWS" \
     "MANAGER_QUERIES=$MANAGER_QUERY_ROWS" \
     "TIMEOUT=$TIMEOUT" \

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#FFFFFF"/>
+
+  <style>
+    .title { font: 700 48px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #17202A; }
+    .subtitle { font: 400 24px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #52606D; }
+    .label { font: 600 27px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #25313C; }
+    .axis { font: 400 20px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #65727E; }
+    .value { font: 700 27px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #17202A; }
+    .card-number { font: 700 38px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }
+    .card-text { font: 500 22px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #33404C; }
+    .note { font: 400 18px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #697681; }
+  </style>
+
+  <text x="90" y="78" class="title">Self-Attention 端到端延迟对比</text>
+  <text x="90" y="120" class="subtitle">Sq = Skv = 1024，Dh = 128，FP32；数值越小越好</text>
+
+  <!-- Plot grid: 0 to 600,000 normalized cycles -->
+  <g stroke="#D9E0E6" stroke-width="2">
+    <line x1="390" y1="180" x2="390" y2="700"/>
+    <line x1="555" y1="180" x2="555" y2="700"/>
+    <line x1="720" y1="180" x2="720" y2="700"/>
+    <line x1="885" y1="180" x2="885" y2="700"/>
+    <line x1="1050" y1="180" x2="1050" y2="700"/>
+    <line x1="1215" y1="180" x2="1215" y2="700"/>
+    <line x1="1380" y1="180" x2="1380" y2="700"/>
+  </g>
+
+  <g text-anchor="middle" class="axis">
+    <text x="390" y="730">0</text>
+    <text x="555" y="730">100k</text>
+    <text x="720" y="730">200k</text>
+    <text x="885" y="730">300k</text>
+    <text x="1050" y="730">400k</text>
+    <text x="1215" y="730">500k</text>
+    <text x="1380" y="730">600k</text>
+  </g>
+  <text x="885" y="766" text-anchor="middle" class="axis">1 GHz 归一化 cycles</text>
+
+  <!-- Series labels -->
+  <text x="350" y="308" text-anchor="end" class="label">优化前 SST</text>
+  <text x="350" y="473" text-anchor="end" class="label">RTX 5060</text>
+  <text x="350" y="638" text-anchor="end" class="label">优化后 SST</text>
+
+  <!-- Bars; scale = 990 px / 600,000 cycles -->
+  <rect x="390" y="250" width="951.484" height="84" rx="6" fill="#E1673E"/>
+  <rect x="390" y="415" width="160.987" height="84" rx="6" fill="#3976C5"/>
+  <rect x="390" y="580" width="51.475" height="84" rx="6" fill="#20A36A"/>
+
+  <!-- Value labels -->
+  <text x="1362" y="305" class="value">576,657</text>
+  <text x="570" y="470" class="value">97,568</text>
+  <text x="461" y="635" class="value">31,197</text>
+
+  <!-- Summary cards -->
+  <rect x="90" y="790" width="640" height="78" rx="6" fill="#F2F7F4" stroke="#B9DECC" stroke-width="2"/>
+  <text x="120" y="840" class="card-number" fill="#158052">18.48×</text>
+  <text x="285" y="839" class="card-text">SST 优化前 → 优化后</text>
+
+  <rect x="760" y="790" width="750" height="78" rx="6" fill="#F1F5FA" stroke="#BDD0E8" stroke-width="2"/>
+  <text x="790" y="840" class="card-number" fill="#2F67AA">3.13×</text>
+  <text x="935" y="839" class="card-text">优化后 SST 相对 RTX 5060 的延迟优势</text>
+
+  <text x="1510" y="890" text-anchor="end" class="note">注：RTX 5060 为 CUDA Event 中位延迟按 1 GHz 换算，不是 GPU 原生时钟周期；不含 H2D/D2H。</text>
+</svg>

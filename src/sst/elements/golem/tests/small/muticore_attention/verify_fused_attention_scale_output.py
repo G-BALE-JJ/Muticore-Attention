@@ -34,15 +34,15 @@ def compute_attention_blocked(
 
 def verify(q_file, k_file, v_file, hbm_dir, output_offset,
            query_length, kv_length, num_query_heads, num_kv_heads,
-           head_dim, band_rows):
+           head_dim, band_rows, dtype="fp32"):
     if (num_query_heads <= 0 or num_kv_heads <= 0 or
             num_query_heads % num_kv_heads != 0):
         raise ValueError("num_query_heads must be divisible by num_kv_heads")
-    q = attention_case._read_f32(
-        q_file, num_query_heads * query_length * head_dim
+    q = attention_case._read_tensor(
+        q_file, num_query_heads * query_length * head_dim, dtype
     )
-    k = attention_case._read_f32(k_file, num_kv_heads * kv_length * head_dim)
-    v = attention_case._read_f32(v_file, num_kv_heads * kv_length * head_dim)
+    k = attention_case._read_tensor(k_file, num_kv_heads * kv_length * head_dim, dtype)
+    v = attention_case._read_tensor(v_file, num_kv_heads * kv_length * head_dim, dtype)
     expected = []
     q_head_values = query_length * head_dim
     kv_head_values = kv_length * head_dim
@@ -58,9 +58,9 @@ def verify(q_file, k_file, v_file, hbm_dir, output_offset,
     actual = []
     band_values = band_rows * head_dim
     node_outputs = [
-        attention_case._read_f32(
+        attention_case._read_tensor(
             Path(hbm_dir) / f"hbm_out_node{node}.bin",
-            num_query_heads * band_values, output_offset,
+            num_query_heads * band_values, dtype, output_offset,
         )
         for node in range(1, 5)
     ]
@@ -69,13 +69,15 @@ def verify(q_file, k_file, v_file, hbm_dir, output_offset,
             for query in range(band_rows):
                 begin = (query * num_query_heads + head) * head_dim
                 actual.extend(node_data[begin:begin + head_dim])
+    atol = 2.0e-5 if dtype == "fp16" else 2.0e-4
+    rtol = 2.0e-3 if dtype == "fp16" else 2.0e-4
     mismatches = 0
     max_abs_error = 0.0
     first_mismatch = None
     for index, (got, want) in enumerate(zip(actual, expected)):
         error = abs(got - want)
         max_abs_error = max(max_abs_error, error)
-        if not math.isclose(got, want, rel_tol=2.0e-4, abs_tol=2.0e-4):
+        if not math.isfinite(got) or not math.isclose(got, want, rel_tol=rtol, abs_tol=atol):
             mismatches += 1
             if first_mismatch is None:
                 first_mismatch = {
@@ -87,7 +89,11 @@ def verify(q_file, k_file, v_file, hbm_dir, output_offset,
                     "abs_error": error,
                 }
     return {
-        "status": "PASS" if mismatches == 0 else "FAIL",
+        "status": "PASS" if mismatches == 0 and any(actual) else "FAIL",
+        "dtype": dtype,
+        "atol": atol,
+        "rtol": rtol,
+        "output_nonzero": any(actual),
         "checked": len(expected),
         "mismatches": mismatches,
         "max_abs_error": max_abs_error,
@@ -122,6 +128,7 @@ def main():
                         dest="num_kv_heads", type=int)
     parser.add_argument("--head-dim", type=int, required=True)
     parser.add_argument("--band-rows", type=int, required=True)
+    parser.add_argument("--dtype", choices=["fp16", "fp32"], default="fp16")
     parser.add_argument("--result-json")
     args = parser.parse_args()
     num_query_heads = args.num_query_heads or args.heads or 1
@@ -130,7 +137,8 @@ def main():
     )
     result = verify(args.q_file, args.k_file, args.v_file, args.hbm_dir,
                     args.output_offset, args.query_length, args.kv_length,
-                    num_query_heads, num_kv_heads, args.head_dim, args.band_rows)
+                    num_query_heads, num_kv_heads, args.head_dim, args.band_rows,
+                    args.dtype)
     print(json.dumps(result, indent=2))
     if args.result_json:
         Path(args.result_json).write_text(json.dumps(result, indent=2) + "\n")

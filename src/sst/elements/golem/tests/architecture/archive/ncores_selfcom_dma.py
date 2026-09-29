@@ -345,6 +345,7 @@ if _attention_fused:
         next(os.environ[name] for name in names if name in os.environ)
         for names in attention_guest_arg_names
     ]
+    attention_guest_args.append(os.getenv("GOLEM_ATTENTION_DTYPE", "fp16"))
 
 for core_id in range(numCpus):
     process_params = {

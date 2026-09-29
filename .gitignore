@@ -72,3 +72,19 @@ src/sst/elements/golem/tests/small/muticore_softmax/figures/**/*.tiff
 .planning/
 
 # Attention cluster simulator runs. Keep only compact final verification JSON.
+/results/**
+!/results/
+!/results/fp16_e2e_d64/
+!/results/fp16_e2e_d128/
+!/results/fp16_e2e_llama32_8_d64/
+!/results/llama32_8_d64/
+!/results/long_sequence_before/
+!/results/long_sequence_residency/
+!/results/long_sequence_window_major/
+!/results/long_sequence_cross_macro/
+!/results/long_sequence_row_priority_off/
+!/results/sweeps_4096_q256/
+/results/*/**
+!/results/*/summary-latest.csv
+!/results/*/summary-latest.json
+/src/sst/elements/golem/tests/results/

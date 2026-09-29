@@ -154,8 +154,13 @@ struct ControlTransportMessage {
     uint32_t numKvHeads = 1;
     uint32_t kvHeadIndex = 0;
     uint32_t queryLength = 0;
+    uint32_t kvLength = 0;
     uint32_t groupQueryRowBegin = 0;
+    uint64_t pReadyCycle = 0;
+    uint64_t pvDispatchCycle = 0;
+    uint64_t pvReceiveCycle = 0;
     std::vector<float> payload;
+    std::vector<uint8_t> tensorPayload;
     std::vector<float> scales;
 
     void serialize_order(SST::Core::Serialization::serializer& ser) {
@@ -188,8 +193,13 @@ struct ControlTransportMessage {
         ser & numKvHeads;
         ser & kvHeadIndex;
         ser & queryLength;
+        ser & kvLength;
         ser & groupQueryRowBegin;
+        ser & pReadyCycle;
+        ser & pvDispatchCycle;
+        ser & pvReceiveCycle;
         ser & payload;
+        ser & tensorPayload;
         ser & scales;
     }
 };

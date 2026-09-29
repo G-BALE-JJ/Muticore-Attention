@@ -77,6 +77,7 @@ struct WorkerTaskListHeader {
     uint64_t attention_node_stride_bytes = 0;
     uint64_t attention_pv_cache_gm_addr = 0;
     uint64_t attention_pv_cache_bytes = 0;
+    bool attention_key_window_major = false;
 };
 
 struct WorkerWindowDescriptor {
@@ -129,6 +130,7 @@ public:
     virtual bool setWindowResidentMatrixPayload(
         std::vector<uint8_t> payload) = 0;
     using AttentionPvPrefetchCallback = std::function<void(bool)>;
+    virtual bool attentionPvVectorResident(const WorkerTaskListHeader& header) const = 0;
     virtual bool prefetchAttentionPvVector(
         const WorkerTaskListHeader& header,
         AttentionPvPrefetchCallback callback) = 0;
@@ -1286,7 +1288,8 @@ public:
         if (reuseM > 1 && reuseN > 1) {
             const uint64_t partialTileBytes = static_cast<uint64_t>(header.block_m) *
                                               static_cast<uint64_t>(header.block_n) *
-                                              static_cast<uint64_t>(header.elem_bytes);
+                                              ((outputIsFloat_ && (header.operand_layout == 2 ||
+                                                header.operand_layout == 3)) ? sizeof(float) : header.elem_bytes);
             const uint64_t requiredCBufferBytes = static_cast<uint64_t>(reuseM) *
                                                   static_cast<uint64_t>(reuseN) * partialTileBytes;
             if (cBufferBytes_ < requiredCBufferBytes ||
@@ -1467,6 +1470,13 @@ public:
         const WorkerTaskListHeader& header,
         AttentionPvPrefetchCallback callback) override {
         return prefetchAttentionPvVectorImpl(header, std::move(callback));
+    }
+
+    bool attentionPvVectorResident(const WorkerTaskListHeader& header) const override {
+        return std::any_of(attentionPvVectorCache_.begin(), attentionPvVectorCache_.end(),
+            [this, &header](const AttentionPvVectorCacheEntry& entry) {
+                return attentionPvVectorMatches(entry, header);
+            });
     }
 
     bool installAttentionPvVector(
@@ -3029,6 +3039,15 @@ private:
         txn.kWindowTiles = kCount;
         txn.totalKTileCount = totalKTileCount_;
         txn.rowMajorPanels = usesAttentionRowMajorPanels();
+        if (usesAttentionPackedPanels()) {
+            const uint32_t nTiles = header_.n / header_.block_n;
+            txn.attentionPackedVecTileBegin =
+                static_cast<uint32_t>(current_.task_id % nTiles) - reuseNIndex_;
+            txn.attentionPackedVecTilesPerBand =
+                header_.attention_rows_per_band / header_.block_n;
+            txn.attentionPackedVecNodeStrideBytes = header_.attention_node_stride_bytes;
+            txn.attentionPackedVecBaseOffset = header_.off_gemm_vec_base;
+        }
         if (usesAttentionPvPanels()) {
             txn.skipMatRead = true;
             txn.skipVecRead = attentionPvVectorResidentHit_;
@@ -3534,6 +3553,15 @@ private:
         auto state = std::make_shared<ReadState>();
         state->data.resize(bytes);
         const size_t chunkMax = globalMem_->localMaxRequestBytes();
+        if (bytes <= chunkMax) {
+            return globalMem_->localReadAsync(
+                addr, bytes, LocalMemoryClient::WCP,
+                ++attentionPvVectorReadTag_,
+                [callback = std::move(callback), bytes](
+                    bool ok, uint64_t, const std::vector<uint8_t>& data) {
+                    callback(ok && data.size() == bytes, data);
+                });
+        }
         state->pending = (bytes + chunkMax - 1) / chunkMax;
         for (size_t offset = 0; offset < bytes; offset += chunkMax) {
             const size_t chunk = std::min(chunkMax, bytes - offset);
@@ -3570,15 +3598,26 @@ private:
         }
         uint32_t nextTile = currentTile + 1u;
         uint32_t nextReuseN = reuseNIndex_;
+        uint32_t nextKBegin = activeTxnKBegin_;
         if (nextTile >= activeTxnTileCount_) {
-            if (nextReuseN + 1u >= currentReuseNCount_) {
-                return;
+            if (nextReuseN + 1u < currentReuseNCount_) {
+                nextReuseN += 1u;
+                nextTile = 0;
+            } else {
+                // Keep the first V panel of the next transaction in flight
+                // while the current transaction is still computing.  The
+                // next transaction starts at nextPrefetchK_ after the active
+                // one retires; no new scheduler transaction is needed here.
+                const uint32_t taskKEnd = current_.k_begin + current_.k_count;
+                if (nextPrefetchK_ >= taskKEnd) {
+                    return;
+                }
+                nextKBegin = nextPrefetchK_;
+                nextTile = 0;
             }
-            nextReuseN += 1u;
-            nextTile = 0;
         }
         const uint32_t vecSlotIdx = nextReuseN * totalKTileCount_ +
-            activeTxnKBegin_ + nextTile;
+            nextKBegin + nextTile;
         const uint64_t vecAddr = header_.local_vec_ping_gm_addr +
             static_cast<uint64_t>(vecSlotIdx) * header_.local_vec_slot_stride_bytes;
         const size_t vecBytes = static_cast<size_t>(current_.vec_stride_bytes);
@@ -3590,7 +3629,6 @@ private:
                 if (generation != attentionPvVectorReadGeneration_) return;
                 attentionPvVectorPanelPrefetchInFlight_ = false;
                 if (!ok || bytes.size() < vecBytes) {
-                    attentionPvVectorReadFailed_ = true;
                     return;
                 }
                 if (activeComputeTileIndex_ == static_cast<int>(nextTile) &&
@@ -3671,7 +3709,6 @@ private:
                     }
                     attentionPvVectorReadInFlight_ = false;
                     if (!ok || bytes.size() < vec_bytes) {
-                        attentionPvVectorReadFailed_ = true;
                         return;
                     }
                     activeVecPayload_ = std::move(bytes);
@@ -3750,6 +3787,10 @@ private:
             if (!buildActiveTileMicroOps(
                     static_cast<uint32_t>(activeComputeTileIndex_),
                     static_cast<uint32_t>(activeComputeSlotIndex_))) {
+                if (extOutput_ != nullptr) extOutput_->output(
+                    "[Core %u] [wcp] ERROR: build PV tile micro-ops failed task=%" PRIu64
+                    " tile=%d k=%u block_k=%u\n", coreId_, current_.task_id,
+                    activeComputeTileIndex_, header_.k, header_.block_k);
                 phase_ = Phase::DONE;
                 return false;
             }
@@ -3772,6 +3813,11 @@ private:
                 return false;
             }
             if (loadStatus == TilePayloadLoadStatus::Failed) {
+                if (extOutput_ != nullptr) extOutput_->output(
+                    "[Core %u] [wcp] ERROR: load PV tile payload failed task=%" PRIu64
+                    " tile=%d vec_read_failed=%u source=%" PRIu64 "\n",
+                    coreId_, current_.task_id, activeComputeTileIndex_,
+                    attentionPvVectorReadFailed_, header_.off_gemm_vec_base);
                 phase_ = Phase::DONE;
                 return false;
             }
@@ -3784,6 +3830,10 @@ private:
             taskAccumInitialized_ = true;
         }
         if (!issueActiveMicroTile()) {
+            if (extOutput_ != nullptr) extOutput_->output(
+                "[Core %u] [wcp] ERROR: issue PV micro-tile failed task=%" PRIu64
+                " tile=%d\n", coreId_, current_.task_id,
+                activeComputeTileIndex_);
             phase_ = Phase::DONE;
             return false;
         }
@@ -3850,22 +3900,28 @@ private:
         return static_cast<size_t>(reuseMIndex_) * reuseN + static_cast<size_t>(reuseNIndex_);
     }
 
+    size_t accumulationElemBytes() const {
+        return outputIsFloat_ && (header_.operand_layout == 2 || header_.operand_layout == 3)
+            ? sizeof(float) : current_.elem_bytes;
+    }
+
     bool captureArrayOutput(std::vector<uint8_t>& tile) const {
-        tile.assign(static_cast<size_t>(header_.block_m) * current_.block_n * current_.elem_bytes, 0);
+        const size_t outputBytes = accumulationElemBytes();
+        tile.assign(static_cast<size_t>(header_.block_m) * current_.block_n * outputBytes, 0);
         for (uint32_t n = 0; n < current_.block_n; ++n) {
-            const size_t dst_off = static_cast<size_t>(n) * header_.block_m * current_.elem_bytes;
+            const size_t dst_off = static_cast<size_t>(n) * header_.block_m * outputBytes;
             if (outputIsFloat_) {
                 auto* outVec = static_cast<std::vector<float>*>(array_->getOutputVector(n));
                 if (outVec == nullptr || outVec->size() < header_.block_m) {
                     return false;
                 }
-                if (current_.elem_bytes == 2) {
+                if (outputBytes == 2) {
                     for (uint32_t row = 0; row < header_.block_m; ++row) {
                         const uint16_t bits = golem_float_to_fp16((*outVec)[row]);
                         std::memcpy(&tile[dst_off + static_cast<size_t>(row) * 2], &bits, sizeof(bits));
                     }
                 } else {
-                    std::memcpy(&tile[dst_off], outVec->data(), static_cast<size_t>(header_.block_m) * current_.elem_bytes);
+                    std::memcpy(&tile[dst_off], outVec->data(), static_cast<size_t>(header_.block_m) * outputBytes);
                 }
             } else {
                 auto* outVec = static_cast<std::vector<int32_t>*>(array_->getOutputVector(n));
@@ -3880,7 +3936,7 @@ private:
 
     size_t partialTileBytes() const {
         return static_cast<size_t>(header_.block_m) * static_cast<size_t>(header_.block_n) *
-               static_cast<size_t>(header_.elem_bytes);
+               accumulationElemBytes();
     }
 
     uint64_t partialCBufferOffset(size_t idx) const {
@@ -4199,21 +4255,22 @@ private:
         if (tile.size() != partialTileBytes()) {
             return false;
         }
+        const size_t outputBytes = accumulationElemBytes();
         for (uint32_t n = 0; n < current_.block_n; ++n) {
-            const size_t src_off = static_cast<size_t>(n) * header_.block_m * current_.elem_bytes;
+            const size_t src_off = static_cast<size_t>(n) * header_.block_m * outputBytes;
             if (outputIsFloat_) {
                 auto* outVec = static_cast<std::vector<float>*>(array_->getOutputVector(n));
                 if (outVec == nullptr || outVec->size() < header_.block_m) {
                     return false;
                 }
-                if (current_.elem_bytes == 2) {
+                if (outputBytes == 2) {
                     for (uint32_t row = 0; row < header_.block_m; ++row) {
                         uint16_t bits = 0;
                         std::memcpy(&bits, &tile[src_off + static_cast<size_t>(row) * 2], sizeof(bits));
                         (*outVec)[row] = golem_fp16_to_float(bits);
                     }
                 } else {
-                    std::memcpy(outVec->data(), &tile[src_off], static_cast<size_t>(header_.block_m) * current_.elem_bytes);
+                    std::memcpy(outVec->data(), &tile[src_off], static_cast<size_t>(header_.block_m) * outputBytes);
                 }
             } else {
                 auto* outVec = static_cast<std::vector<int32_t>*>(array_->getOutputVector(n));
@@ -4583,7 +4640,8 @@ private:
                                       ? header_.n_group_count
                                       : ((n_tiles + reuseN - 1) / reuseN);
         const uint32_t m_group = macro_task_id % m_groups;
-        const uint32_t n_group = ((macro_task_id / m_groups) + m_group) % n_groups;
+        const uint32_t n_group = ((macro_task_id / m_groups) +
+            (header_.attention_key_window_major ? 0u : m_group)) % n_groups;
         const uint32_t m_begin = m_group * reuseM;
         const uint32_t n_begin = n_group * reuseN;
         currentReuseMCount_ = std::min<uint32_t>(reuseM, m_tiles - m_begin);

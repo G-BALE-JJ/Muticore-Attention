@@ -406,6 +406,9 @@ attention_worker_cluster_qk_workers_per_manager = int(
 attention_worker_cluster_row_priority = int(
     os.getenv("GOLEM_ATTENTION_WORKER_CLUSTER_ROW_PRIORITY", "0")
 )
+attention_worker_cluster_window_major = int(
+    os.getenv("GOLEM_ATTENTION_WORKER_CLUSTER_WINDOW_MAJOR", "1")
+)
 attention_worker_cluster_v_broadcast = int(
     os.getenv("GOLEM_ATTENTION_WORKER_CLUSTER_V_BROADCAST", "0")
 )
@@ -761,6 +764,7 @@ roccarrayParams = {
         attention_worker_cluster_qk_workers_per_manager
     ),
     "attention_worker_cluster_row_priority": attention_worker_cluster_row_priority,
+    "attention_worker_cluster_window_major": attention_worker_cluster_window_major,
     "attention_worker_cluster_v_broadcast": attention_worker_cluster_v_broadcast,
     "attention_worker_cluster_dynamic_pv": attention_worker_cluster_dynamic_pv,
     "attention_milestone_trace": int(

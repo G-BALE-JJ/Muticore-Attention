@@ -5,15 +5,76 @@ in `../../archive/baseline_attention_cluster_4qk_12pv/`.
 
 ## Current SST verification
 
+The 2026-09-28 long-sequence changes reduce the Hq=4/Hkv=2/D=128/S=4096
+critical path from 1,161,522 to 1,015,210 cycles (12.60%). S=2048 falls from
+282,982 to 241,792 cycles (14.56%); S=512 and S=1024 retain their cycle counts.
+The implementation now supports D=64 as well as D=128. See
+[`LONG_SEQUENCE_ANALYSIS.md`](LONG_SEQUENCE_ANALYSIS.md) for the root cause,
+controlled comparisons, remaining bottlenecks, and Llama Hq=32/Hkv=8/D=64
+measurements. The baseline runner and sweep default to 4 MPI ranks and
+local-GM queue depth 256.
+
+The Llama 3.2 1B head/dimension sweep (Hq=32, Hkv=8, D=64) passes at
+S=512/1024/2048/4096 with 70,158 / 267,869 / 1,054,344 / 4,200,595 cycles.
+At S=4096 this is 1.00150 times the dense SFU resource floor. Results are in
+`results/llama32_8_d64/summary-latest.csv`. These are FP32, noncausal attention
+kernel measurements, not full Llama inference or numerical-output validation.
+
 A 2026-09-24 rerun of Hq4/Hkv2/Q1024/K1024/D128 completed all 16 QK jobs,
 256 PV windows, and 16 end-to-end jobs on cores 4..11 and 12..19. The
 measured critical path was 50,329 cycles (`start=63,668`, `end=113,997`).
 The PV WCP stall was caused by requesting a 16 KiB V panel through a local
 SRAM interface limited to 4 KiB per request; the WCP now reads each panel in
 bounded chunks. The `47,193`-cycle value below remains the frozen
-2026-09-19 comparison, not a measurement of this worktree. The worker-cluster
-runner verifies completion and timing; it does not export the accumulated PV
-output to HBM for numerical verification.
+2026-09-19 comparison, not a measurement of this worktree. Current runs also
+write the PV output to HBM and check it numerically, so their cycle counts
+include output DMA and are not directly comparable to that frozen value.
+
+## FP16 end-to-end validation
+
+The default SST run stores Q/K/V, the QK-to-PV probability payload, and O in
+FP16. QK accumulation, online softmax state, and PV accumulation remain FP32.
+The runner checks the completed worker jobs, compares every O element against
+a NumPy attention reference, rejects all-zero or non-finite output, verifies
+4-rank component placement, and checks every striped HBM Q/K/V tensor and
+packed panel against its source file. A case is PASS only when all checks pass.
+
+```bash
+source scripts/env_local_install.sh
+baseline/attention_cluster_8qk_8pv/run_sst.sh \
+  --query-length 512 --kv-length 512 --head-dim 64 \
+  --num-query-heads 4 --num-kv-heads 2 --dtype fp16 \
+  --artifact-root /tmp/attention_fp16_e2e
+python3 scripts/sweep_attention.py --head-dim 64 \
+  --output-root results/fp16_e2e_d64
+```
+
+The FP16 D64 and D128 sweeps with `Hq:Hkv = 1:1, 2:1, 4:2, 4:1` and
+`Q=K=512,1024,2048,4096` each passed all 16 cases using 4 MPI ranks.
+Their cycle, numerical-error, MPI, and HBM-layout results are in
+`results/fp16_e2e_d64/summary-latest.csv` and
+`results/fp16_e2e_d128/summary-latest.csv`. The largest absolute output
+errors across the two sweeps were `4.13e-6` and `4.36e-6`, respectively.
+
+| Q=K=4096, Hq:Hkv | FP16 D64 cycles | FP16 D128 cycles |
+| --- | ---: | ---: |
+| 1:1 | 135,311 | 142,611 |
+| 2:1 | 277,355 | 275,878 |
+| 4:2 | 528,420 | 538,635 |
+| 4:1 | 538,283 | 549,231 |
+
+The packed K panel address now
+selects the HBM node for each 64-key tile, including reuse windows that cross
+a node boundary. D128 PV consumes all four contiguous P panels in each
+256-key window. Both fixes are required for numerically correct multi-head
+and D128 runs.
+
+The FP16 `Hq=32,Hkv=8,D=64` kernel sweep also passed at
+`Q=K=512,1024,2048,4096`: end-to-end cycles were `69,957`, `266,857`,
+`1,054,104`, and `4,199,892`. The maximum absolute output error was
+`5.30e-6`; detailed results are in
+`results/fp16_e2e_llama32_8_d64/summary-latest.csv`. This is noncausal
+attention-kernel validation, not full Llama inference.
 
 ```text
 managers 0..3
@@ -71,15 +132,59 @@ baseline/attention_cluster_8qk_8pv/run.sh --no-numerical
 Run SST for `Hq=4,Hkv=2,Sq=Skv=1024,Dh=128`:
 
 ```bash
-GOLEM_MPI_RANKS=1 baseline/attention_cluster_8qk_8pv/run_sst.sh \
+baseline/attention_cluster_8qk_8pv/run_sst.sh \
   --artifact-root /tmp/attention_cluster_8qk_8pv \
   --query-length 1024 --kv-length 1024 \
   --num-query-heads 4 --num-kv-heads 2 --head-dim 128
 ```
 
-The report verifies 16 QK jobs, 256 PV windows, QK cores 4..11, and PV cores
-12..19. The theoretical resource floors and measured comparison are generated
-by `compare.py` after both SST runs complete.
+Run the multi-shape/head sweep (4 GQA pairs x 4 sequence lengths by default):
+
+```bash
+python3 scripts/sweep_attention.py
+```
+
+The default sweep uses `Hq:Hkv = 1:1, 2:1, 4:2, 4:1` and
+`Q/SKV = 512, 1024, 2048, 4096`. Each case gets an independent directory under
+`results/sweeps/`; `summary-latest.json` and timestamped CSV/JSON summaries
+record status, end-to-end cycles, numerical error, MPI and HBM mapping checks,
+stage spans, PV queue wait, and the current 8+8 theoretical resource floor.
+Use `--resume` to retain completed cases and
+`--dry-run` to inspect the matrix without launching SST. Query lengths must be
+divisible by 256 and KV lengths by 128, matching the worker placement checks.
+The baseline and sweep use 4 MPI ranks by default; `--mpi-ranks 1` is available
+for a single-rank control run. The sweep uses a local-GM queue depth of 256
+for every shape (`--local-gm-queue-depth` overrides it). Long KV sequences
+need this capacity while V windows are installed and PV panels are read.
+Record the queue depth with each cycle result; earlier runs at depth 32 are
+not directly comparable.
+
+The 4-rank `Q=K=4096`, `D=128`, local-GM queue-depth-256 sweep completed with:
+
+| Hq:Hkv | End-to-end cycles | 8+8 resource floor | Actual/floor |
+| --- | ---: | ---: | ---: |
+| 1:1 | 344,392 | 131,072 | 2.628 |
+| 2:1 | 617,748 | 262,144 | 2.357 |
+| 4:2 | 1,161,522 | 524,288 | 2.215 |
+| 4:1 | 1,186,068 | 524,288 | 2.262 |
+
+The complete 16-case sweep (`512, 1024, 2048, 4096`) passed. Its combined
+cycle table is in `results/sweeps_4096_q256/summary-latest.csv` and the
+per-case stage data is in `summary-latest.json`. At `4096`, the measured
+end-to-end time is 2.22-2.63 times the resource floor. For `Hq:Hkv=4:2`,
+PV receive-to-start wait averages 204,991 cycles and the PV stage spans
+1,157,156 cycles; the resource floor assumes perfect overlap and does not
+include this queueing delay.
+
+For the 4:2, 1024 baseline, the report verifies 16 QK jobs, 256 PV windows,
+QK cores 4..11, and PV cores 12..19. The terminal summary shows QK, online SFU, and PV cycle spans,
+end-to-end cycles, P dispatch/receive/start wait times, and SST/total wall
+time. Stage spans overlap and should not be added together. Color is enabled
+on interactive terminals; set
+`GOLEM_ATTENTION_COLOR=1` to force it or `NO_COLOR=1` to disable it. The full
+result is saved as `sst_qk_bridge_result.json` under the artifact root. The
+theoretical resource floors and measured comparison are generated by
+`compare.py` after both SST runs complete.
 
 The frozen stable result and its complete parameter manifest are archived in
 `artifacts/golden/sst_result.json` and `artifacts/golden/manifest.json`.

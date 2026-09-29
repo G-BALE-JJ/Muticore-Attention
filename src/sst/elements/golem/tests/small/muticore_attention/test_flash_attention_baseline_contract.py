@@ -1407,7 +1407,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         for arguments, message in cases:
             with self.subTest(arguments=arguments):
                 result = subprocess.run(
-                    [str(SCALE_RUNNER), *arguments, "--dry-run"],
+                    [str(SCALE_RUNNER), *arguments, "--dtype", "fp32", "--dry-run"],
                     cwd=HERE, capture_output=True, text=True,
                 )
                 self.assertEqual(result.returncode, 2)

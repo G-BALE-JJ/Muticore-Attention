@@ -8,6 +8,15 @@ import struct
 from pathlib import Path
 
 
+def _dtype_info(dtype: str):
+    dtype = dtype.lower()
+    if dtype == "fp16":
+        return "e", 2
+    if dtype == "fp32":
+        return "f", 4
+    raise ValueError("dtype must be fp16 or fp32")
+
+
 def native_k_index(key: int, dim: int, head_dim: int) -> int:
     """Return the flat index for K stored in native [key, dim] order."""
     return key * head_dim + dim
@@ -117,16 +126,34 @@ def _read_f32(path, expected_count: int, offset_bytes: int = 0):
     return list(struct.unpack(f"<{expected_count}f", payload))
 
 
-def _write_f32(path, values):
+def _read_tensor(path, expected_count: int, dtype: str, offset_bytes: int = 0):
+    fmt, elem_bytes = _dtype_info(dtype)
+    data = Path(path).read_bytes()
+    expected_bytes = expected_count * elem_bytes
+    if offset_bytes < 0 or len(data) < offset_bytes + expected_bytes:
+        raise ValueError(
+            f"{path}: expected {expected_bytes} bytes at offset {offset_bytes}, "
+            f"found {len(data)} total bytes"
+        )
+    if offset_bytes == 0 and len(data) != expected_bytes:
+        raise ValueError(f"{path}: expected {expected_bytes} bytes, found {len(data)}")
+    payload = data[offset_bytes:offset_bytes + expected_bytes]
+    return list(struct.unpack(f"<{expected_count}{fmt}", payload))
+
+
+def _write_tensor(path, values, dtype: str):
+    fmt, _ = _dtype_info(dtype)
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(struct.pack(f"<{len(values)}f", *values))
+    output.write_bytes(struct.pack(f"<{len(values)}{fmt}", *values))
 
 
 def generate_case(
     queries: int, keys: int, head_dim: int, q_path, k_path, storage_keys=None,
     v_path=None, extreme_logits=False, heads: int = 1, kv_heads=None,
+    dtype: str = "fp32",
 ):
+    _dtype_info(dtype)
     if heads <= 0:
         raise ValueError("heads must be positive")
     kv_heads = heads if kv_heads is None else kv_heads
@@ -167,8 +194,8 @@ def generate_case(
             begin = head * head_values
             k.extend(logical_k[begin:begin + head_values])
             k.extend([0.0] * head_padding)
-    _write_f32(q_path, q)
-    _write_f32(k_path, k)
+    _write_tensor(q_path, q, dtype)
+    _write_tensor(k_path, k, dtype)
     if v_path is not None:
         v = [
             (((head * 29 + key * 13 + dim * 3 + 5) % 37) - 18) / 32.0
@@ -176,7 +203,7 @@ def generate_case(
             for key in range(keys)
             for dim in range(head_dim)
         ]
-        _write_f32(v_path, v)
+        _write_tensor(v_path, v, dtype)
 
 
 def verify_qk(
@@ -188,17 +215,19 @@ def verify_qk(
     head_dim: int,
     atol: float = 1.0e-4,
     rtol: float = 1.0e-4,
-    storage_keys=None,
+    storage_keys=None, dtype: str = "fp32",
 ):
     storage_keys = keys if storage_keys is None else storage_keys
     if storage_keys < keys:
         raise ValueError("storage_keys cannot be smaller than logical keys")
-    q = _read_f32(q_path, queries * head_dim)
+    q = _read_tensor(q_path, queries * head_dim, dtype)
     k_data = Path(k_path).read_bytes()
-    if len(k_data) < keys * head_dim * 4 or len(k_data) % 4 != 0:
+    _, elem_bytes = _dtype_info(dtype)
+    if len(k_data) < keys * head_dim * elem_bytes or len(k_data) % elem_bytes != 0:
         raise ValueError(f"{k_path}: invalid native K storage size {len(k_data)}")
-    k = list(struct.unpack(f"<{len(k_data) // 4}f", k_data))[: keys * head_dim]
-    stored_output = _read_f32(output_path, queries * storage_keys)
+    fmt, _ = _dtype_info(dtype)
+    k = list(struct.unpack(f"<{len(k_data) // elem_bytes}{fmt}", k_data))[: keys * head_dim]
+    stored_output = _read_tensor(output_path, queries * storage_keys, "fp32")
     actual = [
         stored_output[query * storage_keys + key]
         for query in range(queries)
@@ -240,11 +269,12 @@ def verify_attention(
     q_path, k_path, v_path, output_path, queries: int, keys: int,
     head_dim: int, causal: bool, atol: float = 2.0e-4, rtol: float = 2.0e-4,
     output_offset: int = 0, fused: bool = False, extreme_logits: bool = False,
+    dtype: str = "fp32",
 ):
-    q = _read_f32(q_path, queries * head_dim)
-    k = _read_f32(k_path, keys * head_dim)
-    v = _read_f32(v_path, keys * head_dim)
-    actual = _read_f32(output_path, queries * head_dim, output_offset)
+    q = _read_tensor(q_path, queries * head_dim, dtype)
+    k = _read_tensor(k_path, keys * head_dim, dtype)
+    v = _read_tensor(v_path, keys * head_dim, dtype)
+    actual = _read_tensor(output_path, queries * head_dim, "fp32", output_offset)
     expected = compute_attention(q, k, v, queries, keys, head_dim, causal)
     mismatches = 0
     max_abs_error = 0.0
@@ -304,6 +334,7 @@ def _build_parser():
     common.add_argument("--q-file", required=True)
     common.add_argument("--k-file", required=True)
     common.add_argument("--storage-keys", type=_positive_int)
+    common.add_argument("--dtype", choices=["fp16", "fp32"], default="fp16")
 
     generate = subparsers.add_parser("generate", parents=[common])
     generate.add_argument("--manifest")
@@ -352,6 +383,7 @@ def main():
             args.extreme_logits,
             query_heads,
             kv_heads,
+            args.dtype,
         )
         result = {
             "queries": args.query_length,
@@ -361,6 +393,7 @@ def main():
             "gqa_group_size": query_heads // kv_heads,
             "storage_keys": storage_keys,
             "head_dim": args.head_dim,
+            "dtype": args.dtype,
             "q_layout": "head_major_[query_heads,queries,head_dim]",
             "k_layout": "head_major_[kv_heads,keys,head_dim]",
             "transpose_b": 1,
@@ -385,6 +418,7 @@ def main():
             args.atol,
             args.rtol,
             args.storage_keys,
+            args.dtype,
         )
         if args.result_json:
             result_path = Path(args.result_json)
@@ -397,6 +431,7 @@ def main():
             args.q_file, args.k_file, args.v_file, args.output_file,
             args.query_length, args.kv_length, args.head_dim, bool(args.causal),
             args.atol, args.rtol, args.output_offset, args.fused, args.extreme_logits,
+            args.dtype,
         )
         if args.result_json:
             result_path = Path(args.result_json)

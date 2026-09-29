@@ -126,6 +126,10 @@ struct WcpWindowTransaction {
     uint64_t matGroupStrideBytes = 0;
     uint64_t vecGroupStrideBytes = 0;
     uint64_t kSliceStrideBytes = 0;
+    uint32_t attentionPackedVecTileBegin = 0;
+    uint32_t attentionPackedVecTilesPerBand = 0;
+    uint64_t attentionPackedVecNodeStrideBytes = 0;
+    uint64_t attentionPackedVecBaseOffset = 0;
 };
 
 struct WcpTileTimelineDebug {

@@ -8,6 +8,7 @@
 #include <tuple>
 
 #include <sst/elements/golem/sfu/sfu.h>
+#include <sst/elements/golem/fp16.h>
 
 namespace SST {
 namespace Golem {
@@ -24,6 +25,7 @@ using DistributedReductionResponseFanoutKey =
                uint32_t,
                ControlTransportMessageKind>;
 constexpr uint32_t GOLEM_DTYPE_FP32_VALUE = 1;
+constexpr uint32_t GOLEM_DTYPE_FP16_VALUE = 2;
 constexpr uint32_t GOLEM_SFU_PRIMITIVE_FLAG_REPEAT_CHUNK = 0x1;
 constexpr uint32_t GOLEM_SFU_PRIMITIVE_BATCH_MAX_DESCS = 64;
 constexpr uint32_t GOLEM_SFU_JOB_SOFTMAX_ROW_BAND_ROWS = 4;
@@ -1536,14 +1538,15 @@ bool SFU::readTensorJobParams(uint64_t paramsAddr, SFUSoftmaxJobParamsV1* params
 
 SFUStatus SFU::validatePrimitiveDescriptor(const SFUPrimitiveDesc& desc) const
 {
-    if (desc.dtype != GOLEM_DTYPE_FP32_VALUE) {
+    if (desc.dtype != GOLEM_DTYPE_FP32_VALUE && desc.dtype != GOLEM_DTYPE_FP16_VALUE) {
         return SFUStatus::UnsupportedElemBytes;
     }
     if (desc.input0_gm_addr == 0 || desc.output_gm_addr == 0 || desc.elem_count == 0) {
         return SFUStatus::InvalidShape;
     }
-    if (effectiveStride(desc.input0_stride_bytes) < sizeof(float) ||
-        effectiveStride(desc.output_stride_bytes) < sizeof(float)) {
+    const uint32_t elemBytes = desc.dtype == GOLEM_DTYPE_FP16_VALUE ? 2 : sizeof(float);
+    if (effectiveStride(desc.input0_stride_bytes) < elemBytes ||
+        effectiveStride(desc.output_stride_bytes) < elemBytes) {
         return SFUStatus::InvalidShape;
     }
 
@@ -1581,7 +1584,7 @@ SFUStatus SFU::validateJobDescriptor(const SFUJobDesc& desc) const
          (desc.flags & SFU_JOB_FLAG_DISTRIBUTED_COLUMNS) == 0)) {
         return SFUStatus::InvalidDescriptor;
     }
-    if (desc.dtype != GOLEM_DTYPE_FP32_VALUE) {
+    if (desc.dtype != GOLEM_DTYPE_FP32_VALUE && desc.dtype != GOLEM_DTYPE_FP16_VALUE) {
         return SFUStatus::UnsupportedElemBytes;
     }
     if (desc.input0_addr == 0 || desc.output_addr == 0) {
@@ -1669,26 +1672,41 @@ bool SFU::readPrimitiveInput(const SFUPrimitiveDesc& desc, std::vector<float>* v
 
     values->assign(desc.elem_count, 0.0f);
     const uint32_t stride = effectiveStride(desc.input0_stride_bytes);
-    if (stride == sizeof(float)) {
+    const uint32_t elemBytes = desc.dtype == GOLEM_DTYPE_FP16_VALUE ? 2 : sizeof(float);
+    if (stride == elemBytes) {
         std::vector<uint8_t> raw;
-        const size_t byteCount = static_cast<size_t>(desc.elem_count) * sizeof(float);
+        const size_t byteCount = static_cast<size_t>(desc.elem_count) * elemBytes;
         globalMem_->rd_from_globalmem(desc.input0_gm_addr, byteCount, raw);
         if (raw.size() != byteCount) {
             return false;
         }
-        std::memcpy(values->data(), raw.data(), byteCount);
+        for (uint32_t i = 0; i < desc.elem_count; ++i) {
+            if (elemBytes == 2) {
+                uint16_t bits = 0;
+                std::memcpy(&bits, raw.data() + i * 2, sizeof(bits));
+                (*values)[i] = golem_fp16_to_float(bits);
+            } else {
+                std::memcpy(&(*values)[i], raw.data() + i * 4, sizeof(float));
+            }
+        }
         return true;
     }
 
     for (uint32_t i = 0; i < desc.elem_count; ++i) {
         std::vector<uint8_t> raw;
         globalMem_->rd_from_globalmem(desc.input0_gm_addr + static_cast<uint64_t>(i) * stride,
-                                      sizeof(float), raw);
-        if (raw.size() != sizeof(float)) {
+                                      elemBytes, raw);
+        if (raw.size() != elemBytes) {
             return false;
         }
         float value = 0.0f;
-        std::memcpy(&value, raw.data(), sizeof(float));
+        if (elemBytes == 2) {
+            uint16_t bits = 0;
+            std::memcpy(&bits, raw.data(), sizeof(bits));
+            value = golem_fp16_to_float(bits);
+        } else {
+            std::memcpy(&value, raw.data(), sizeof(float));
+        }
         (*values)[i] = value;
     }
     return true;
@@ -1759,16 +1777,29 @@ bool SFU::writePrimitiveOutput(const SFUPrimitiveDesc& desc, const std::vector<f
     }
 
     const uint32_t stride = effectiveStride(desc.output_stride_bytes);
-    if (stride == sizeof(float)) {
-        std::vector<uint8_t> raw(values.size() * sizeof(float));
-        std::memcpy(raw.data(), values.data(), raw.size());
+    const uint32_t elemBytes = desc.dtype == GOLEM_DTYPE_FP16_VALUE ? 2 : sizeof(float);
+    if (stride == elemBytes) {
+        std::vector<uint8_t> raw(values.size() * elemBytes);
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (elemBytes == 2) {
+                const uint16_t bits = golem_float_to_fp16(values[i]);
+                std::memcpy(raw.data() + i * 2, &bits, sizeof(bits));
+            } else {
+                std::memcpy(raw.data() + i * 4, &values[i], sizeof(float));
+            }
+        }
         globalMem_->wr_to_globalmem(desc.output_gm_addr, raw.size(), raw);
         return true;
     }
 
     for (uint32_t i = 0; i < desc.elem_count; ++i) {
         std::vector<uint8_t> raw;
-        appendBytes(raw, values[i]);
+        if (elemBytes == 2) {
+            const uint16_t bits = golem_float_to_fp16(values[i]);
+            appendBytes(raw, bits);
+        } else {
+            appendBytes(raw, values[i]);
+        }
         globalMem_->wr_to_globalmem(desc.output_gm_addr + static_cast<uint64_t>(i) * stride,
                                     raw.size(), raw);
     }
@@ -4083,7 +4114,7 @@ bool SFU::readSoftmaxDescriptor(uint64_t descAddr, SFUSoftmaxTileDesc* desc)
 
 SFUStatus SFU::validateSoftmaxDescriptor(const SFUSoftmaxTileDesc& desc) const
 {
-    if (desc.elem_bytes != sizeof(float)) {
+    if (desc.elem_bytes != 2 && desc.elem_bytes != sizeof(float)) {
         return SFUStatus::UnsupportedElemBytes;
     }
     if (desc.local_input_gm_addr == 0 || desc.local_output_gm_addr == 0 ||
@@ -4120,7 +4151,13 @@ bool SFU::readInputTile(const SFUSoftmaxTileDesc& desc, std::vector<float>* valu
     values->assign(elemCount, 0.0f);
     for (size_t i = 0; i < elemCount; ++i) {
         float value = 0.0f;
-        std::memcpy(&value, raw.data() + i * sizeof(float), sizeof(float));
+        if (desc.elem_bytes == 2) {
+            uint16_t bits = 0;
+            std::memcpy(&bits, raw.data() + i * 2, sizeof(bits));
+            value = golem_fp16_to_float(bits);
+        } else {
+            std::memcpy(&value, raw.data() + i * sizeof(float), sizeof(float));
+        }
         (*values)[i] = value;
     }
     return true;
@@ -4228,9 +4265,14 @@ bool SFU::normalizeTile(SoftmaxOpState* state)
     }
 
     std::vector<uint8_t> out;
-    out.reserve(elemCount * sizeof(float));
+    out.reserve(elemCount * desc.elem_bytes);
     for (const float value : outputTile) {
-        appendBytes(out, value);
+        if (desc.elem_bytes == 2) {
+            const uint16_t bits = golem_float_to_fp16(value);
+            appendBytes(out, bits);
+        } else {
+            appendBytes(out, value);
+        }
     }
     globalMem_->wr_to_globalmem(desc.local_output_gm_addr, out.size(), out);
 

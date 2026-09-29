@@ -27,7 +27,8 @@ The integrated development branch is `softmax-update` in
 [`G-BALE-JJ/Muticore-Attention`](https://github.com/G-BALE-JJ/Muticore-Attention).
 It combines the Golem generic GEMM/WCP path, deterministic MPI partitioning,
 Ramulator2-backed memory timing, bounded resource models, and the current
-FP32 GQA FlashAttention dataflow.
+GQA FlashAttention dataflow. The default SST run uses FP16 tensor transport
+with FP32 accumulation; FP32 remains available for comparison runs.
 
 The primary Attention comparison is `B=1,Hq=4,Hkv=2,Sq=Skv=1024,Dh=128`, non-causal, with SST
 normalized cycles interpreted at 1 GHz. Host wall time is simulator execution
@@ -48,6 +49,15 @@ The 8+8 result uses 16 QK jobs and 256 PV windows, with a theoretical resource
 floor of 32,768 cycles. Its static PV assignment balances 32 windows per PV
 worker. The frozen measurement is 25,929 cycles faster than the archived 4:12
 result at the same shape and hardware parameters.
+
+Current worktree validation covers FP16 end-to-end output, 4-rank MPI
+placement, and HBM input layout. The D64 and D128 sweeps each pass 16 cases
+over four GQA head pairs and sequence lengths 512 through 4096. An additional
+four-case `Hq=32,Hkv=8,D=64` sweep passes. These are dense, noncausal
+Attention-kernel results, not full Llama inference. Compact sweep summaries
+are retained in `results/`; large simulator outputs remain local. The frozen
+47,193-cycle comparison predates FP16 output DMA and is not directly
+comparable with current end-to-end cycle counts.
 
 See
 [`baseline/attention_cluster_8qk_8pv/README.md`](baseline/attention_cluster_8qk_8pv/README.md)

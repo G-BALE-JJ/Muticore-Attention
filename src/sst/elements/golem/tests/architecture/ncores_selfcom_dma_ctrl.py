@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import os
+import json
+from pathlib import Path
 import re
 import sys
 import sst
@@ -260,6 +262,7 @@ if _env_flag("GOLEM_ATTENTION_FUSED", False):
         next(os.environ[name] for name in names if name in os.environ)
         for names in attention_guest_arg_names
     ]
+    attention_guest_args.append(os.getenv("GOLEM_ATTENTION_DTYPE", "fp16"))
 processList = []
 for core_id in range(numCpus):
     process_params = {
@@ -435,12 +438,40 @@ else:
             placement = _round_robin_placement(router_id)
         router_partition_placements.append(placement)
 
+attention_query_block_mpi = _env_flag("GOLEM_ATTENTION_QUERY_BLOCK_MPI", False)
+if attention_query_block_mpi:
+    if not EXPLICIT_PARTITION or MPI_RANKS not in (2, 4) or numCpus != 20:
+        raise ValueError("Attention query-block partition requires 20 cores and 2 or 4 ranks")
+    router_partition_placements = [
+        (router_id % MPI_RANKS if router_id < 24 else 0, 0)
+        for router_id in range(noc.num_nodes)
+    ]
+
 cpu_partition_placements = [
     router_partition_placements[router_id] for router_id in cpu_routers
 ]
 for router_id, placement in enumerate(router_partition_placements):
     if EXPLICIT_PARTITION:
         noc.get_router(router_id).setRank(*placement)
+
+if attention_query_block_mpi:
+    component_ranks = {f"rtr_{router_id}": placement[0]
+                       for router_id, placement in enumerate(router_partition_placements)}
+    for core_id, placement in enumerate(cpu_partition_placements):
+        for suffix in ("", ".processorBus", ".l1dcache", ".l1icache", ".dtlb",
+                       ".itlb", ".bus", ".l2cache"):
+            component_ranks[f"core{core_id}{suffix}"] = placement[0]
+    component_ranks["os"] = router_partition_placements[OS_ROUTER][0]
+    component_ranks["node.os_l1cache"] = router_partition_placements[OS_ROUTER][0]
+    for node, router_id in enumerate(MEMORY_ROUTERS):
+        for prefix in ("dirctrl_", "memory_"):
+            component_ranks[f"{prefix}{node}"] = router_partition_placements[router_id][0]
+    placement_path = Path(os.environ["GOLEM_ATTENTION_PLACEMENT_FILE"])
+    placement_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = placement_path.with_name(f"{placement_path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps({"mpi_ranks": MPI_RANKS,
+                                    "component_ranks": component_ranks}, indent=2) + "\n")
+    temporary.replace(placement_path)
 
 if EXPLICIT_PARTITION:
     lane_core_counts = {
@@ -669,6 +700,7 @@ for idx, router_id in enumerate(MEMORY_ROUTERS):
             "backend_id": idx,
         }
     mem_backend.addParams(backend_params)
+    print(f"[MEMORY] backend={node_memory_backend} node={idx}")
 
     link_dir_mem = sst.Link(f"link_dir{idx}_to_mem{idx}")
     link_dir_mem.connect((dir_lo, "port", "1ns"), (mem_hi, "port", "1ns"))
