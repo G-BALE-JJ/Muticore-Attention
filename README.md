@@ -63,8 +63,12 @@ Square-sequence causal prefill is available through
 `scripts/test_flash_attention.sh --causal` and
 `scripts/sweep_attention.py --causal`. It masks future keys per query row and
 skips fully future QK tiles and PV windows. FP16 output is checked against a
-causal NumPy reference. This is an Attention kernel; RMSNorm and RoPE remain
-outside this workload.
+causal NumPy reference. Add `--rope` to rotate raw Q/K on the device before
+QK multiplication. The host script generates an FP16 interleaved cos/sin table
+at HBM node 1 offset `0x07000000`; a programmable SFU vector pipeline performs
+the FP16 rotation, with transformed panels reused within each QK window.
+RoPE currently uses full-head interleaved pairs, base 10000, and zero position
+offset. RMSNorm remains outside this Attention workload.
 
 See
 [`baseline/attention_cluster_8qk_8pv/README.md`](baseline/attention_cluster_8qk_8pv/README.md)

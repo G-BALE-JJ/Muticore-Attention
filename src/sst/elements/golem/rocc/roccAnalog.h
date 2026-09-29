@@ -83,6 +83,7 @@ constexpr uint8_t GOLEM_ROCC_FUNC7_ATTENTION_MANAGER_WAIT = 0x22;
 constexpr uint32_t GOLEM_ATTENTION_DESC_MAGIC = 0x41545431u;
 constexpr uint16_t GOLEM_ATTENTION_DESC_VERSION = 2u;
 constexpr uint32_t GOLEM_ATTENTION_FLAG_CAUSAL = 0x1u;
+constexpr uint32_t GOLEM_ATTENTION_FLAG_ROPE = 0x2u;
 constexpr uint64_t ATTENTION_C1_WINDOW_BYTES = 26752;
 constexpr uint64_t ATTENTION_D1_WINDOW_BYTES = 43136;
 constexpr uint64_t ATTENTION_D3_WINDOW_BYTES = 46208;
@@ -686,7 +687,7 @@ public:
                 output->fatal(CALL_INFO, -1,
                     "Error: workerCommandProcessorEnable=1 but required user subcomponent 'worker_command_processor' is missing for RoCCAnalog.\n");
             }
-            workerCommandProcessor->bindResources(static_cast<uint32_t>(coreID), output, globalMem, array, requestScheduler);
+            workerCommandProcessor->bindResources(static_cast<uint32_t>(coreID), output, globalMem, array, requestScheduler, sfu);
         }
         if (attentionGenericGemmEnable_ && workerCommandProcessor == nullptr) {
             output->fatal(
@@ -1980,6 +1981,9 @@ public:
 
     struct AttentionWorkerState {
         ControlTransportMessage dispatch = {};
+        bool ropeTableReady = false;
+        bool ropeTableLoading = false;
+        std::vector<double> ropeTable;
         uint64_t generation = 0;
         AttentionWorkerPhase phase = AttentionWorkerPhase::Idle;
         uint64_t qLocal = 0;
@@ -10258,6 +10262,47 @@ public:
                 state.dispatch.headDim);
             return false;
         }
+        if ((state.dispatch.flags & GOLEM_ATTENTION_FLAG_ROPE) != 0 &&
+            !state.ropeTableReady) {
+            if (state.ropeTableLoading) return true;
+            constexpr uint64_t tableOffset = 0x07000000;
+            constexpr uint64_t localOffset = 0x100000;
+            const uint64_t tableBytes = static_cast<uint64_t>(
+                std::max(state.dispatch.queryLength * 4u,
+                         state.dispatch.expectedCols)) *
+                state.dispatch.headDim * sizeof(uint16_t);
+            if (tableOffset + tableBytes > state.dispatch.nodeStrideBytes ||
+                localOffset + tableBytes > globalMem->getSize()) return false;
+            state.ropeTableLoading = true;
+            AttentionWorkerState* const target = &state;
+            const uint64_t generation = state.generation;
+            const uint64_t localAddr = globalMem->getBaseAddr() + localOffset;
+            globalMem->dma_read_from_host_to_globalmem(
+                state.dispatch.nodeStrideBytes + tableOffset, tableBytes,
+                localAddr, [this, target, generation, localAddr, tableBytes](bool ok) {
+                    if (!attentionReuseWindowStateValid(target, generation)) return;
+                    target->ropeTableLoading = false;
+                    std::vector<uint8_t> bytes;
+                    if (ok) {
+                        globalMem->rd_from_globalmem(
+                            localAddr, static_cast<size_t>(tableBytes), bytes);
+                    }
+                    if (!ok || bytes.size() != tableBytes) {
+                        if (attentionWorker_.get() == target) finishAttentionWorker(false);
+                        return;
+                    }
+                    target->ropeTable.resize(bytes.size() / sizeof(uint16_t));
+                    for (size_t i = 0; i < target->ropeTable.size(); ++i) {
+                        uint16_t bits;
+                        std::memcpy(&bits, bytes.data() + i * sizeof(bits), sizeof(bits));
+                        target->ropeTable[i] = golem_fp16_to_float(bits);
+                    }
+                    target->ropeTableReady = true;
+                    if (!startAttentionReuseWindowQkBridge(*target) &&
+                        attentionWorker_.get() == target) finishAttentionWorker(false);
+                }, DmaRequestKind::AttentionQuery);
+            return true;
+        }
         const uint32_t groupSize =
             state.dispatch.numQueryHeads / state.dispatch.numKvHeads;
         const uint32_t globalWorkerSlot = attentionWorkerClusterBridge_
@@ -10338,6 +10383,11 @@ public:
         header.operand_layout = 2;
         header.attention_query_length = state.dispatch.queryLength;
         header.attention_rows_per_band = state.dispatch.rowsPerBand;
+        header.attention_group_row_begin = state.dispatch.groupQueryRowBegin;
+        header.attention_query_band = state.dispatch.ownerCore;
+        header.attention_rope =
+            (state.dispatch.flags & GOLEM_ATTENTION_FLAG_ROPE) != 0;
+        if (header.attention_rope) header.attention_rope_table = state.ropeTable;
         header.scheduler_worker_slot = state.dispatch.workerSlot;
         header.attention_node_stride_bytes = state.dispatch.nodeStrideBytes;
         header.attention_key_window_major = attentionWorkerClusterBridge_ &&
@@ -10605,7 +10655,9 @@ public:
             (attentionClusterEnable_ ?
                 message.kvTileRows != attentionClusterConfig_.kvTileRows :
                 (message.kvTileRows != 32u && message.kvTileRows != 64u)) ||
-            (message.flags & ~GOLEM_ATTENTION_FLAG_CAUSAL) != 0 ||
+            (message.flags & ~(GOLEM_ATTENTION_FLAG_CAUSAL | GOLEM_ATTENTION_FLAG_ROPE)) != 0 ||
+            ((message.flags & GOLEM_ATTENTION_FLAG_ROPE) != 0 &&
+             (!attentionReuseWindowQkBridge_ || inputOperandSize != 2)) ||
             (attentionKvPairReuse_ &&
              (((message.flags & GOLEM_ATTENTION_FLAG_CAUSAL) != 0 &&
                !attentionWorkerClusterBridge_) ||
@@ -10998,7 +11050,7 @@ public:
                 (desc.kv_tile_rows == 32u || desc.kv_tile_rows == 64u)) &&
             ((streamingShape && desc.worker_count == 4) ||
              (!streamingShape && desc.worker_count == 1)) &&
-            (desc.flags & ~GOLEM_ATTENTION_FLAG_CAUSAL) == 0 &&
+            (desc.flags & ~(GOLEM_ATTENTION_FLAG_CAUSAL | GOLEM_ATTENTION_FLAG_ROPE)) == 0 &&
             desc.q_addr != 0 && desc.k_addr != 0 && desc.v_addr != 0 &&
             desc.output_addr != 0 && desc.topology_gm_addr != 0 &&
             attentionWindowBytes_ >= requiredWindow;

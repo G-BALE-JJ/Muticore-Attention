@@ -364,6 +364,16 @@ struct AttentionTileResult {
     std::array<float, 64> oldOutputScale = {};
 };
 
+enum class SFUVectorOp : uint8_t {
+    Rope = 1,
+};
+
+struct SFUVectorResult {
+    std::vector<double> values;
+    uint64_t modeledCycles = 0;
+    uint64_t readyTick = 0;
+};
+
 class SFUAPI : public SST::SubComponent {
 public:
     SST_ELI_REGISTER_SUBCOMPONENT_API(SST::Golem::SFUAPI)
@@ -377,6 +387,11 @@ public:
     virtual bool issueJob(uint64_t descAddr, uint64_t tag) = 0;
     virtual bool issueAttentionTile(const AttentionTileRequest& request,
         std::function<void(bool, const AttentionTileResult&)> callback) = 0;
+    virtual bool issueVectorOp(SFUVectorOp op,
+        const std::vector<double>& input, const std::vector<double>& sincos,
+        const std::vector<uint32_t>& positions, uint32_t headDim,
+        uint32_t rotaryDim, uint32_t tableStride, uint32_t dimOffset,
+        SFUVectorResult* result) = 0;
     virtual AttentionClusterAdmission attentionTileAdmission(
         const AttentionTileRequest& request) const = 0;
     using AttentionScoreWriteCallback = std::function<void(bool, uint64_t)>;
@@ -427,6 +442,9 @@ public:
         {"normalize_latency", "Softmax normalize latency", "1"},
         {"accelerator_clock_hz", "Row Engine accelerator clock frequency", "2300000000"},
         {"vector_lanes", "FP32 vector lanes per physical Row Engine", "16"},
+        {"vector_op_lanes", "Generic vector operation lanes", "16"},
+        {"vector_op_latency", "Generic vector operation pipeline latency", "3"},
+        {"vector_op_ii", "Generic vector operation initiation interval", "1"},
         {"exp_lanes", "FP32 EXP issue lanes per physical Row Engine", "4"},
         {"exp_latency", "Row Engine EXP pipeline latency in accelerator cycles", "8"},
         {"scale_latency", "Scale/mask FP32 multiply pipeline latency", "3"},
@@ -469,6 +487,8 @@ public:
         {"sfu_ops_issued", "Issued SFU operations", "ops", 1},
         {"sfu_softmax_rows", "Softmax rows processed by SFU", "rows", 1},
         {"sfu_softmax_tiles", "Softmax tiles processed by SFU", "tiles", 1},
+        {"sfu_vector_ops", "Generic vector operations issued by SFU", "ops", 1},
+        {"sfu_vector_elems", "Elements processed by generic vector engine", "elements", 1},
         {"sfu_job_softmax_max_chunks", "Unified softmax job max-pass chunks", "chunks", 1},
         {"sfu_job_softmax_sum_chunks", "Unified softmax job exp/sum-pass chunks", "chunks", 1},
         {"sfu_job_softmax_norm_chunks", "Unified softmax job normalize-pass chunks", "chunks", 1},
@@ -558,6 +578,11 @@ public:
     bool issueJob(uint64_t descAddr, uint64_t tag) override;
     bool issueAttentionTile(const AttentionTileRequest& request,
         std::function<void(bool, const AttentionTileResult&)> callback) override;
+    bool issueVectorOp(SFUVectorOp op,
+        const std::vector<double>& input, const std::vector<double>& sincos,
+        const std::vector<uint32_t>& positions, uint32_t headDim,
+        uint32_t rotaryDim, uint32_t tableStride, uint32_t dimOffset,
+        SFUVectorResult* result) override;
     AttentionClusterAdmission attentionTileAdmission(
         const AttentionTileRequest& request) const override;
     bool reserveAttentionScoreSlot(
@@ -838,6 +863,7 @@ private:
     uint32_t normalizeLatency_;
     uint64_t rowEngineAcceleratorClockHz_;
     uint32_t rowEngineVectorLanes_;
+    uint32_t vectorOpLanes_;
     uint32_t rowEngineExpLanes_;
     uint32_t rowEngineExpLatency_;
     uint32_t rowEngineReciprocalLatency_;
@@ -845,6 +871,7 @@ private:
     uint64_t rowEngineScratchpadBytes_;
     uint64_t rowEngineTimebaseTicksPerSecond_;
     uint64_t rowEngineFreeTick_;
+    uint64_t vectorOpFreeTick_ = 0;
     TensorHardwarePipeline scalePipeline_;
     TensorHardwarePipeline maxComparePipeline_;
     TensorHardwarePipeline maxReductionPipeline_;
@@ -856,6 +883,7 @@ private:
     TensorHardwarePipeline onlineAddPipeline_;
     TensorHardwarePipeline reciprocalPipeline_;
     TensorHardwarePipeline normalizePipeline_;
+    TensorHardwarePipeline vectorOpPipeline_;
     bool tileStreamEnable_ = true;
     uint64_t tileStreamBytesPerCycle_ = 256;
     uint64_t tileStreamBaseLatencyCycles_ = 1;
@@ -975,6 +1003,8 @@ private:
     Statistic<uint64_t>* statAttentionClusterPFifoPortWaitCycles_;
     Statistic<uint64_t>* statAttentionClusterPFifoBackpressureStalls_;
     Statistic<uint64_t>* statPrimitiveElems_;
+    Statistic<uint64_t>* statVectorOps_;
+    Statistic<uint64_t>* statVectorElems_;
     Statistic<uint64_t>* statPartialSubmits_;
     Statistic<uint64_t>* statPartialDone_;
     Statistic<uint64_t>* statControlMaxRequests_;

@@ -545,6 +545,7 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
       normalizeLatency_(params.find<uint32_t>("normalize_latency", 1)),
       rowEngineAcceleratorClockHz_(params.find<uint64_t>("accelerator_clock_hz", 2300000000ULL)),
       rowEngineVectorLanes_(params.find<uint32_t>("vector_lanes", 16)),
+      vectorOpLanes_(params.find<uint32_t>("vector_op_lanes", 16)),
       rowEngineExpLanes_(params.find<uint32_t>("exp_lanes", 4)),
       rowEngineExpLatency_(params.find<uint32_t>("exp_latency", 8)),
       rowEngineReciprocalLatency_(params.find<uint32_t>("reciprocal_latency", 8)),
@@ -561,6 +562,9 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
 {
     const uint32_t pipelineQueueDepth =
         params.find<uint32_t>("pipeline_queue_depth", 16);
+    vectorOpPipeline_.configure(
+        params.find<uint64_t>("vector_op_latency", 3),
+        params.find<uint64_t>("vector_op_ii", 1), pipelineQueueDepth);
     scalePipeline_.configure(
         params.find<uint64_t>("scale_latency", 3),
         params.find<uint64_t>("scale_ii", 1), pipelineQueueDepth);
@@ -616,6 +620,7 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
         maxInflight_ = 1;
     }
     if (rowEngineAcceleratorClockHz_ == 0 || rowEngineVectorLanes_ == 0 ||
+        vectorOpLanes_ == 0 ||
         rowEngineExpLanes_ == 0 || rowEngineContexts_ == 0 ||
         rowEngineScratchpadBytes_ == 0 ||
         (tileStreamEnable_ &&
@@ -750,6 +755,8 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
     statAttentionClusterPFifoBackpressureStalls_ = registerStatistic<uint64_t>(
         "attention_cluster_p_fifo_backpressure_stalls");
     statPrimitiveElems_ = registerStatistic<uint64_t>("sfu_primitive_elems");
+    statVectorOps_ = registerStatistic<uint64_t>("sfu_vector_ops");
+    statVectorElems_ = registerStatistic<uint64_t>("sfu_vector_elems");
     statPartialSubmits_ = registerStatistic<uint64_t>("sfu_partial_submits");
     statPartialDone_ = registerStatistic<uint64_t>("sfu_partial_done");
     statControlMaxRequests_ = registerStatistic<uint64_t>("sfu_reduction_max_requests");
@@ -2354,6 +2361,52 @@ void SFU::cancelAttentionClusterGeneration(uint64_t generation)
             ++it;
         }
     }
+}
+
+bool SFU::issueVectorOp(SFUVectorOp op,
+    const std::vector<double>& input, const std::vector<double>& sincos,
+    const std::vector<uint32_t>& positions, uint32_t headDim,
+    uint32_t rotaryDim, uint32_t tableStride, uint32_t dimOffset,
+    SFUVectorResult* result)
+{
+    if (op != SFUVectorOp::Rope || result == nullptr || positions.empty() || headDim == 0 ||
+        rotaryDim == 0 || rotaryDim > headDim || (rotaryDim & 1u) != 0 ||
+        tableStride == 0 || dimOffset + rotaryDim > tableStride ||
+        input.size() != static_cast<size_t>(positions.size()) * headDim ||
+        sincos.size() % tableStride != 0) return false;
+    const size_t tablePositions = sincos.size() / tableStride;
+    for (uint32_t position : positions) {
+        if (position >= tablePositions) return false;
+    }
+    result->values = input;
+    for (size_t row = 0; row < positions.size(); ++row) {
+        const size_t inputBase = row * headDim;
+        const size_t tableBase = static_cast<size_t>(positions[row]) *
+            tableStride + dimOffset;
+        for (uint32_t dim = 0; dim < rotaryDim; dim += 2) {
+            const float even = static_cast<float>(input[inputBase + dim]);
+            const float odd = static_cast<float>(input[inputBase + dim + 1]);
+            const float cosine = static_cast<float>(sincos[tableBase + dim]);
+            const float sine = static_cast<float>(sincos[tableBase + dim + 1]);
+            const float rotatedEven = even * cosine - odd * sine;
+            const float rotatedOdd = even * sine + odd * cosine;
+            result->values[inputBase + dim] = golem_fp16_to_float(
+                golem_float_to_fp16(rotatedEven));
+            result->values[inputBase + dim + 1] = golem_fp16_to_float(
+                golem_float_to_fp16(rotatedOdd));
+        }
+    }
+    const uint64_t pairs = static_cast<uint64_t>(positions.size()) *
+        (rotaryDim / 2);
+    result->modeledCycles = vectorOpPipeline_.latency +
+        ceilDiv(pairs, vectorOpLanes_) * vectorOpPipeline_.initiationInterval;
+    const uint64_t now = getCurrentSimCycle();
+    result->readyTick = std::max(now, vectorOpFreeTick_) +
+        result->modeledCycles;
+    vectorOpFreeTick_ = result->readyTick;
+    statVectorOps_->addData(1);
+    statVectorElems_->addData(pairs * 2);
+    return true;
 }
 
 AttentionClusterAdmission SFU::attentionTileAdmission(

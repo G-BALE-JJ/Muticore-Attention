@@ -23,6 +23,7 @@
 
 #include <sst/elements/golem/array/computeArray.h>
 #include <sst/elements/golem/fp16.h>
+#include <sst/elements/golem/sfu/sfu.h>
 #include <sst/elements/golem/globalmemory/globalmemory.h>
 #include <sst/elements/golem/requestscheduler/requestscheduler.h>
 
@@ -82,6 +83,8 @@ struct WorkerTaskListHeader {
     uint32_t attention_group_row_begin = 0;
     uint32_t attention_query_band = 0;
     std::vector<uint32_t> attention_macro_task_ids;
+    bool attention_rope = false;
+    std::vector<double> attention_rope_table;
 };
 
 struct WorkerWindowDescriptor {
@@ -121,7 +124,8 @@ public:
         SST::Output* output,
         SST::Golem::GlobalMemoryAPI* globalMem,
         SST::Golem::ComputeArray* array,
-        SST::Golem::RequestSchedulerAPI* requestScheduler) = 0;
+        SST::Golem::RequestSchedulerAPI* requestScheduler,
+        SST::Golem::SFUAPI* vectorEngine) = 0;
 
     virtual bool startWindow(const WorkerTaskListHeader& header) = 0;
     using WindowFusionTileCallback =
@@ -484,12 +488,14 @@ public:
         SST::Output* output,
         SST::Golem::GlobalMemoryAPI* globalMem,
         SST::Golem::ComputeArray* array,
-        SST::Golem::RequestSchedulerAPI* requestScheduler) override {
+        SST::Golem::RequestSchedulerAPI* requestScheduler,
+        SST::Golem::SFUAPI* vectorEngine) override {
         coreId_ = coreId;
         extOutput_ = output;
         globalMem_ = globalMem;
         array_ = array;
         requestScheduler_ = requestScheduler;
+        vectorEngine_ = vectorEngine;
         if (outputMode_ == "fusion" && fusionDumpEnable_) {
             const std::string separator =
                 (!fusionDumpDir_.empty() && fusionDumpDir_.back() == '/') ? "" : "/";
@@ -1395,6 +1401,9 @@ public:
             }
         }
         header_ = configuredHeader;
+        ropePayloadPending_ = false;
+        ropeMatCache_.clear();
+        ropeVecCache_.clear();
         busy_ = true;
         if (reuseM > 1 && reuseN > 1) {
             cBufferMode_ = CBufferMode::GEMM_PARTIAL_C;
@@ -3684,6 +3693,31 @@ private:
     }
 
     TilePayloadLoadStatus loadTilePayload(uint32_t local_tile_idx) {
+        if (ropePayloadPending_) {
+            if (getCurrentSimCycle() < ropePayloadReadyTick_) {
+                return TilePayloadLoadStatus::Pending;
+            }
+            const auto pack = [](const std::vector<double>& values,
+                                 std::vector<uint8_t>* bytes) {
+                bytes->resize(values.size() * sizeof(uint16_t));
+                for (size_t index = 0; index < values.size(); ++index) {
+                    const uint16_t bits = golem_float_to_fp16(
+                        static_cast<float>(values[index]));
+                    std::memcpy(bytes->data() + index * sizeof(bits),
+                                &bits, sizeof(bits));
+                }
+            };
+            if (!ropeMatResult_.values.empty()) {
+                pack(ropeMatResult_.values, &activeMatPayload_);
+                ropeMatCache_[ropeMatKey_] = activeMatPayload_;
+            }
+            if (!ropeVecResult_.values.empty()) {
+                pack(ropeVecResult_.values, &activeVecPayload_);
+                ropeVecCache_[ropeVecKey_] = activeVecPayload_;
+            }
+            ropePayloadPending_ = false;
+            return TilePayloadLoadStatus::Ready;
+        }
         const uint64_t vec_bytes = current_.vec_stride_bytes;
         const uint32_t slotCount = std::max<uint32_t>(header_.local_slot_count, 1u);
         const uint32_t matSlotIdx = is2DReuse() ? groupMatSlotFor(local_tile_idx) : (local_tile_idx % slotCount);
@@ -3759,6 +3793,64 @@ private:
             vec_addr, static_cast<size_t>(vec_bytes), activeVecPayload_);
         if (activeMatPayload_.size() < current_.mat_stride_bytes || activeVecPayload_.size() < vec_bytes) {
             return TilePayloadLoadStatus::Failed;
+        }
+        if (header_.attention_rope) {
+            if (vectorEngine_ == nullptr || current_.elem_bytes != 2 ||
+                header_.attention_query_length == 0 ||
+                header_.attention_rope_table.empty()) {
+                return TilePayloadLoadStatus::Failed;
+            }
+            const uint32_t nTiles = header_.n / header_.block_n;
+            const uint32_t mTile = current_.task_id / nTiles;
+            const uint32_t nTile = current_.task_id % nTiles;
+            const uint32_t dimOffset =
+                (activeTxnKBegin_ + local_tile_idx) * header_.block_k;
+            ropeMatKey_ = (static_cast<uint64_t>(mTile) << 32) | dimOffset;
+            ropeVecKey_ = (static_cast<uint64_t>(nTile) << 32) | dimOffset;
+            const auto matCached = ropeMatCache_.find(ropeMatKey_);
+            const auto vecCached = ropeVecCache_.find(ropeVecKey_);
+            if (matCached != ropeMatCache_.end()) activeMatPayload_ = matCached->second;
+            if (vecCached != ropeVecCache_.end()) activeVecPayload_ = vecCached->second;
+            if (matCached != ropeMatCache_.end() &&
+                vecCached != ropeVecCache_.end()) return TilePayloadLoadStatus::Ready;
+            std::vector<uint32_t> queryPositions(header_.block_m);
+            std::vector<uint32_t> keyPositions(header_.block_n);
+            for (uint32_t row = 0; row < header_.block_m; ++row) {
+                queryPositions[row] = header_.attention_query_band *
+                    header_.attention_query_length +
+                    (header_.attention_group_row_begin +
+                     mTile * header_.block_m + row) %
+                        header_.attention_query_length;
+            }
+            for (uint32_t row = 0; row < header_.block_n; ++row) {
+                keyPositions[row] = nTile * header_.block_n + row;
+            }
+            const auto decode = [this](const std::vector<uint8_t>& bytes) {
+                std::vector<double> values(bytes.size() / sizeof(uint16_t));
+                for (size_t index = 0; index < values.size(); ++index) {
+                    values[index] = decodeElement(
+                        bytes.data() + index * sizeof(uint16_t));
+                }
+                return values;
+            };
+            ropeMatResult_ = {};
+            ropeVecResult_ = {};
+            if ((matCached == ropeMatCache_.end() &&
+                 !vectorEngine_->issueVectorOp(SFUVectorOp::Rope,
+                     decode(activeMatPayload_), header_.attention_rope_table,
+                     queryPositions, header_.block_k, header_.block_k,
+                     header_.k, dimOffset, &ropeMatResult_)) ||
+                (vecCached == ropeVecCache_.end() &&
+                 !vectorEngine_->issueVectorOp(SFUVectorOp::Rope,
+                     decode(activeVecPayload_), header_.attention_rope_table,
+                     keyPositions, header_.block_k, header_.block_k,
+                     header_.k, dimOffset, &ropeVecResult_))) {
+                return TilePayloadLoadStatus::Failed;
+            }
+            ropePayloadReadyTick_ = std::max(
+                ropeMatResult_.readyTick, ropeVecResult_.readyTick);
+            ropePayloadPending_ = true;
+            return TilePayloadLoadStatus::Pending;
         }
         return TilePayloadLoadStatus::Ready;
     }
@@ -4898,6 +4990,7 @@ private:
     SST::Golem::GlobalMemoryAPI* globalMem_ = nullptr;
     SST::Golem::ComputeArray* array_ = nullptr;
     SST::Golem::RequestSchedulerAPI* requestScheduler_ = nullptr;
+    SST::Golem::SFUAPI* vectorEngine_ = nullptr;
     std::deque<GemmProxyCommand> gemmProxyCommands_;
     std::unordered_map<uint32_t, GemmArrayDoneCallback> gemmArrayDoneCallbacks_;
     std::deque<PendingGemmCompletion> pendingGemmCompletions_;
@@ -5162,6 +5255,14 @@ private:
     bool activeMicroOpIssued_ = false;
     MicroOp activeIssuedMicroOp_{};
     bool activeTilePayloadLoaded_ = false;
+    bool ropePayloadPending_ = false;
+    uint64_t ropePayloadReadyTick_ = 0;
+    SFUVectorResult ropeMatResult_;
+    SFUVectorResult ropeVecResult_;
+    uint64_t ropeMatKey_ = 0;
+    uint64_t ropeVecKey_ = 0;
+    std::unordered_map<uint64_t, std::vector<uint8_t>> ropeMatCache_;
+    std::unordered_map<uint64_t, std::vector<uint8_t>> ropeVecCache_;
     bool taskAccumInitialized_ = false;
     std::vector<CBufferPrefetch> cBufferPrefetches_;
     std::vector<uint8_t> partialValid_;

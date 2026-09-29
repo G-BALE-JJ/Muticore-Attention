@@ -148,6 +148,17 @@ def _write_tensor(path, values, dtype: str):
     output.write_bytes(struct.pack(f"<{len(values)}{fmt}", *values))
 
 
+def generate_rope_table(path, positions: int, head_dim: int, base: float = 10000.0):
+    if head_dim % 2 or base <= 0:
+        raise ValueError("RoPE requires an even head dimension and positive base")
+    table = []
+    for position in range(positions):
+        for pair in range(head_dim // 2):
+            angle = position / (base ** (2 * pair / head_dim))
+            table.extend((math.cos(angle), math.sin(angle)))
+    _write_tensor(path, table, "fp16")
+
+
 def generate_case(
     queries: int, keys: int, head_dim: int, q_path, k_path, storage_keys=None,
     v_path=None, extreme_logits=False, heads: int = 1, kv_heads=None,
@@ -340,6 +351,8 @@ def _build_parser():
     generate.add_argument("--manifest")
     generate.add_argument("--v-file")
     generate.add_argument("--extreme-logits", action="store_true")
+    generate.add_argument("--rope-table-file")
+    generate.add_argument("--rope-base", type=float, default=10000.0)
 
     verify = subparsers.add_parser("verify", parents=[common])
     verify.add_argument("--output-file", required=True)
@@ -371,6 +384,8 @@ def main():
         raise SystemExit("query heads must be divisible by K/V heads")
 
     if args.command == "generate":
+        if args.rope_table_file and args.dtype != "fp16":
+            raise SystemExit("RoPE currently requires fp16")
         storage_keys = args.storage_keys or args.kv_length
         generate_case(
             args.query_length,
@@ -385,6 +400,10 @@ def main():
             kv_heads,
             args.dtype,
         )
+        if args.rope_table_file:
+            generate_rope_table(args.rope_table_file,
+                                max(args.query_length, args.kv_length),
+                                args.head_dim, args.rope_base)
         result = {
             "queries": args.query_length,
             "keys": args.kv_length,
@@ -403,6 +422,9 @@ def main():
         }
         if args.v_file:
             result["v_file"] = str(Path(args.v_file).resolve())
+        if args.rope_table_file:
+            result["rope_table_file"] = str(Path(args.rope_table_file).resolve())
+            result["rope_base"] = args.rope_base
         if args.manifest:
             manifest = Path(args.manifest)
             manifest.parent.mkdir(parents=True, exist_ok=True)

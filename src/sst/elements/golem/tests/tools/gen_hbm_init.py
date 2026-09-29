@@ -44,6 +44,7 @@ ATTENTION_FUSED = int(os.getenv("GOLEM_ATTENTION_FUSED", "0")) != 0
 ATTENTION_Q_FILE = os.getenv("GOLEM_ATTENTION_Q_FILE", "")
 ATTENTION_K_FILE = os.getenv("GOLEM_ATTENTION_K_FILE", "")
 ATTENTION_V_FILE = os.getenv("GOLEM_ATTENTION_V_FILE", "")
+ATTENTION_ROPE_TABLE_FILE = os.getenv("GOLEM_ATTENTION_ROPE_TABLE_FILE", "")
 ATTENTION_Q_OFFSET = int(os.getenv("GOLEM_ATTENTION_Q_OFFSET", "0x02000000"), 0)
 ATTENTION_K_OFFSET = int(os.getenv("GOLEM_ATTENTION_K_OFFSET", "0x02010000"), 0)
 ATTENTION_V_OFFSET = int(os.getenv("GOLEM_ATTENTION_V_OFFSET", "0x02020000"), 0)
@@ -367,6 +368,13 @@ def _preload_fused_attention(node_buffers):
         return
     if 1 not in node_buffers:
         raise ValueError("fused Attention requires HBM data node 1")
+    if ATTENTION_ROPE_TABLE_FILE:
+        with open(ATTENTION_ROPE_TABLE_FILE, "rb") as table_file:
+            data = table_file.read()
+        expected = max(ATTENTION_QUERY_LENGTH, ATTENTION_KV_LENGTH) * ATTENTION_HEAD_DIM * 2
+        if ATTENTION_DTYPE != "fp16" or len(data) != expected:
+            raise ValueError(f"RoPE table must contain {expected} FP16 bytes")
+        _write_block(node_buffers[1], 0x07000000, data, "attention_rope_table")
     tensors = (
         ("Q", ATTENTION_Q_FILE, ATTENTION_Q_OFFSET,
          ATTENTION_NUM_QUERY_HEADS * ATTENTION_QUERY_LENGTH * ATTENTION_HEAD_DIM * ATTENTION_ELEM_BYTES),

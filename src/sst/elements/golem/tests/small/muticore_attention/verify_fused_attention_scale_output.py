@@ -36,9 +36,22 @@ def compute_attention_blocked(
     return output
 
 
+def rotate_rope(values, positions, head_dim, table):
+    import numpy as np
+
+    source = np.asarray(values, dtype=np.float32).reshape(positions, head_dim)
+    coefficients = np.asarray(table, dtype=np.float32).reshape(-1, head_dim)
+    cosine = coefficients[:positions, 0::2]
+    sine = coefficients[:positions, 1::2]
+    rotated = np.empty_like(source)
+    rotated[:, 0::2] = source[:, 0::2] * cosine - source[:, 1::2] * sine
+    rotated[:, 1::2] = source[:, 0::2] * sine + source[:, 1::2] * cosine
+    return rotated.astype(np.float16).astype(np.float64).ravel().tolist()
+
+
 def verify(q_file, k_file, v_file, hbm_dir, output_offset,
            query_length, kv_length, num_query_heads, num_kv_heads,
-           head_dim, band_rows, dtype="fp32", causal=False):
+           head_dim, band_rows, dtype="fp32", causal=False, rope_table_file=None):
     if (num_query_heads <= 0 or num_kv_heads <= 0 or
             num_query_heads % num_kv_heads != 0):
         raise ValueError("num_query_heads must be divisible by num_kv_heads")
@@ -47,15 +60,25 @@ def verify(q_file, k_file, v_file, hbm_dir, output_offset,
     )
     k = attention_case._read_tensor(k_file, num_kv_heads * kv_length * head_dim, dtype)
     v = attention_case._read_tensor(v_file, num_kv_heads * kv_length * head_dim, dtype)
+    if rope_table_file:
+        if dtype != "fp16":
+            raise ValueError("RoPE reference requires fp16")
+        table = attention_case._read_tensor(
+            rope_table_file, max(query_length, kv_length) * head_dim, "fp16")
     expected = []
     q_head_values = query_length * head_dim
     kv_head_values = kv_length * head_dim
     group_size = num_query_heads // num_kv_heads
     for head in range(num_query_heads):
         kv_head = head // group_size
+        q_head = q[head * q_head_values:(head + 1) * q_head_values]
+        k_head = k[kv_head * kv_head_values:(kv_head + 1) * kv_head_values]
+        if rope_table_file:
+            q_head = rotate_rope(q_head, query_length, head_dim, table)
+            k_head = rotate_rope(k_head, kv_length, head_dim, table)
         expected.extend(compute_attention_blocked(
-            q[head * q_head_values:(head + 1) * q_head_values],
-            k[kv_head * kv_head_values:(kv_head + 1) * kv_head_values],
+            q_head,
+            k_head,
             v[kv_head * kv_head_values:(kv_head + 1) * kv_head_values],
             query_length, kv_length, head_dim, causal=causal,
         ))
@@ -96,6 +119,7 @@ def verify(q_file, k_file, v_file, hbm_dir, output_offset,
         "status": "PASS" if mismatches == 0 and any(actual) else "FAIL",
         "dtype": dtype,
         "causal": causal,
+        "rope": bool(rope_table_file),
         "atol": atol,
         "rtol": rtol,
         "output_nonzero": any(actual),
@@ -135,6 +159,7 @@ def main():
     parser.add_argument("--band-rows", type=int, required=True)
     parser.add_argument("--dtype", choices=["fp16", "fp32"], default="fp16")
     parser.add_argument("--causal", action="store_true")
+    parser.add_argument("--rope-table-file")
     parser.add_argument("--result-json")
     args = parser.parse_args()
     num_query_heads = args.num_query_heads or args.heads or 1
@@ -144,7 +169,7 @@ def main():
     result = verify(args.q_file, args.k_file, args.v_file, args.hbm_dir,
                     args.output_offset, args.query_length, args.kv_length,
                     num_query_heads, num_kv_heads, args.head_dim, args.band_rows,
-                    args.dtype, args.causal)
+                    args.dtype, args.causal, args.rope_table_file)
     print(json.dumps(result, indent=2))
     if args.result_json:
         Path(args.result_json).write_text(json.dumps(result, indent=2) + "\n")
