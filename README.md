@@ -71,8 +71,13 @@ worker cache within each QK window.
 RoPE currently uses full-head interleaved pairs, base 10000, and zero position
 offset. RMSNorm remains outside this Attention workload.
 The SFU vector pipeline also provides an FP16 RMSNorm opcode with FP32
-reduction and FP16 output; the Attention guest does not issue RMSNorm because
-its Q/K/V inputs are already projected tensors. Causal RoPE measurements and
+reduction and FP16 output. A standalone device workload now reads FP16 hidden
+states and gamma from HBM, executes RMSNorm on the SFU, and writes FP16 output
+back to HBM. Run it with
+`bash src/sst/elements/golem/tests/small/muticore_attention/run_rmsnorm.sh --sim-mode full-timing`.
+The job stages up to 64 KiB of input, gamma, and output in local GM. The
+Attention guest does not issue RMSNorm because its Q/K/V inputs are already
+projected tensors. Causal RoPE measurements and
 the static-partition EXP floor are recorded in
 [`rope_sweep.md`](baseline/attention_cluster_8qk_8pv/rope_sweep.md).
 

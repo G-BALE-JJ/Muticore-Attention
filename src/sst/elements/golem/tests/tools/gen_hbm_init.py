@@ -40,6 +40,7 @@ SFU_JOB_SOFTMAX_DIRECT_ROWMAJOR_HBM = (
 SFU_PRIMITIVE_HBM_STREAM = int(os.getenv("GOLEM_SFU_PRIMITIVE_HBM_STREAM", "0")) != 0
 SFU_PRIMITIVE_HBM_OPS = os.getenv("GOLEM_SFU_PRIMITIVE_HBM_OPS", "EXP")
 SFU_PRIMITIVE_HBM_ELEMS = max(1, int(os.getenv("GOLEM_SFU_PRIMITIVE_HBM_ELEMS", "64")))
+SFU_RMSNORM_HBM_STREAM = int(os.getenv("GOLEM_SFU_RMSNORM_HBM_STREAM", "0")) != 0
 ATTENTION_FUSED = int(os.getenv("GOLEM_ATTENTION_FUSED", "0")) != 0
 ATTENTION_Q_FILE = os.getenv("GOLEM_ATTENTION_Q_FILE", "")
 ATTENTION_K_FILE = os.getenv("GOLEM_ATTENTION_K_FILE", "")
@@ -1114,11 +1115,30 @@ def main(argv=None):
         node_buffers[node_idx] = SparseNodeBuffer(init_file, MEM_NODE_SIZE)
 
     _preload_fused_attention(node_buffers)
+    if SFU_RMSNORM_HBM_STREAM:
+        if 1 not in node_buffers:
+            raise ValueError("RMSNorm requires HBM data node 1")
+        rows = int(os.getenv("GOLEM_SFU_RMSNORM_ROWS", "16"))
+        cols = int(os.getenv("GOLEM_SFU_RMSNORM_COLS", "128"))
+        if rows <= 0 or cols <= 0:
+            raise ValueError("RMSNorm rows and cols must be positive")
+        for name, expected in (("X", rows * cols * 2), ("GAMMA", cols * 2)):
+            path = os.getenv(f"GOLEM_SFU_RMSNORM_{name}_FILE", "")
+            if not path:
+                raise ValueError(f"GOLEM_SFU_RMSNORM_{name}_FILE is required")
+            with open(path, "rb") as tensor_file:
+                data = tensor_file.read()
+            if len(data) != expected:
+                raise ValueError(f"RMSNorm {name} expected {expected} bytes, got {len(data)}")
+            offset = int(os.getenv(
+                f"GOLEM_SFU_RMSNORM_{name}_OFFSET",
+                "0x02000000" if name == "X" else "0x02100000"), 0)
+            _write_block(node_buffers[1], offset, data, f"rmsnorm_{name.lower()}")
 
     transpose_b = MATMUL_OP_DESC["transpose_b"] == 1
     b_rows = GEMM_N if transpose_b else GEMM_K
     b_cols = GEMM_K if transpose_b else GEMM_N
-    if ATTENTION_FUSED:
+    if ATTENTION_FUSED or SFU_RMSNORM_HBM_STREAM:
         # Q/K/V were loaded above with their explicit multi-head layout. The
         # generic GEMM A/B images are unused by the fused Attention runtime.
         a_matrix = None

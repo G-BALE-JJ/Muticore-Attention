@@ -1245,9 +1245,12 @@ bool SFU::issueJob(uint64_t descAddr, uint64_t tag)
         statCreditStalls_->addData(1);
         return false;
     }
+    const bool rmsNormJob = state.status == SFUStatus::Success &&
+        state.desc.op_type == static_cast<uint32_t>(SFUJobOp::RMSNORM);
     const bool rowEngineJob = state.status == SFUStatus::Success &&
         (state.desc.flags & SFU_JOB_FLAG_ROW_ENGINE_MODEL) != 0;
-    if (state.status == SFUStatus::Success && !rowEngineJob && !executeJob(&state)) {
+    if (state.status == SFUStatus::Success && !rowEngineJob &&
+        !rmsNormJob && !executeJob(&state)) {
         abortDistributedSoftmaxJob(&state);
         state.status = SFUStatus::InvalidDescriptor;
     }
@@ -1337,6 +1340,11 @@ bool SFU::issueJob(uint64_t descAddr, uint64_t tag)
 
     pendingJobOps_[tag] = state;
 
+    if (rmsNormJob) {
+        pendingJobOps_[tag].status = SFUStatus::Pending;
+        startRmsNormJob(tag);
+    }
+
     if (tensorRowEngineJob && state.status == SFUStatus::Pending &&
         !state.attentionMode &&
         !startTensorRowEngineJob(tag)) {
@@ -1389,6 +1397,12 @@ bool SFU::wait(uint64_t tag, uint64_t* status)
                 auto jobIt = pendingJobOps_.find(tag);
                 if (jobIt != pendingJobOps_.end()) {
                     JobOpState& state = jobIt->second;
+                    if (state.status == SFUStatus::Pending &&
+                        state.desc.op_type == static_cast<uint32_t>(SFUJobOp::RMSNORM) &&
+                        state.rmsNormPhase == 3 &&
+                        getCurrentSimCycle() >= state.rmsNormResult.readyTick) {
+                        startRmsNormOutputDma(tag);
+                    }
                     if (state.status == SFUStatus::Pending &&
                         (state.desc.flags & SFU_JOB_FLAG_ROW_ENGINE_MODEL) != 0) {
                         if ((state.desc.flags & SFU_JOB_FLAG_TENSOR_ROW_ENGINE) != 0) {
@@ -1455,7 +1469,14 @@ bool SFU::wait(uint64_t tag, uint64_t* status)
 bool SFU::completionTick(uint64_t tag, uint64_t* tick) const
 {
     const auto it = pendingJobOps_.find(tag);
-    if (it == pendingJobOps_.end() ||
+    if (it == pendingJobOps_.end()) return false;
+    if (it->second.status == SFUStatus::Pending &&
+        it->second.desc.op_type == static_cast<uint32_t>(SFUJobOp::RMSNORM) &&
+        it->second.rmsNormPhase == 3) {
+        if (tick != nullptr) *tick = it->second.rmsNormResult.readyTick;
+        return true;
+    }
+    if (
         (it->second.desc.flags & SFU_JOB_FLAG_ROW_ENGINE_MODEL) == 0 ||
         it->second.status != SFUStatus::Pending) {
         return false;
@@ -1468,6 +1489,136 @@ bool SFU::completionTick(uint64_t tag, uint64_t* tick) const
         *tick = state.rowEngineReadyTick;
     }
     return true;
+}
+
+void SFU::startRmsNormJob(uint64_t tag)
+{
+    auto it = pendingJobOps_.find(tag);
+    if (it == pendingJobOps_.end()) return;
+    JobOpState& state = it->second;
+    state.rmsNormPhase = 1;
+    state.rowEngineIssueTick = getCurrentSimCycle();
+    const SFUJobDesc& desc = state.desc;
+    const size_t inputBytes = static_cast<size_t>(desc.elem_count) * sizeof(uint16_t);
+    globalMem_->dma_read_from_host_to_globalmem(
+        desc.input0_addr, inputBytes, desc.scratch_addr,
+        [this, tag](bool ok) { onRmsNormInputDma(tag, ok); });
+}
+
+void SFU::onRmsNormInputDma(uint64_t tag, bool ok)
+{
+    auto it = pendingJobOps_.find(tag);
+    if (it == pendingJobOps_.end() || it->second.status != SFUStatus::Pending ||
+        it->second.rmsNormPhase != 1) return;
+    JobOpState& state = it->second;
+    if (!ok) {
+        state.status = SFUStatus::GlobalMemoryUnavailable;
+        return;
+    }
+    state.rmsNormPhase = 2;
+    const SFUJobDesc& desc = state.desc;
+    const size_t inputBytes = static_cast<size_t>(desc.elem_count) * sizeof(uint16_t);
+    globalMem_->dma_read_from_host_to_globalmem(
+        desc.input1_addr, static_cast<size_t>(desc.cols) * sizeof(uint16_t),
+        desc.scratch_addr + inputBytes,
+        [this, tag](bool gammaOk) { onRmsNormGammaDma(tag, gammaOk); });
+}
+
+void SFU::onRmsNormGammaDma(uint64_t tag, bool ok)
+{
+    auto it = pendingJobOps_.find(tag);
+    if (it == pendingJobOps_.end() || it->second.status != SFUStatus::Pending ||
+        it->second.rmsNormPhase != 2) return;
+    JobOpState& state = it->second;
+    if (!ok) {
+        state.status = SFUStatus::GlobalMemoryUnavailable;
+        return;
+    }
+    const SFUJobDesc& desc = state.desc;
+    const size_t inputBytes = static_cast<size_t>(desc.elem_count) * sizeof(uint16_t);
+    const size_t gammaBytes = static_cast<size_t>(desc.cols) * sizeof(uint16_t);
+    std::vector<uint8_t> inputRaw;
+    std::vector<uint8_t> gammaRaw;
+    globalMem_->rd_from_globalmem(desc.scratch_addr, inputBytes, inputRaw);
+    globalMem_->rd_from_globalmem(desc.scratch_addr + inputBytes,
+                                  gammaBytes, gammaRaw);
+    if (inputRaw.size() != inputBytes || gammaRaw.size() != gammaBytes) {
+        state.status = SFUStatus::GlobalMemoryUnavailable;
+        return;
+    }
+    std::vector<double> input(desc.elem_count);
+    std::vector<double> gamma(desc.cols);
+    for (size_t index = 0; index < input.size(); ++index) {
+        uint16_t bits = 0;
+        std::memcpy(&bits, inputRaw.data() + index * sizeof(bits), sizeof(bits));
+        input[index] = golem_fp16_to_float(bits);
+    }
+    for (size_t index = 0; index < gamma.size(); ++index) {
+        uint16_t bits = 0;
+        std::memcpy(&bits, gammaRaw.data() + index * sizeof(bits), sizeof(bits));
+        gamma[index] = golem_fp16_to_float(bits);
+    }
+    SFUVectorRequest request{};
+    request.op = SFUVectorOp::RmsNorm;
+    request.input = &input;
+    request.coefficients = &gamma;
+    request.rowWidth = desc.cols;
+    const uint32_t epsilonBits = static_cast<uint32_t>(desc.reserved1);
+    std::memcpy(&request.epsilon, &epsilonBits, sizeof(request.epsilon));
+    if (!issueVectorOp(request, &state.rmsNormResult)) {
+        state.status = SFUStatus::InvalidDescriptor;
+        return;
+    }
+    state.rmsNormPhase = 3;
+    state.processedElems = desc.elem_count;
+    statPrimitiveElems_->addData(desc.elem_count);
+}
+
+void SFU::startRmsNormOutputDma(uint64_t tag)
+{
+    auto it = pendingJobOps_.find(tag);
+    if (it == pendingJobOps_.end() || it->second.rmsNormPhase != 3) return;
+    JobOpState& state = it->second;
+    const SFUJobDesc& desc = state.desc;
+    std::vector<uint8_t> output(state.rmsNormResult.values.size() * sizeof(uint16_t));
+    for (size_t index = 0; index < state.rmsNormResult.values.size(); ++index) {
+        const uint16_t bits = golem_float_to_fp16(
+            static_cast<float>(state.rmsNormResult.values[index]));
+        std::memcpy(output.data() + index * sizeof(bits), &bits, sizeof(bits));
+    }
+    const uint64_t outputLocal = desc.scratch_addr +
+        static_cast<uint64_t>(desc.elem_count + desc.cols) * sizeof(uint16_t);
+    globalMem_->wr_to_globalmem(outputLocal, output.size(), output);
+    state.rmsNormResult.values.clear();
+    state.rmsNormPhase = 4;
+    globalMem_->dma_write_from_globalmem_to_host(
+        outputLocal, desc.output_addr, output.size(),
+        [this, tag](bool ok) {
+            auto pending = pendingJobOps_.find(tag);
+            if (pending == pendingJobOps_.end() ||
+                pending->second.status != SFUStatus::Pending ||
+                pending->second.rmsNormPhase != 4) return;
+            JobOpState& completed = pending->second;
+            completed.status = ok ? SFUStatus::Success :
+                SFUStatus::GlobalMemoryUnavailable;
+            const uint64_t elapsedCycles = ceilMulDiv(
+                getCurrentSimCycle() - completed.rowEngineIssueTick,
+                rowEngineAcceleratorClockHz_,
+                rowEngineTimebaseTicksPerSecond_);
+            output_.output(
+                "[SFU_RMSNORM] core=%" PRIu32 " tag=%" PRIu64
+                " rows=%" PRIu32 " cols=%" PRIu32
+                " issue_tick=%" PRIu64 " vector_ready_tick=%" PRIu64
+                " complete_tick=%" PRIu64 " elapsed_cycles=%" PRIu64
+                " vector_cycles=%" PRIu64
+                " status=%" PRIu64 "\n",
+                coreId_, tag, completed.desc.rows, completed.desc.cols,
+                completed.rowEngineIssueTick,
+                completed.rmsNormResult.readyTick, getCurrentSimCycle(),
+                elapsedCycles,
+                completed.rmsNormResult.modeledCycles,
+                static_cast<uint64_t>(completed.status));
+        });
 }
 
 bool SFU::readPrimitiveDescriptor(uint64_t descAddr, SFUPrimitiveDesc* desc)
@@ -1628,6 +1779,29 @@ SFUStatus SFU::validateJobDescriptor(const SFUJobDesc& desc) const
     }
 
     switch (desc.op_type) {
+        case static_cast<uint32_t>(SFUJobOp::RMSNORM): {
+            const uint64_t elements = static_cast<uint64_t>(desc.rows) * desc.cols;
+            const uint64_t stagingBytes = (2 * elements + desc.cols) * sizeof(uint16_t);
+            float epsilon = 0.0f;
+            const uint32_t epsilonBits = static_cast<uint32_t>(desc.reserved1);
+            std::memcpy(&epsilon, &epsilonBits, sizeof(epsilon));
+            if (desc.dtype != SFU_JOB_DTYPE_FP16 || desc.flags != 0 ||
+                desc.worker_cores != 1 || desc.owner_core != coreId_ ||
+                desc.input1_addr == 0 || desc.scratch_addr == 0 ||
+                desc.rows == 0 || desc.cols == 0 ||
+                elements > UINT32_MAX || desc.elem_count != elements ||
+                desc.chunk_elems != desc.cols ||
+                !std::isfinite(epsilon) || epsilon <= 0.0f ||
+                stagingBytes > rowEngineScratchpadBytes_ ||
+                globalMem_ == nullptr ||
+                desc.scratch_addr < globalMem_->getBaseAddr() ||
+                stagingBytes > globalMem_->getSize() ||
+                desc.scratch_addr - globalMem_->getBaseAddr() >
+                    globalMem_->getSize() - stagingBytes) {
+                return SFUStatus::InvalidShape;
+            }
+            return SFUStatus::Success;
+        }
         case static_cast<uint32_t>(SFUJobOp::SOFTMAX_ROW):
             if (desc.rows == 0 || desc.cols == 0) {
                 return SFUStatus::InvalidShape;

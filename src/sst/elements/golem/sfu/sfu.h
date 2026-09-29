@@ -224,6 +224,7 @@ enum class SFUJobOp : uint32_t {
     SOFTMAX_ROW = 0x10,
     LAYERNORM = 0x11,
     GELU = 0x12,
+    RMSNORM = 0x13,
 };
 
 enum class SFUJobSubOp : uint32_t {
@@ -243,6 +244,7 @@ constexpr uint32_t SFU_JOB_FLAG_DISTRIBUTED_ABORT = 0x2u;
 constexpr uint32_t SFU_JOB_FLAG_ROW_ENGINE_MODEL = 0x4u;
 constexpr uint32_t SFU_JOB_FLAG_TENSOR_ROW_ENGINE = 0x8u;
 constexpr uint32_t SFU_JOB_DTYPE_FP32 = 1u;
+constexpr uint32_t SFU_JOB_DTYPE_FP16 = 2u;
 
 constexpr uint32_t SFU_SOFTMAX_JOB_PARAMS_MAGIC = 0x53465531u;
 constexpr uint16_t SFU_SOFTMAX_JOB_PARAMS_VERSION = 1u;
@@ -307,7 +309,7 @@ struct SFUJobDesc {
     uint32_t owner_core;
     uint32_t flags;
     uint32_t reserved0;  // With DISTRIBUTED_COLUMNS, reserved0 stores the worker slot.
-    uint64_t reserved1;
+    uint64_t reserved1;  // RMSNORM: low 32 bits hold FP32 epsilon.
     uint64_t reserved2;
     uint64_t reserved3;
     uint64_t reserved4;
@@ -663,6 +665,8 @@ private:
         uint64_t rowEngineStartTick;
         uint64_t rowEngineReadyTick;
         uint64_t rowEngineModeledCycles;
+        uint8_t rmsNormPhase;
+        SFUVectorResult rmsNormResult;
         SFUSoftmaxJobParamsV1 tensorParams;
         uint32_t tensorRowsCompleted;
         bool tensorDmaComplete;
@@ -783,6 +787,10 @@ private:
     bool executePrimitiveDesc(uint64_t descAddr, uint64_t tag, uint64_t* processedElems);
     uint64_t primitiveProcessedElems(const SFUPrimitiveDesc& desc) const;
     bool readJobDescriptor(uint64_t descAddr, SFUJobDesc* desc);
+    void startRmsNormJob(uint64_t tag);
+    void onRmsNormInputDma(uint64_t tag, bool ok);
+    void onRmsNormGammaDma(uint64_t tag, bool ok);
+    void startRmsNormOutputDma(uint64_t tag);
     bool readTensorJobParams(uint64_t paramsAddr, SFUSoftmaxJobParamsV1* params);
     SFUStatus validateJobDescriptor(const SFUJobDesc& desc) const;
     bool executeJob(JobOpState* state);
