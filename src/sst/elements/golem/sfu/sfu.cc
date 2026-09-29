@@ -2328,11 +2328,13 @@ void SFU::cancelAttentionClusterGeneration(uint64_t generation)
     for (auto it = tensorWorkerOps_.begin(); it != tensorWorkerOps_.end();) {
         if (it->second.generation == generation) {
             const uint64_t jobId = it->second.attentionJobId;
+            const uint32_t headIndex = it->second.attentionOnlineHeadIndex;
             const uint32_t rowBegin = it->second.dispatch.row;
             const uint32_t rowEnd = rowBegin + it->second.dispatch.expectedRows;
             for (auto online = attentionOnlineContexts_.begin();
                  online != attentionOnlineContexts_.end();) {
                 if (online->second.jobId == jobId &&
+                    std::get<1>(online->first) == headIndex &&
                     online->second.globalRow >= rowBegin &&
                     online->second.globalRow < rowEnd) {
                     online = attentionOnlineContexts_.erase(online);
@@ -2405,7 +2407,7 @@ AttentionClusterAdmission SFU::attentionTileAdmission(
     for (uint32_t index = 0; index < contextCount; ++index) {
         const uint32_t globalRow = request.globalRowBegin + index;
         const auto onlineIt = attentionOnlineContexts_.find(
-            AttentionOnlineRowKey(request.jobId, globalRow));
+            AttentionOnlineRowKey(request.jobId, request.onlineHeadIndex, globalRow));
         if (request.kvTileIndex != 0 &&
             (onlineIt == attentionOnlineContexts_.end() ||
              !onlineIt->second.valid)) {
@@ -2453,6 +2455,7 @@ bool SFU::issueAttentionTile(const AttentionTileRequest& request,
     worker.rowsCompleted = 0;
     worker.localTileMode = true;
     worker.attentionJobId = request.jobId;
+    worker.attentionOnlineHeadIndex = request.onlineHeadIndex;
     worker.attentionKvTileIndex = request.kvTileIndex;
     worker.attentionNumKvTiles = request.numKvTiles;
     worker.attentionKeyBegin = request.keyBegin;
@@ -2477,7 +2480,7 @@ bool SFU::issueAttentionTile(const AttentionTileRequest& request,
     for (uint32_t index = 0; index < contextCount; ++index) {
         const uint32_t globalRow = request.globalRowBegin + index;
         AttentionOnlineRowContext& online = attentionOnlineContexts_[
-            AttentionOnlineRowKey(request.jobId, globalRow)];
+            AttentionOnlineRowKey(request.jobId, request.onlineHeadIndex, globalRow)];
         if (request.kvTileIndex == 0) {
             online.valid = true;
             online.jobId = request.jobId;
@@ -2680,10 +2683,12 @@ void SFU::issueTensorInputDma(const TensorWorkerKey& key, uint32_t contextIndex)
     const uint64_t rowBytes = static_cast<uint64_t>(worker.dispatch.expectedCols) * sizeof(float);
     if (worker.localTileMode) {
         auto onlineIt = attentionOnlineContexts_.find(
-            AttentionOnlineRowKey(worker.attentionJobId, context.row));
+            AttentionOnlineRowKey(worker.attentionJobId,
+                worker.attentionOnlineHeadIndex, context.row));
         if (worker.attentionKvTileIndex == 0) {
             AttentionOnlineRowContext& online = attentionOnlineContexts_[
-                AttentionOnlineRowKey(worker.attentionJobId, context.row)];
+                AttentionOnlineRowKey(worker.attentionJobId,
+                    worker.attentionOnlineHeadIndex, context.row)];
             online.valid = true;
             online.jobId = worker.attentionJobId;
             online.globalRow = context.row;
@@ -3397,7 +3402,8 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
     }
     if (kind == TensorRowEngineEventKind::OnlineMaxDone) {
         auto onlineIt = attentionOnlineContexts_.find(
-            AttentionOnlineRowKey(worker.attentionJobId, context.row));
+            AttentionOnlineRowKey(worker.attentionJobId,
+                worker.attentionOnlineHeadIndex, context.row));
         if (onlineIt == attentionOnlineContexts_.end()) {
             finishTensorWorker(key, false);
             return;
@@ -3416,7 +3422,8 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
     }
     if (kind == TensorRowEngineEventKind::OnlineExpDone) {
         AttentionOnlineRowContext& online = attentionOnlineContexts_.at(
-            AttentionOnlineRowKey(worker.attentionJobId, context.row));
+            AttentionOnlineRowKey(worker.attentionJobId,
+                worker.attentionOnlineHeadIndex, context.row));
         context.pendingAlpha = std::isinf(online.m) && online.m < 0.0
             ? 0.0 : std::exp(online.m - context.pendingMNew);
         context.pendingBeta = std::exp(
@@ -3427,7 +3434,8 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
     }
     if (kind == TensorRowEngineEventKind::OnlineMulDone) {
         AttentionOnlineRowContext& online = attentionOnlineContexts_.at(
-            AttentionOnlineRowKey(worker.attentionJobId, context.row));
+            AttentionOnlineRowKey(worker.attentionJobId,
+                worker.attentionOnlineHeadIndex, context.row));
         context.pendingOldTerm = online.l * context.pendingAlpha;
         context.pendingTileTerm = context.rowSum * context.pendingBeta;
         scheduleTensorHardwareOperation(
@@ -3436,7 +3444,8 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
     }
     if (kind == TensorRowEngineEventKind::OnlineAddDone) {
         AttentionOnlineRowContext& online = attentionOnlineContexts_.at(
-            AttentionOnlineRowKey(worker.attentionJobId, context.row));
+            AttentionOnlineRowKey(worker.attentionJobId,
+                worker.attentionOnlineHeadIndex, context.row));
         context.pendingLNew = context.pendingOldTerm + context.pendingTileTerm;
         if (!(context.pendingLNew > 0.0) ||
             !std::isfinite(context.pendingLNew)) {
@@ -3497,6 +3506,8 @@ void SFU::finishTensorWorker(const TensorWorkerKey& key, bool ok)
     const bool finalAttentionTile = localTileMode &&
         workerIt->second.attentionKvTileIndex + 1 == workerIt->second.attentionNumKvTiles;
     const uint64_t attentionJobId = workerIt->second.attentionJobId;
+    const uint32_t attentionHeadIndex =
+        workerIt->second.attentionOnlineHeadIndex;
     const uint32_t attentionRowBegin = workerIt->second.dispatch.row;
     const uint32_t attentionRows = workerIt->second.dispatch.expectedRows;
     const AttentionTileResult attentionResult = workerIt->second.attentionResult;
@@ -3507,6 +3518,7 @@ void SFU::finishTensorWorker(const TensorWorkerKey& key, bool ok)
         for (const auto& entry : attentionOnlineContexts_) {
             const AttentionOnlineRowContext& online = entry.second;
             if (online.valid && online.jobId == attentionJobId &&
+                std::get<1>(entry.first) == attentionHeadIndex &&
                 online.globalRow >= attentionRowBegin &&
                 online.globalRow - attentionRowBegin < attentionRows) {
                 ++ownedContexts;
@@ -3529,6 +3541,7 @@ void SFU::finishTensorWorker(const TensorWorkerKey& key, bool ok)
             for (auto online = attentionOnlineContexts_.begin();
                  online != attentionOnlineContexts_.end();) {
                 if (online->second.jobId == attentionJobId &&
+                    std::get<1>(online->first) == attentionHeadIndex &&
                     online->second.globalRow >= attentionRowBegin &&
                     online->second.globalRow - attentionRowBegin < attentionRows) {
                     online = attentionOnlineContexts_.erase(online);

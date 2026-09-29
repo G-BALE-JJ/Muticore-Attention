@@ -90,8 +90,20 @@ def parse_pairs(value: str) -> list[tuple[int, int]]:
     return pairs
 
 
-def theoretical_floor(hq: int, query_length: int, kv_length: int, head_dim: int) -> int:
+def theoretical_floor(hq: int, query_length: int, kv_length: int, head_dim: int,
+                      causal: bool = False) -> int:
     """Perfect-overlap resource floor for the fixed 8+8 worker split."""
+    if causal:
+        query_tiles = query_length // 64
+        qk_tiles = hq * query_tiles * (query_tiles + 1) // 2
+        pv_windows = hq * sum((block * 64 + 255) // 256
+                              for block in range(1, query_tiles + 1))
+        qk_or_pv = max(math.ceil(qk_tiles * 64 * 64 * head_dim /
+                                 (8 * 4096)),
+                       math.ceil(pv_windows * 64 * 256 * head_dim /
+                                 (8 * 4096)))
+        softmax_exp = math.ceil(qk_tiles * 64 * 64 / (8 * 16))
+        return max(qk_or_pv, softmax_exp)
     macs = hq * query_length * kv_length * head_dim
     array_macs_per_cycle = 64 * 64
     qk_or_pv = math.ceil(macs / (8 * array_macs_per_cycle))
@@ -100,8 +112,9 @@ def theoretical_floor(hq: int, query_length: int, kv_length: int, head_dim: int)
 
 
 def case_id(hq: int, hkv: int, query_length: int, kv_length: int,
-            head_dim: int = 128, dtype: str = "fp16") -> str:
-    return f"{dtype}_hq{hq}_hkv{hkv}_q{query_length}_k{kv_length}_d{head_dim}"
+            head_dim: int = 128, dtype: str = "fp16", causal: bool = False) -> str:
+    mode = "causal_" if causal else ""
+    return f"{dtype}_{mode}hq{hq}_hkv{hkv}_q{query_length}_k{kv_length}_d{head_dim}"
 
 
 def load_result(path: Path) -> dict:
@@ -117,10 +130,10 @@ def load_result(path: Path) -> dict:
 def run_case(args: argparse.Namespace, output_root: Path, hq: int, hkv: int,
              query_length: int, kv_length: int,
              previous: dict | None = None) -> dict:
-    identifier = case_id(hq, hkv, query_length, kv_length, args.head_dim, args.dtype)
+    identifier = case_id(hq, hkv, query_length, kv_length, args.head_dim, args.dtype, args.causal)
     artifact = output_root / identifier
     result_path = artifact / "sst_qk_bridge_result.json"
-    floor = theoretical_floor(hq, query_length, kv_length, args.head_dim)
+    floor = theoretical_floor(hq, query_length, kv_length, args.head_dim, args.causal)
     base = {
         "case_id": identifier,
         "Hq": hq,
@@ -129,6 +142,7 @@ def run_case(args: argparse.Namespace, output_root: Path, hq: int, hkv: int,
         "kv_length": kv_length,
         "head_dim": args.head_dim,
         "dtype": args.dtype,
+        "causal": args.causal,
         "mpi_ranks": args.mpi_ranks,
         "local_gm_queue_depth": args.local_gm_queue_depth,
         "element_library_sha256": args.element_library_sha256,
@@ -142,7 +156,7 @@ def run_case(args: argparse.Namespace, output_root: Path, hq: int, hkv: int,
     same_config = previous is not None and all(
         previous.get(key) == base[key]
         for key in ("case_id", "Hq", "Hkv", "query_length", "kv_length",
-                    "head_dim", "dtype", "mpi_ranks", "local_gm_queue_depth",
+                    "head_dim", "dtype", "causal", "mpi_ranks", "local_gm_queue_depth",
                     "element_library_sha256", "row_priority", "v_broadcast", "window_major",
                     "cross_macro_prefetch")
     )
@@ -209,13 +223,16 @@ def run_case(args: argparse.Namespace, output_root: Path, hq: int, hkv: int,
 
 def command(args: argparse.Namespace, artifact: Path, hq: int, hkv: int,
             query_length: int, kv_length: int) -> list[str]:
-    return [
+    command_line = [
         str(RUNNER), "--artifact-root", str(artifact),
         "--query-length", str(query_length), "--kv-length", str(kv_length),
         "--num-query-heads", str(hq), "--num-kv-heads", str(hkv),
         "--head-dim", str(args.head_dim), "--timeout", str(args.timeout),
         "--dtype", args.dtype,
     ]
+    if args.causal:
+        command_line.append("--causal")
+    return command_line
 
 
 def summarize_result(result: dict, floor: int) -> dict:
@@ -249,7 +266,7 @@ def summarize_result(result: dict, floor: int) -> dict:
 
 FIELDS = [
     "case_id", "Hq", "Hkv", "query_length", "kv_length", "head_dim",
-    "mpi_ranks", "local_gm_queue_depth", "dtype", "status",
+    "mpi_ranks", "local_gm_queue_depth", "dtype", "causal", "status",
     "numerical_status", "max_abs_error", "checked_elements", "mpi_status",
     "layout_status", "layout_checked_bytes",
     "element_library_sha256", "row_priority", "v_broadcast", "window_major", "cross_macro_prefetch",
@@ -272,6 +289,7 @@ def main() -> int:
     parser.add_argument("--local-gm-queue-depth", type=int, default=256)
     parser.add_argument("--head-dim", type=int, default=128)
     parser.add_argument("--dtype", choices=("fp16", "fp32"), default="fp16")
+    parser.add_argument("--causal", action="store_true")
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -284,6 +302,8 @@ def main() -> int:
         parser.error("--mpi-ranks must be 1 or 4 for this topology")
     if args.local_gm_queue_depth <= 0:
         parser.error("--local-gm-queue-depth must be positive")
+    if args.causal and args.kv_lengths is not None:
+        parser.error("--causal currently requires equal query and KV lengths; omit --kv-lengths")
     length_pairs = (
         [(length, length) for length in args.lengths]
         if args.kv_lengths is None
@@ -315,7 +335,7 @@ def main() -> int:
                 raise SystemExit("lengths must satisfy query % 256 == 0 and kv % 128 == 0")
             print(f"[{len(rows)+1}/{total}] Hq={hq} Hkv={hkv} Q={query_length} K={kv_length}", flush=True)
             row = run_case(args, output_root, hq, hkv, query_length, kv_length,
-                           previous_rows.get(case_id(hq, hkv, query_length, kv_length, args.head_dim, args.dtype)))
+                           previous_rows.get(case_id(hq, hkv, query_length, kv_length, args.head_dim, args.dtype, args.causal)))
             rows.append(row)
             print(json.dumps({k: row.get(k) for k in ("case_id", "status", "end_to_end_cycles", "actual_over_floor_ratio")}, sort_keys=True), flush=True)
             write_summary(rows, output_root, csv_path, json_path)

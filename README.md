@@ -59,6 +59,13 @@ are retained in `results/`; large simulator outputs remain local. The frozen
 47,193-cycle comparison predates FP16 output DMA and is not directly
 comparable with current end-to-end cycle counts.
 
+Square-sequence causal prefill is available through
+`scripts/test_flash_attention.sh --causal` and
+`scripts/sweep_attention.py --causal`. It masks future keys per query row and
+skips fully future QK tiles and PV windows. FP16 output is checked against a
+causal NumPy reference. This is an Attention kernel; RMSNorm and RoPE remain
+outside this workload.
+
 See
 [`baseline/attention_cluster_8qk_8pv/README.md`](baseline/attention_cluster_8qk_8pv/README.md)
 for the final 8 QK/SFU + 8 PV architecture, its frozen `47,193`-cycle SST

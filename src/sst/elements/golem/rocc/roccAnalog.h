@@ -2780,6 +2780,22 @@ public:
         return (state.dispatch.flags & GOLEM_ATTENTION_FLAG_CAUSAL) != 0;
     }
 
+    uint32_t attentionClusterQueryRow(const AttentionWorkerState& state,
+                                      uint32_t localRow) const {
+        return state.dispatch.ownerCore * state.dispatch.queryLength +
+            (state.dispatch.groupQueryRowBegin + localRow) %
+                state.dispatch.queryLength;
+    }
+
+    uint32_t attentionClusterRowWindows(const AttentionWorkerState& state,
+                                        uint32_t rowBlock) const {
+        if (!attentionCausal(state)) return state.dispatch.expectedCols / 256;
+        const uint32_t lastRow = attentionClusterQueryRow(
+            state, rowBlock * 64 + 63);
+        return std::min(state.dispatch.expectedCols / 256,
+                        lastRow / 256 + 1);
+    }
+
     uint32_t attentionQueryRowsForTile(
         const AttentionWorkerState& state, uint32_t queryTileIndex) const {
         const uint32_t begin = queryTileIndex * state.dispatch.queryTileRows;
@@ -9335,7 +9351,8 @@ public:
         constexpr uint32_t tilesPerWindow = 4;
         const uint32_t tilesPerRowBlock = state.dispatch.expectedCols / cols;
         if (values.size() != sliceRows * cols ||
-            context.nextKvTile >= tilesPerRowBlock ||
+            context.nextKvTile >= attentionClusterRowWindows(
+                state, context.rowBlock) * 4 ||
             context.outputScale.size() != sliceRows) {
             finishAttentionWorker(false);
             return;
@@ -9419,7 +9436,8 @@ public:
         ++context.nextKvTile;
         context.requestInFlight = false;
         const uint32_t slice = context.rowOffset / sliceRows;
-        const bool rowComplete = context.nextKvTile == tilesPerRowBlock;
+        const bool rowComplete = context.nextKvTile ==
+            attentionClusterRowWindows(state, context.rowBlock) * 4;
         const uint32_t nextReadyIndex =
             context.rowBlock * tilesPerRowBlock + context.nextKvTile;
         const bool nextScoreReady = !rowComplete &&
@@ -9533,7 +9551,8 @@ public:
             AttentionReuseWindowRowContext& context =
                 state.reuseWindowRowContexts[static_cast<uint32_t>(owner)];
             if (context.requestInFlight || context.fifoPhase != 0 ||
-                context.nextKvTile >= tilesPerRowBlock) {
+                context.nextKvTile >= attentionClusterRowWindows(
+                    state, context.rowBlock) * 4) {
                 continue;
             }
             const uint32_t readyIndex =
@@ -9563,7 +9582,8 @@ public:
                 const uint32_t readyIndex =
                     candidate.rowBlock * tilesPerRowBlock +
                     candidate.nextKvTile;
-                const bool ready = candidate.nextKvTile < tilesPerRowBlock &&
+                const bool ready = candidate.nextKvTile <
+                    attentionClusterRowWindows(state, candidate.rowBlock) * 4 &&
                     readyIndex < state.reuseWindowScoreReady.size() &&
                     state.reuseWindowScoreReady[readyIndex] != 0;
                 if (!ready) continue;
@@ -9718,14 +9738,24 @@ public:
             request.tag = state.dispatch.tag + 1 +
                 static_cast<uint64_t>(contextIndex) * tilesPerRowBlock + kvTile;
             request.jobId = state.dispatch.jobId;
-            request.globalRowBegin = rowBegin;
+            request.globalRowBegin = attentionCausal(state)
+                ? attentionClusterQueryRow(state, rowBegin) : rowBegin;
+            request.onlineHeadIndex =
+                state.dispatch.kvHeadIndex *
+                    (state.dispatch.numQueryHeads / state.dispatch.numKvHeads) +
+                (state.dispatch.groupQueryRowBegin + rowBegin) /
+                    state.dispatch.queryLength;
             request.keyBegin = kvTile * cols;
             request.rows = sliceRows;
             request.cols = cols;
             request.headDim = state.dispatch.headDim;
             request.kvTileIndex = kvTile;
-            request.numKvTiles = tilesPerRowBlock;
-            request.causal = false;
+            request.numKvTiles = attentionCausal(state)
+                ? std::min(tilesPerRowBlock,
+                    attentionClusterQueryRow(
+                        state, rowBegin + sliceRows - 1) / cols + 1)
+                : tilesPerRowBlock;
+            request.causal = attentionCausal(state);
             request.firstTileForJob = kvTile == 0;
             request.directScoreMode = true;
             request.generation = generation;
@@ -9737,6 +9767,10 @@ public:
             const AttentionClusterAdmission admission =
                 sfu->attentionTileAdmission(request);
             if (admission == AttentionClusterAdmission::Invalid) {
+                output->output("Attention cluster SFU admission invalid core=%" PRIu64
+                    " job=%" PRIu64 " row=%u kv_tile=%u num_kv_tiles=%u context=%u\n",
+                    coreID, request.jobId, request.globalRowBegin,
+                    request.kvTileIndex, request.numKvTiles, contextIndex);
                 finishAttentionWorker(false);
                 return;
             }
@@ -9806,8 +9840,18 @@ public:
                 state.reuseWindowRowContexts[contextIndex];
             if (!contextIsActive(contextIndex) || context.fifoPhase != 0 ||
                 context.requestInFlight ||
-                context.nextKvTile >= tilesPerRowBlock) continue;
+                context.nextKvTile >= attentionClusterRowWindows(
+                    state, context.rowBlock) * 4) continue;
             const uint32_t kvTile = context.nextKvTile;
+            const uint32_t rowBegin =
+                context.rowBlock * 64 + context.rowOffset;
+            if (attentionCausal(state) && kvTile * cols >
+                    attentionClusterQueryRow(state, rowBegin + sliceRows - 1)) {
+                context.outputScale.assign(sliceRows, 1.0f);
+                completeAttentionReuseWindowRowTile(
+                    contextIndex, std::vector<float>(sliceRows * cols, 0.0f));
+                continue;
+            }
             const uint32_t readyIndex =
                 context.rowBlock * tilesPerRowBlock + kvTile;
             if (readyIndex >= state.reuseWindowScoreReady.size() ||
@@ -9824,7 +9868,6 @@ public:
                 continue;
             }
 
-            const uint32_t rowBegin = context.rowBlock * 64 + context.rowOffset;
             std::vector<float> score(sliceRows * cols, 0.0f);
             for (uint32_t row = 0; row < sliceRows; ++row) {
                 const size_t src = static_cast<size_t>(rowBegin + row) *
@@ -10224,7 +10267,8 @@ public:
         constexpr uint32_t blockN = 64;
         constexpr uint32_t blockK = 64;
         const uint32_t reuseM =
-            attentionWorkerClusterBridge_ && state.dispatch.expectedRows == blockM
+            attentionWorkerClusterBridge_ && state.dispatch.expectedRows == blockM &&
+                !attentionCausal(state)
                 ? 1u : 2u;
         constexpr uint32_t reuseN = 4;
         const uint32_t m = attentionWorkerClusterBridge_
@@ -10234,7 +10278,7 @@ public:
         const uint32_t mGroups = (m / blockM + reuseM - 1) / reuseM;
         const uint32_t nGroups = (n / blockN + reuseN - 1) / reuseN;
         const uint32_t macroTasks = mGroups * nGroups;
-        if (m % (blockM * reuseM) != 0 || n % (blockN * reuseN) != 0 ||
+        if (m % blockM != 0 || n % (blockN * reuseN) != 0 ||
             state.dispatch.headDim % blockK != 0 || globalWorkerSlot >= activeWorkers ||
             state.dispatch.rowsPerBand == 0 ||
             state.dispatch.rowsPerBand % (blockM * reuseM) != 0) {
@@ -10298,9 +10342,41 @@ public:
         header.attention_node_stride_bytes = state.dispatch.nodeStrideBytes;
         header.attention_key_window_major = attentionWorkerClusterBridge_ &&
             attentionWorkerClusterWindowMajor_ && n > 1024;
+        if (attentionWorkerClusterBridge_ && attentionCausal(state)) {
+            header.attention_causal = true;
+            header.attention_group_row_begin = state.dispatch.groupQueryRowBegin;
+            header.attention_query_band = state.dispatch.ownerCore;
+            header.attention_query_length = state.dispatch.queryLength;
+            for (uint32_t macro = 0; macro < macroTasks; ++macro) {
+                const uint32_t mGroup = macro % mGroups;
+                const uint32_t nGroup = ((macro / mGroups) +
+                    (header.attention_key_window_major ? 0u : mGroup)) % nGroups;
+                bool active = false;
+                for (uint32_t mi = 0;
+                        mi < std::min(reuseM, m / blockM - mGroup * reuseM);
+                        ++mi) {
+                    const uint32_t queryLocal = state.dispatch.groupQueryRowBegin +
+                        (mGroup * reuseM + mi) * blockM;
+                    const uint32_t queryLast = state.dispatch.ownerCore *
+                        state.dispatch.queryLength +
+                        queryLocal % state.dispatch.queryLength + blockM - 1;
+                    for (uint32_t ni = 0; ni < reuseN; ++ni) {
+                        if ((nGroup * reuseN + ni) * blockN <= queryLast) {
+                            active = true;
+                            ++state.reuseWindowExpectedFusionTiles;
+                        }
+                    }
+                }
+                if (active) header.attention_macro_task_ids.push_back(macro);
+            }
+            header.task_count = static_cast<uint32_t>(
+                header.attention_macro_task_ids.size());
+        }
 
-        state.reuseWindowExpectedFusionTiles =
-            static_cast<uint64_t>(header.task_count) * reuseM * reuseN;
+        if (!header.attention_causal) {
+            state.reuseWindowExpectedFusionTiles =
+                static_cast<uint64_t>(header.task_count) * reuseM * reuseN;
+        }
         state.reuseWindowScores.assign(
             static_cast<size_t>(state.dispatch.expectedRows) *
                 state.dispatch.expectedCols, 0.0f);
@@ -10312,6 +10388,19 @@ public:
         state.reuseWindowScoreReady.assign(
             static_cast<size_t>(state.dispatch.expectedRows / blockM) *
                 (state.dispatch.expectedCols / blockN), 0);
+        if (header.attention_causal) {
+            const uint32_t nTiles = state.dispatch.expectedCols / blockN;
+            for (uint32_t mTile = 0; mTile < state.dispatch.expectedRows / blockM;
+                    ++mTile) {
+                const uint32_t queryLast = attentionClusterQueryRow(
+                    state, mTile * blockM + blockM - 1);
+                for (uint32_t nTile = 0; nTile < nTiles; ++nTile) {
+                    if (nTile * blockN > queryLast) {
+                        state.reuseWindowScoreReady[mTile * nTiles + nTile] = 1;
+                    }
+                }
+            }
+        }
         state.reuseWindowSoftmaxBusy = false;
         state.reuseWindowQkComplete = false;
         state.reuseWindowSfuStartCycle = 0;
@@ -10518,7 +10607,8 @@ public:
                 (message.kvTileRows != 32u && message.kvTileRows != 64u)) ||
             (message.flags & ~GOLEM_ATTENTION_FLAG_CAUSAL) != 0 ||
             (attentionKvPairReuse_ &&
-             ((message.flags & GOLEM_ATTENTION_FLAG_CAUSAL) != 0 ||
+             (((message.flags & GOLEM_ATTENTION_FLAG_CAUSAL) != 0 &&
+               !attentionWorkerClusterBridge_) ||
               !streamingShape || !attentionKvDoubleBuffer_ ||
                attentionOAccumulatorCBuffer_ ||
               (attentionKvQueryGroupSize_ != 2 &&
@@ -12039,8 +12129,15 @@ public:
                         state.active.kvTileRows, cycles, start, end,
                         state.active.pReadyCycle, state.active.pvDispatchCycle,
                         state.active.pvReceiveCycle, state.startCycle);
-                    if (state.active.kvTileRows + 1 ==
-                            state.active.kvLength / 256) {
+                    const uint32_t manager = (state.active.ownerCore - 4) % 4;
+                    const uint32_t lastQuery = manager * state.active.queryLength +
+                        (state.active.groupQueryRowBegin + 63) %
+                            state.active.queryLength;
+                    const uint32_t finalWindow =
+                        (state.active.flags & GOLEM_ATTENTION_FLAG_CAUSAL)
+                            ? lastQuery / 256 + 1
+                            : state.active.kvLength / 256;
+                    if (state.active.kvTileRows + 1 == finalWindow) {
                         const AttentionWorkerClusterPvOutputKey outputKey =
                             std::make_tuple(
                                 state.active.jobId, state.active.tag,
@@ -12048,7 +12145,6 @@ public:
                                 state.active.groupQueryRowBegin);
                         const auto& msg = state.active;
                         const uint32_t groupSize = msg.numQueryHeads / msg.numKvHeads;
-                        const uint32_t manager = (msg.ownerCore - 4) % 4;
                         const uint32_t localBegin = msg.row - manager * msg.queryLength * groupSize +
                             msg.groupQueryRowBegin;
                         auto remaining = std::make_shared<uint32_t>(64);

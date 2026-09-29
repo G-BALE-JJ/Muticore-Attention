@@ -333,6 +333,7 @@ struct SFUTileRowStats {
 struct AttentionTileRequest {
     uint64_t tag = 0;
     uint64_t jobId = 0;
+    uint32_t onlineHeadIndex = 0;
     uint64_t localScoreAddr = 0;
     uint32_t globalRowBegin = 0;
     uint32_t keyBegin = 0;
@@ -695,6 +696,7 @@ private:
         uint32_t rowsCompleted;
         bool localTileMode = false;
         uint64_t attentionJobId = 0;
+        uint32_t attentionOnlineHeadIndex = 0;
         uint32_t attentionKvTileIndex = 0;
         uint32_t attentionNumKvTiles = 1;
         uint32_t attentionKeyBegin = 0;
@@ -901,7 +903,7 @@ private:
     std::unordered_map<uint64_t, PrimitiveBatchOpState> pendingPrimitiveBatchOps_;
     std::unordered_map<uint64_t, JobOpState> pendingJobOps_;
     std::map<TensorWorkerKey, TensorWorkerState> tensorWorkerOps_;
-    using AttentionOnlineRowKey = std::pair<uint64_t, uint32_t>;
+    using AttentionOnlineRowKey = std::tuple<uint64_t, uint32_t, uint32_t>;
     std::map<AttentionOnlineRowKey, AttentionOnlineRowContext>
         attentionOnlineContexts_;
     SST::Link* rowEngineSelfLink_;

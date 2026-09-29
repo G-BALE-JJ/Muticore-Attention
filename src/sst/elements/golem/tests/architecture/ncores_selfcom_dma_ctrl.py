@@ -263,6 +263,7 @@ if _env_flag("GOLEM_ATTENTION_FUSED", False):
         for names in attention_guest_arg_names
     ]
     attention_guest_args.append(os.getenv("GOLEM_ATTENTION_DTYPE", "fp16"))
+    attention_guest_args.append(os.getenv("GOLEM_ATTENTION_CAUSAL", "0"))
 processList = []
 for core_id in range(numCpus):
     process_params = {

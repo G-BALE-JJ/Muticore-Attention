@@ -10,7 +10,8 @@ import attention_case
 
 
 def compute_attention_blocked(
-    q, k, v, query_length, kv_length, head_dim, query_tile_rows=64
+    q, k, v, query_length, kv_length, head_dim, query_tile_rows=64,
+    causal=False,
 ):
     """Compute a bounded-memory NumPy reference for scale-point verification."""
     import numpy as np
@@ -25,6 +26,9 @@ def compute_attention_blocked(
     for begin in range(0, query_length, query_tile_rows):
         scores = q_matrix[begin:begin + query_tile_rows] @ k_matrix.T
         scores *= scale
+        if causal:
+            rows = np.arange(begin, min(begin + query_tile_rows, query_length))
+            scores[np.arange(kv_length)[None, :] > rows[:, None]] = -np.inf
         scores -= np.max(scores, axis=1, keepdims=True)
         np.exp(scores, out=scores)
         scores /= np.sum(scores, axis=1, keepdims=True)
@@ -34,7 +38,7 @@ def compute_attention_blocked(
 
 def verify(q_file, k_file, v_file, hbm_dir, output_offset,
            query_length, kv_length, num_query_heads, num_kv_heads,
-           head_dim, band_rows, dtype="fp32"):
+           head_dim, band_rows, dtype="fp32", causal=False):
     if (num_query_heads <= 0 or num_kv_heads <= 0 or
             num_query_heads % num_kv_heads != 0):
         raise ValueError("num_query_heads must be divisible by num_kv_heads")
@@ -53,7 +57,7 @@ def verify(q_file, k_file, v_file, hbm_dir, output_offset,
             q[head * q_head_values:(head + 1) * q_head_values],
             k[kv_head * kv_head_values:(kv_head + 1) * kv_head_values],
             v[kv_head * kv_head_values:(kv_head + 1) * kv_head_values],
-            query_length, kv_length, head_dim,
+            query_length, kv_length, head_dim, causal=causal,
         ))
     actual = []
     band_values = band_rows * head_dim
@@ -69,7 +73,7 @@ def verify(q_file, k_file, v_file, hbm_dir, output_offset,
             for query in range(band_rows):
                 begin = (query * num_query_heads + head) * head_dim
                 actual.extend(node_data[begin:begin + head_dim])
-    atol = 2.0e-5 if dtype == "fp16" else 2.0e-4
+    atol = (2.0e-4 if causal else 2.0e-5) if dtype == "fp16" else 2.0e-4
     rtol = 2.0e-3 if dtype == "fp16" else 2.0e-4
     mismatches = 0
     max_abs_error = 0.0
@@ -91,6 +95,7 @@ def verify(q_file, k_file, v_file, hbm_dir, output_offset,
     return {
         "status": "PASS" if mismatches == 0 and any(actual) else "FAIL",
         "dtype": dtype,
+        "causal": causal,
         "atol": atol,
         "rtol": rtol,
         "output_nonzero": any(actual),
@@ -129,6 +134,7 @@ def main():
     parser.add_argument("--head-dim", type=int, required=True)
     parser.add_argument("--band-rows", type=int, required=True)
     parser.add_argument("--dtype", choices=["fp16", "fp32"], default="fp16")
+    parser.add_argument("--causal", action="store_true")
     parser.add_argument("--result-json")
     args = parser.parse_args()
     num_query_heads = args.num_query_heads or args.heads or 1
@@ -138,7 +144,7 @@ def main():
     result = verify(args.q_file, args.k_file, args.v_file, args.hbm_dir,
                     args.output_offset, args.query_length, args.kv_length,
                     num_query_heads, num_kv_heads, args.head_dim, args.band_rows,
-                    args.dtype)
+                    args.dtype, args.causal)
     print(json.dumps(result, indent=2))
     if args.result_json:
         Path(args.result_json).write_text(json.dumps(result, indent=2) + "\n")

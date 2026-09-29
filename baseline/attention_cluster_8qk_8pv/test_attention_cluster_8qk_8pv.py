@@ -25,6 +25,46 @@ SPEC.loader.exec_module(MODULE)
 
 
 class AttentionCluster8Qk8PvTest(unittest.TestCase):
+    def test_causal_report_requires_reduced_qk_and_pv_work(self):
+        lines = []
+        for manager in range(4):
+            for qk_column in range(2):
+                core = 4 + qk_column * 4 + manager
+                tiles = manager * 2 + qk_column + 1
+                lines.extend((
+                    f"[ATTENTION_REUSE_WINDOW_QK] core={core} cycles=10 "
+                    f"start=10 end=20 fusion_tiles={tiles} expected_tiles={tiles}",
+                    f"[ATTENTION_WORKER_CLUSTER_SFU] core={core} "
+                    "start=10 end=20 cycles=11",
+                    f"[ATTENTION_WORKER_CLUSTER_E2E] core={core} "
+                    "start=10 end=30 cycles=20",
+                    f"GOLEM_SFU_HW_PIPELINE core={core} unit=exp lanes=16 "
+                    f"latency=8 ii=1 depth=16 accepted_tokens={tiles * 256}",
+                ))
+                for window in range(manager // 2 + 1):
+                    lines.append(
+                        f"[ATTENTION_WORKER_CLUSTER_PV] core={12 + manager} "
+                        f"qk_core={core} row=0 window={window} "
+                        "cycles=10 start=10 end=20"
+                    )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log = Path(temp_dir) / "sst.log"
+            result = Path(temp_dir) / "report.json"
+            log.write_text("\n".join(lines), encoding="utf-8")
+            command = [sys.executable, str(REPORT_SOURCE), "--log", str(log),
+                       "--num-query-heads", "1", "--num-kv-heads", "1",
+                       "--query-length", "512", "--kv-length", "512",
+                       "--head-dim", "64", "--qk-workers-per-manager", "2",
+                       "--causal", "--output", str(result)]
+            run = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            report = json.loads(result.read_text())
+            self.assertEqual(report["status"], "PASS")
+            self.assertEqual(report["qk_tiles"]["expected"], 36)
+            self.assertEqual(report["qk_tiles"]["skipped"], 28)
+            self.assertEqual(report["pv_windows"], 12)
+            self.assertEqual(report["pv_windows_skipped"], 4)
+
     def test_sst_report_accepts_one_pv_lane_per_manager(self):
         lines = [
             "[Core 12] [wcp] PV_V_RESIDENCY hit=1 source=100 local_addr=200",

@@ -142,6 +142,7 @@ NUM_QUERY_HEADS=1
 NUM_KV_HEADS=1
 HEAD_DIM=128
 ATTENTION_DTYPE="${GOLEM_ATTENTION_DTYPE:-fp16}"
+ATTENTION_CAUSAL="${GOLEM_ATTENTION_CAUSAL:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -227,6 +228,7 @@ while [[ $# -gt 0 ]]; do
     --sequential-64) ATTENTION_SEQUENTIAL_64=1; shift ;;
     --generic-gemm) GENERIC_GEMM=1; shift ;;
     --direct-gemm) GENERIC_GEMM=0; shift ;;
+    --causal) ATTENTION_CAUSAL=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help)
       echo "Worker dataflow: selected by the architecture wrapper"
@@ -238,6 +240,14 @@ while [[ $# -gt 0 ]]; do
 done
 if [[ "$ATTENTION_DTYPE" != "fp16" && "$ATTENTION_DTYPE" != "fp32" ]]; then
   echo "--dtype must be fp16 or fp32" >&2
+  exit 2
+fi
+if [[ "$ATTENTION_CAUSAL" != 0 && "$ATTENTION_CAUSAL" != 1 ]]; then
+  echo "GOLEM_ATTENTION_CAUSAL must be 0 or 1" >&2
+  exit 2
+fi
+if (( ATTENTION_CAUSAL && QUERY_LENGTH != KV_LENGTH )); then
+  echo "--causal currently requires query length equal to KV length" >&2
   exit 2
 fi
 ELEMENT_BYTES=4
@@ -559,6 +569,7 @@ ARRAY_INPUT=64
 ARRAY_OUTPUT=64
 NUM_ARRAYS=64
 RUN_ID="fused_attention_q${QUERY_LENGTH}_k${KV_LENGTH}_d${HEAD_DIM}"
+if (( ATTENTION_CAUSAL )); then RUN_ID="${RUN_ID}_causal"; fi
 if (( NUM_QUERY_HEADS > 1 || NUM_KV_HEADS > 1 )); then
   RUN_ID="${RUN_ID}_hq${NUM_QUERY_HEADS}_hkv${NUM_KV_HEADS}"
 fi
@@ -666,6 +677,7 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ATTENTION_KV_CONSUMERS_PER_NODE=$((16 * GQA_GROUP_SIZE))"
   "GOLEM_ATTENTION_HEAD_DIM=$HEAD_DIM"
   "GOLEM_ATTENTION_DTYPE=$ATTENTION_DTYPE"
+  "GOLEM_ATTENTION_CAUSAL=$ATTENTION_CAUSAL"
   "GOLEM_ATTENTION_GUEST_MANAGER_QUERY_ROWS=$MANAGER_QUERY_ROWS"
   "GOLEM_ATTENTION_GUEST_KV_LENGTH=$KV_LENGTH"
   "GOLEM_ATTENTION_GUEST_NUM_QUERY_HEADS=$NUM_QUERY_HEADS"
@@ -813,6 +825,7 @@ VERIFY_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_output.py"
   --head-dim "$HEAD_DIM" --dtype "$ATTENTION_DTYPE"
   --band-rows "$MANAGER_QUERY_ROWS" --hbm-dir "$HBM_DIR"
   --output-offset "$O_OFFSET" --result-json "$RESULT_JSON")
+if (( ATTENTION_CAUSAL )); then VERIFY_CMD+=(--causal); fi
 VERIFY_STATS_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_stats.py"
   --case-id "$RUN_ID"
   --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
@@ -1170,12 +1183,15 @@ SST_WALL_SECONDS="$ATTENTION_STAGE_SECONDS"
 if (( REUSE_WINDOW_QK_BRIDGE )); then
   QK_BRIDGE_RESULT="$ARTIFACT_ROOT/sst_qk_bridge_result.json"
   if (( WORKER_CLUSTER_BRIDGE )); then
+    REPORT_CAUSAL_ARGS=()
+    if (( ATTENTION_CAUSAL )); then REPORT_CAUSAL_ARGS+=(--causal); fi
     run_attention_stage worker_cluster_report \
       python3 "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/report_sst.py" \
         --log "$SST_RUNTIME_LOG" --num-kv-heads "$NUM_KV_HEADS" \
         --num-query-heads "$NUM_QUERY_HEADS" \
         --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
         --head-dim "$HEAD_DIM" \
+        "${REPORT_CAUSAL_ARGS[@]}" \
         --qk-workers-per-manager "$WORKER_CLUSTER_QK_WORKERS_PER_MANAGER" \
         --output "$QK_BRIDGE_RESULT"
     attention_print_worker_cluster_summary "$QK_BRIDGE_RESULT"

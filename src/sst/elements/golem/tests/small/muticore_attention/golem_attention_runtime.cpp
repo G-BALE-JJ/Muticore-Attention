@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
     uint64_t k_offset = GOLEM_ATTENTION_K_OFFSET;
     uint64_t v_offset = GOLEM_ATTENTION_V_OFFSET;
     uint64_t o_offset = GOLEM_ATTENTION_O_OFFSET;
-    if (GOLEM_ATTENTION_SCALE && argc != 12 && argc != 13) {
+    if (GOLEM_ATTENTION_SCALE && argc != 12 && argc != 13 && argc != 14) {
         std::fprintf(stderr, "Attention guest expects core-id, manager-query-rows, kv-length, num-query-heads, num-kv-heads, head-dim, kv-tile-rows, q/k/v/o-offsets\n");
         return 1;
     }
@@ -141,8 +141,11 @@ int main(int argc, char** argv) {
         static_cast<uint64_t>(manager_id + 1) * GOLEM_ATTENTION_MEM_NODE_BYTES;
     const uint64_t firstDataNodeBase = GOLEM_ATTENTION_MEM_NODE_BYTES;
     attention_write_metadata(topology_gm, topology);
-    const char* dtype = argc == 13 ? argv[12] : std::getenv("GOLEM_ATTENTION_DTYPE");
+    const char* dtype = argc >= 13 ? argv[12] : std::getenv("GOLEM_ATTENTION_DTYPE");
     if (dtype && std::strcmp(dtype, "fp16") != 0 && std::strcmp(dtype, "fp32") != 0) return 1;
+    const bool causal = argc == 14 ? std::strcmp(argv[13], "1") == 0 :
+        GOLEM_ATTENTION_CAUSAL != 0;
+    if (argc == 14 && std::strcmp(argv[13], "0") != 0 && !causal) return 1;
     const uint32_t elem_bytes = dtype && std::strcmp(dtype, "fp16") == 0 ? 2u : 4u;
     const uint64_t query_head_stride =
         static_cast<uint64_t>(manager_query_rows) * head_dim * elem_bytes;
@@ -181,7 +184,7 @@ int main(int argc, char** argv) {
             sequential64 && std::atoi(sequential64) != 0 ? 64 : 16;
         desc.kv_tile_rows = kv_tile_rows;
         desc.worker_count = topology.worker_count;
-        desc.flags = GOLEM_ATTENTION_CAUSAL ? GOLEM_ATTENTION_FLAG_CAUSAL : 0;
+        desc.flags = causal ? GOLEM_ATTENTION_FLAG_CAUSAL : 0;
         desc.tensor_root_core = 0;
         desc.tensor_manager_slot = manager_id;
         desc.tensor_manager_count = GOLEM_ATTENTION_SCALE ? 4 : 1;
@@ -220,6 +223,6 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(final_status),
                 static_cast<unsigned long long>(0xD1000001ull + kv_length),
                 manager_id, num_query_heads, num_kv_heads, manager_query_rows, kv_length,
-                static_cast<unsigned>(GOLEM_ATTENTION_CAUSAL));
+                static_cast<unsigned>(causal));
     return final_status == 0 ? 0 : 1;
 }

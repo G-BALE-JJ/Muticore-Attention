@@ -76,6 +76,32 @@ The FP16 `Hq=32,Hkv=8,D=64` kernel sweep also passed at
 `results/fp16_e2e_llama32_8_d64/summary-latest.csv`. This is noncausal
 attention-kernel validation, not full Llama inference.
 
+## Causal prefill
+
+The public runner accepts `--causal` for `Sq=Skv`. The QK scheduler omits
+fully future 64-key tiles, the online SFU masks the remaining diagonal tiles,
+and PV stops each query row after its final causal 256-key window. Distinct
+query heads keep independent online softmax state even when they share a KV
+head. The verifier compares all FP16 output elements against a causal NumPy
+reference; MPI placement and HBM layout checks still run.
+
+```bash
+scripts/test_flash_attention.sh --causal --query-length 1024 --kv-length 1024 \
+  --num-query-heads 4 --num-kv-heads 2 --head-dim 128
+python3 scripts/sweep_attention.py --causal --pairs 32:8 --head-dim 64 \
+  --lengths 512,1024,2048,4096 --output-root results/causal_llama32_8_d64
+```
+
+The `Hq=32,Hkv=8,D=64` causal runs passed all numerical, MPI, and HBM checks:
+
+| Sq=Skv | SST cycles | QK tiles issued | QK tiles skipped | PV windows issued | PV windows skipped |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2048 | 940,552 | 16,896 | 15,872 | 4,608 | 3,584 |
+| 4096 | 3,709,114 | 66,560 | 64,512 | 17,408 | 15,360 |
+
+Skipped counts are relative to dense attention at the same shape. RMSNorm and
+RoPE are not part of this kernel test.
+
 ```text
 managers 0..3
    |-- QK/SFU columns 0..1 -> worker cores 4..11   (8 cores)

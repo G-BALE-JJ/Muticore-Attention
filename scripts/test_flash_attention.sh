@@ -17,6 +17,7 @@ Run one end-to-end Attention test from this worktree.
   --heads N            Compatibility alias: set Query and K/V heads to N
   --head-dim N         Per-head dimension Dh: 64 or 128 (default: 128)
   --dtype NAME         Tensor storage: fp16 or fp32 (default: fp16)
+  --causal             Enable square-sequence causal prefill
   --mpi-ranks N        SST MPI ranks: 1, 2, or 4 (default: 4)
   --timeout SEC        Test timeout (default: 7200)
   --artifact-root DIR  Output directory (default: /tmp/<case-id>[_mpiN])
@@ -34,6 +35,7 @@ NUM_QUERY_HEADS=1
 NUM_KV_HEADS=1
 HEAD_DIM=128
 DTYPE="${GOLEM_ATTENTION_DTYPE:-fp16}"
+CAUSAL=0
 TIMEOUT=7200
 MPI_RANKS=4
 ARTIFACT_ROOT=""
@@ -80,12 +82,17 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --show-config) SHOW_CONFIG=1; shift ;;
+    --causal) CAUSAL=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 if [[ "$DTYPE" != "fp16" && "$DTYPE" != "fp32" ]]; then
   echo "--dtype must be fp16 or fp32" >&2
+  exit 2
+fi
+if (( CAUSAL && QUERY_LENGTH != KV_LENGTH )); then
+  echo "--causal requires equal query and KV lengths" >&2
   exit 2
 fi
 export GOLEM_ATTENTION_DTYPE="$DTYPE"
@@ -170,6 +177,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKTREE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 ATTENTION_DIR="$WORKTREE_ROOT/src/sst/elements/golem/tests/small/muticore_attention"
 CASE_ID="fused_attention_q${QUERY_LENGTH}_k${KV_LENGTH}_d${HEAD_DIM}"
+if (( CAUSAL )); then CASE_ID="${CASE_ID}_causal"; fi
 if (( NUM_QUERY_HEADS > 1 || NUM_KV_HEADS > 1 )); then
   CASE_ID="${CASE_ID}_hq${NUM_QUERY_HEADS}_hkv${NUM_KV_HEADS}"
 fi
@@ -201,6 +209,7 @@ if [[ "$SHOW_CONFIG" == "1" ]]; then
     "GQA_GROUP_SIZE=$GQA_GROUP_SIZE" \
     "HEAD_DIM=$HEAD_DIM" \
     "DTYPE=$DTYPE" \
+    "CAUSAL=$CAUSAL" \
     "MANAGER_QUERY_ROWS=$MANAGER_QUERY_ROWS" \
     "MANAGER_QUERIES=$MANAGER_QUERY_ROWS" \
     "TIMEOUT=$TIMEOUT" \
@@ -279,11 +288,14 @@ env -u GOLEM_ATTENTION_PV_INPUT_RESIDENCY \
 bash -n "$ATTENTION_DIR/run_flash_attention.sh" "$ATTENTION_DIR/run_fused_attention_scale.sh"
 
 echo "[ATTENTION] Running Hq=$NUM_QUERY_HEADS Hkv=$NUM_KV_HEADS Sq=$QUERY_LENGTH Skv=$KV_LENGTH Dh=$HEAD_DIM with $MPI_RANKS MPI rank(s)"
+CAUSAL_ARGS=()
+if (( CAUSAL )); then CAUSAL_ARGS+=(--causal); fi
 GOLEM_MPI_RANKS="$MPI_RANKS" \
   "$ATTENTION_DIR/run_flash_attention.sh" \
   --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
   --num-query-heads "$NUM_QUERY_HEADS" --num-kv-heads "$NUM_KV_HEADS" \
   --head-dim "$HEAD_DIM" \
+  "${CAUSAL_ARGS[@]}" \
   --timeout "$TIMEOUT" --artifact-root "$ARTIFACT_ROOT" \
   "${BASELINE_ARGS[@]}"
 

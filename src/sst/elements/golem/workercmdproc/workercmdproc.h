@@ -78,6 +78,10 @@ struct WorkerTaskListHeader {
     uint64_t attention_pv_cache_gm_addr = 0;
     uint64_t attention_pv_cache_bytes = 0;
     bool attention_key_window_major = false;
+    bool attention_causal = false;
+    uint32_t attention_group_row_begin = 0;
+    uint32_t attention_query_band = 0;
+    std::vector<uint32_t> attention_macro_task_ids;
 };
 
 struct WorkerWindowDescriptor {
@@ -2256,6 +2260,7 @@ private:
             partialValid_.assign(partialCount, 0);
             cBufferPrefetches_.clear();
             windowReuseDone_.assign(partialCount, 0);
+            markCausalReuseSkipped();
         } else {
             totalKTileCount_ = current_.k_count;
             residentKTileCount_ = current_.k_count;
@@ -2444,6 +2449,33 @@ private:
         }
         if (idx < windowReuseDone_.size()) {
             windowReuseDone_[idx] = 1;
+        }
+    }
+
+    bool causalReuseSkipped(uint32_t localM, uint32_t localN) const {
+        if (!header_.attention_causal) return false;
+        const uint32_t macro = header_.attention_macro_task_ids[taskIndex_];
+        const uint32_t mGroup = macro % header_.m_group_count;
+        const uint32_t nGroup = ((macro / header_.m_group_count) +
+            (header_.attention_key_window_major ? 0u : mGroup)) %
+            header_.n_group_count;
+        const uint32_t queryLocal = header_.attention_group_row_begin +
+            (mGroup * header_.b_reuse_m_tiles + localM) * header_.block_m;
+        const uint32_t queryLast = header_.attention_query_band *
+            header_.attention_query_length +
+            queryLocal % header_.attention_query_length + header_.block_m - 1;
+        const uint32_t keyFirst =
+            (nGroup * header_.a_reuse_n_tiles + localN) * header_.block_n;
+        return keyFirst > queryLast;
+    }
+
+    void markCausalReuseSkipped() {
+        for (uint32_t m = 0; m < currentReuseMCount_; ++m) {
+            for (uint32_t n = 0; n < currentReuseNCount_; ++n) {
+                if (causalReuseSkipped(m, n)) {
+                    windowReuseDone_[reuseIndex(m, n)] = 1;
+                }
+            }
         }
     }
 
@@ -3268,6 +3300,7 @@ private:
         activeTxnRetiredTileCount_ = 0;
         activeTxnTileRetired_.assign(kCount, 0);
         windowReuseDone_.assign(static_cast<size_t>(currentReuseMCount_) * static_cast<size_t>(currentReuseNCount_), 0);
+        markCausalReuseSkipped();
         nextReadyScanCursor_ = 0;
         activeTxnKBegin_ = kBegin;
         tileComputeStartCycles_.assign(kCount, 0);
@@ -4461,6 +4494,7 @@ private:
                 activeWindowBuffer_ = nextWindow.buffer;
                 active2DSchedulerTileRetired_.assign(twoDWindowTransactionTileCount(activeWindowKCount_), 0);
                 windowReuseDone_.assign(static_cast<size_t>(currentReuseMCount_) * static_cast<size_t>(currentReuseNCount_), 0);
+                markCausalReuseSkipped();
                 deriveTask(taskIndex_, false);
                 resetComputeOnlyStateForNextTile();
                 return true;
@@ -4488,6 +4522,7 @@ private:
                 activeWindowBuffer_ = (activeWindowBuffer_ + 1u) % twoDWindowBufferCount();
             }
             windowReuseDone_.assign(static_cast<size_t>(currentReuseMCount_) * static_cast<size_t>(currentReuseNCount_), 0);
+            markCausalReuseSkipped();
             next2DPrefetchK_ = nextK + nextCount;
         }
         deriveTask(taskIndex_, false);
@@ -4625,7 +4660,9 @@ private:
     }
 
     void deriveTask(uint32_t taskIndex, bool resetState = true) {
-        const uint32_t macro_task_id = header_.worker_slot + taskIndex * header_.active_worker_cores;
+        const uint32_t macro_task_id = header_.attention_causal
+            ? header_.attention_macro_task_ids[taskIndex]
+            : header_.worker_slot + taskIndex * header_.active_worker_cores;
         const uint32_t m_tiles = header_.m / header_.block_m;
         const uint32_t n_tiles = header_.n / header_.block_n;
         const uint32_t k_tiles = header_.k / header_.block_k;

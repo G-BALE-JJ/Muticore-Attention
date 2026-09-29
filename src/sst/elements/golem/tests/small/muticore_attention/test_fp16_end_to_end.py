@@ -41,6 +41,15 @@ class FP16OutputVerificationTest(unittest.TestCase):
         self.assertEqual(result["checked"], 32768)
         self.assertLess(result["max_abs_error"], 2e-5)
 
+    def test_causal_reference_excludes_future_keys(self):
+        q = [1.0, 1.0, 1.0]
+        k = [1.0, 1.0, 1.0]
+        v = [1.0, 3.0, 8.0]
+        result = compute_attention_blocked(q, k, v, 3, 3, 1, causal=True)
+        self.assertEqual(result[0], 1.0)
+        self.assertAlmostEqual(result[1], 2.0)
+        self.assertAlmostEqual(result[2], 4.0)
+
     def test_zero_output_is_rejected(self):
         self.write_output(0.0)
         self.assertEqual(self.result()["status"], "FAIL")

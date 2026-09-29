@@ -31,6 +31,7 @@ def main():
     ap.add_argument("--query-length", type=int, default=1024)
     ap.add_argument("--kv-length", type=int, default=1024)
     ap.add_argument("--head-dim", type=int, choices=(64, 128), default=128)
+    ap.add_argument("--causal", action="store_true")
     ap.add_argument("--qk-workers-per-manager", type=int, choices=(1, 2), default=1)
     ap.add_argument("--output", type=Path, required=True)
     args = ap.parse_args()
@@ -42,7 +43,19 @@ def main():
     group_size = args.num_query_heads // args.num_kv_heads
     row_blocks_per_job = group_size * args.query_length // (
         4 * args.qk_workers_per_manager * 64)
-    expected_pv_windows = jobs * row_blocks_per_job * (args.kv_length // 256)
+    if args.causal and args.query_length != args.kv_length:
+        ap.error("causal prefill requires equal query and KV lengths")
+    dense_pv_windows = args.num_query_heads * (args.query_length // 64) * (
+        args.kv_length // 256)
+    expected_pv_windows = (args.num_query_heads * sum(
+        (block * 64 + 255) // 256
+        for block in range(1, args.query_length // 64 + 1))
+        if args.causal else dense_pv_windows)
+    dense_qk_tiles = args.num_query_heads * (args.query_length // 64) * (
+        args.kv_length // 64)
+    expected_qk_tiles = (args.num_query_heads *
+        (args.query_length // 64) * (args.query_length // 64 + 1) // 2
+        if args.causal else dense_qk_tiles)
     qk_columns = range(args.qk_workers_per_manager)
     pv_lanes_per_manager = 4 - args.qk_workers_per_manager
     pv_columns = range(args.qk_workers_per_manager,
@@ -62,7 +75,11 @@ def main():
     exp_events = [tuple(map(int, event)) for event in SFU_EXP.findall(text)
                   if int(event[0]) in observed_qk_cores]
     exp_elements = sum(lanes * tokens for _, lanes, tokens in exp_events)
-    expected_exp_elements = args.num_query_heads * args.query_length * args.kv_length
+    expected_exp_elements = (expected_qk_tiles * 64 * 64 if args.causal else
+                             args.num_query_heads * args.query_length * args.kv_length)
+    valid_exp_elements = (args.num_query_heads * args.query_length *
+                          (args.query_length + 1) // 2 if args.causal else
+                          expected_exp_elements)
     qk_latency = {str(core): {} for core in observed_qk_cores}
     latency_fields = ("compute", "dma_wait", "total", "wait_2d_activate",
                       "wait_2d_active_not_ready", "c_buffer_read_wait")
@@ -77,6 +94,8 @@ def main():
         len(qk) == jobs and len(sfu) == jobs and len(e2e) == jobs and
         len(pv) == expected_pv_windows and
         qk_fusion_complete and
+        (not args.causal or
+         sum(int(item[4]) for item in qk) == expected_qk_tiles) and
         observed_qk_cores == expected_qk_cores and
         observed_sfu_cores == expected_qk_cores and
         observed_pv_cores == expected_pv_cores
@@ -104,12 +123,16 @@ def main():
         "qk_workers_per_manager": args.qk_workers_per_manager,
         "shape": {"Hq": args.num_query_heads, "Hkv": args.num_kv_heads,
                   "query_length": args.query_length, "kv_length": args.kv_length,
-                  "head_dim": args.head_dim, "causal": False},
+                  "head_dim": args.head_dim, "causal": args.causal},
         "qk_worker_count": 4 * args.qk_workers_per_manager,
         "pv_worker_count": 4 * (4 - args.qk_workers_per_manager),
         "qk_jobs": len(qk), "sfu_jobs": len(sfu),
         "pv_windows": len(pv), "completed_jobs": len(e2e),
         "qk_fusion_complete": qk_fusion_complete,
+        "qk_tiles": {"expected": expected_qk_tiles,
+                     "observed": sum(int(item[4]) for item in qk),
+                     "skipped": dense_qk_tiles - expected_qk_tiles},
+        "pv_windows_skipped": dense_pv_windows - expected_pv_windows,
         "stage_spans": {
             "qk": stage_span(qk, 2, 3),
             "sfu": stage_span(sfu, 1, 2),
@@ -128,6 +151,8 @@ def main():
                     "misses": sum(hit == "0" for _, hit in residency)},
         "qk_wcp_cycles_by_core": qk_latency,
         "sfu_exp_work": {"expected_elements": expected_exp_elements,
+                         "logically_valid_elements": valid_exp_elements,
+                         "masked_elements": expected_exp_elements - valid_exp_elements,
                          "observed_elements": exp_elements if exp_events else None,
                          "complete": exp_elements == expected_exp_elements if exp_events else None},
         "pv_tail_after_sfu_cycles": max(0, max(ends, default=0) -
