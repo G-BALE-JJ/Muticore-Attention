@@ -1,5 +1,7 @@
 #include "golem_attention_runtime.h"
+#include "golem_projection_runtime.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -84,6 +86,7 @@ static bool parse_u64(const char* text, uint64_t* value) {
 
 int main(int argc, char** argv) {
     const int core_id = sched_getcpu();
+    std::fprintf(stderr, "[ATTENTION_GUEST_START] core=%d argc=%d\n", core_id, argc);
     if (core_id < 0 || core_id >= (GOLEM_ATTENTION_SCALE ? 4 : 1)) return 0;
     const uint32_t manager_id = static_cast<uint32_t>(core_id);
     uint32_t manager_query_rows = GOLEM_ATTENTION_QUERY_LENGTH;
@@ -96,7 +99,7 @@ int main(int argc, char** argv) {
     uint64_t k_offset = GOLEM_ATTENTION_K_OFFSET;
     uint64_t v_offset = GOLEM_ATTENTION_V_OFFSET;
     uint64_t o_offset = GOLEM_ATTENTION_O_OFFSET;
-    if (GOLEM_ATTENTION_SCALE && argc != 12 && argc != 13 && argc != 14 && argc != 15) {
+    if (GOLEM_ATTENTION_SCALE && argc != 12 && argc != 13 && argc != 14 && argc != 15 && argc != 16) {
         std::fprintf(stderr, "Attention guest expects core-id, manager-query-rows, kv-length, num-query-heads, num-kv-heads, head-dim, kv-tile-rows, q/k/v/o-offsets\n");
         return 1;
     }
@@ -146,10 +149,18 @@ int main(int argc, char** argv) {
     const bool causal = argc >= 14 ? std::strcmp(argv[13], "1") == 0 :
         GOLEM_ATTENTION_CAUSAL != 0;
     if (argc >= 14 && std::strcmp(argv[13], "0") != 0 && !causal) return 1;
-    const bool rope = argc == 15 && std::strcmp(argv[14], "1") == 0;
-    if (argc == 15 && std::strcmp(argv[14], "0") != 0 && !rope) return 1;
+    const bool rope = argc >= 15 && std::strcmp(argv[14], "1") == 0;
+    if (argc >= 15 && std::strcmp(argv[14], "0") != 0 && !rope) return 1;
+    const bool projection = argc >= 16 && std::strcmp(argv[15], "1") == 0;
+    if (argc >= 16 && std::strcmp(argv[15], "0") != 0 && !projection) return 1;
     const uint32_t elem_bytes = dtype && std::strcmp(dtype, "fp16") == 0 ? 2u : 4u;
     if (rope && elem_bytes != 2) return 1;
+    if (projection && !run_projection(manager_id, manager_query_rows, kv_length,
+            num_query_heads, num_kv_heads, head_dim, q_offset, k_offset, v_offset,
+            causal, rope)) {
+        std::fprintf(stderr, "[PROJECTION_GUEST_FAIL] manager=%u\n", manager_id);
+        return 1;
+    }
     const uint64_t query_head_stride =
         static_cast<uint64_t>(manager_query_rows) * head_dim * elem_bytes;
     const uint64_t kv_head_stride =

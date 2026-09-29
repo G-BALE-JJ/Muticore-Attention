@@ -42,6 +42,7 @@ SFU_PRIMITIVE_HBM_OPS = os.getenv("GOLEM_SFU_PRIMITIVE_HBM_OPS", "EXP")
 SFU_PRIMITIVE_HBM_ELEMS = max(1, int(os.getenv("GOLEM_SFU_PRIMITIVE_HBM_ELEMS", "64")))
 SFU_RMSNORM_HBM_STREAM = int(os.getenv("GOLEM_SFU_RMSNORM_HBM_STREAM", "0")) != 0
 ATTENTION_FUSED = int(os.getenv("GOLEM_ATTENTION_FUSED", "0")) != 0
+ATTENTION_PROJECTION = int(os.getenv("GOLEM_ATTENTION_PROJECTION", "0")) != 0
 ATTENTION_Q_FILE = os.getenv("GOLEM_ATTENTION_Q_FILE", "")
 ATTENTION_K_FILE = os.getenv("GOLEM_ATTENTION_K_FILE", "")
 ATTENTION_V_FILE = os.getenv("GOLEM_ATTENTION_V_FILE", "")
@@ -376,6 +377,39 @@ def _preload_fused_attention(node_buffers):
         if ATTENTION_DTYPE != "fp16" or len(data) != expected:
             raise ValueError(f"RoPE table must contain {expected} FP16 bytes")
         _write_block(node_buffers[1], 0x07000000, data, "attention_rope_table")
+    if ATTENTION_PROJECTION:
+        if not ATTENTION_HBM_STRIPED or len(DATA_NODE_IDS) != 4:
+            raise ValueError("projection requires four striped HBM data nodes")
+        hidden = ATTENTION_NUM_QUERY_HEADS * ATTENTION_HEAD_DIM
+        rows = ATTENTION_QUERY_LENGTH // 4
+        files = (("X", "GOLEM_PROJECTION_X_FILE", 0, rows * hidden * 2),
+                 ("GAMMA", "GOLEM_PROJECTION_GAMMA_FILE", 0x01000000, hidden * 2),
+                 ("WEIGHTS", "GOLEM_PROJECTION_WEIGHTS_FILE", 0x01200000,
+                  (ATTENTION_NUM_QUERY_HEADS + 2 * ATTENTION_NUM_KV_HEADS) *
+                  ATTENTION_HEAD_DIM * hidden * 2))
+        for name, env, offset, expected in files:
+            path = os.getenv(env, "")
+            if not path:
+                raise ValueError(f"{env} is required")
+            with open(path, "rb") as source:
+                data = source.read()
+            if name == "X":
+                if len(data) != expected * 4:
+                    raise ValueError(f"projection X expected {expected * 4} bytes")
+                for band, node_idx in enumerate(DATA_NODE_IDS):
+                    _write_block(node_buffers[node_idx], offset,
+                                 data[band * expected:(band + 1) * expected],
+                                 f"projection_x_band{band}")
+            else:
+                if len(data) != expected:
+                    raise ValueError(f"projection {name} expected {expected} bytes")
+                for node_idx in DATA_NODE_IDS:
+                    _write_block(node_buffers[node_idx], offset, data,
+                                 f"projection_{name.lower()}")
+        if 0x01200000 + files[2][3] > 0x01ff0000:
+            raise ValueError("projection weights overlap completion flags")
+        print("Preloaded projection X/gamma/weights; Q/K/V are device-produced")
+        return
     tensors = (
         ("Q", ATTENTION_Q_FILE, ATTENTION_Q_OFFSET,
          ATTENTION_NUM_QUERY_HEADS * ATTENTION_QUERY_LENGTH * ATTENTION_HEAD_DIM * ATTENTION_ELEM_BYTES),
@@ -1372,7 +1406,7 @@ def main(argv=None):
             f"fc1_partial_node{node_idx}",
         )
 
-    for m_tile in range(GEMM_M_TILES):
+    for m_tile in range(0 if ATTENTION_PROJECTION else GEMM_M_TILES):
         node_idx = _a_data_node_for_m_tile(m_tile)
         a_slot = _a_slot_for_m_tile(m_tile)
         for k_tile in range(GEMM_K_TILES):
@@ -1391,7 +1425,7 @@ def main(argv=None):
                 f"a_m{m_tile}_k{k_tile}_node{node_idx}",
             )
 
-    for n_tile in range(GEMM_N_TILES):
+    for n_tile in range(0 if ATTENTION_PROJECTION else GEMM_N_TILES):
         node_idx = _b_data_node_for_n_tile(n_tile)
         b_slot = _b_slot_for_n_tile(n_tile)
         for k_tile in range(GEMM_K_TILES):

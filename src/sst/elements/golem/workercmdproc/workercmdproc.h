@@ -748,7 +748,8 @@ public:
         uint64_t enqueueCycle, GemmBufferCallback callback) override {
         const bool scatterClass =
             trafficClass == AttentionClusterTrafficClass::SequentialQkInputScatter ||
-            trafficClass == AttentionClusterTrafficClass::SequentialPvInputScatter;
+            trafficClass == AttentionClusterTrafficClass::SequentialPvInputScatter ||
+            trafficClass == AttentionClusterTrafficClass::ProjectionInputScatter;
         if (array_ == nullptr || arrayIds.empty() || arrayIds.size() > 64 ||
             !scatterClass ||
             !array_->validateOperandContextRequest(arrayIds.front(), operandBank) ||

@@ -63,6 +63,9 @@ enum class AttentionClusterTrafficClass : uint8_t {
     SfuPWrite,
     OScale,
     OAccumulate,
+    ProjectionWeights,
+    ProjectionInputScatter,
+    ProjectionOutput,
     Count,
 };
 
@@ -92,6 +95,9 @@ inline const char* attentionClusterTrafficClassName(
     case AttentionClusterTrafficClass::SfuPWrite: return "sfu_p_write";
     case AttentionClusterTrafficClass::OScale: return "o_scale";
     case AttentionClusterTrafficClass::OAccumulate: return "o_accumulate";
+    case AttentionClusterTrafficClass::ProjectionWeights: return "projection_weights";
+    case AttentionClusterTrafficClass::ProjectionInputScatter: return "projection_input_scatter";
+    case AttentionClusterTrafficClass::ProjectionOutput: return "projection_output";
     case AttentionClusterTrafficClass::Count: break;
     }
     return "invalid";

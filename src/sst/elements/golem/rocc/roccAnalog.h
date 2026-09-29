@@ -27,6 +27,7 @@
 #include <sst/elements/golem/sfu/sfu.h>
 #include <sst/elements/golem/workercmdproc/workercmdproc.h>
 #include <sst/elements/golem/attention/attentionCluster.h>
+#include <sst/elements/golem/attention/projectionJob.h>
 #include <sst/elements/vanadis/rocc/vroccinterface.h>
 #include <sst/elements/golem/globalmemory/globalmemory.h>
 #include <sst/elements/golem/fp16.h>
@@ -80,6 +81,9 @@ constexpr uint8_t GOLEM_ROCC_FUNC7_TENSOR_MANAGER_JOB = 0x1f;
 constexpr uint8_t GOLEM_ROCC_FUNC7_TENSOR_MANAGER_WAIT = 0x20;
 constexpr uint8_t GOLEM_ROCC_FUNC7_ATTENTION_MANAGER_JOB = 0x21;
 constexpr uint8_t GOLEM_ROCC_FUNC7_ATTENTION_MANAGER_WAIT = 0x22;
+constexpr uint8_t GOLEM_ROCC_FUNC7_PROJECTION_JOB = 0x23;
+constexpr uint8_t GOLEM_ROCC_FUNC7_PROJECTION_WAIT = 0x24;
+constexpr uint8_t GOLEM_ROCC_FUNC7_HBM_FLAG_WAIT = 0x25;
 constexpr uint32_t GOLEM_ATTENTION_DESC_MAGIC = 0x41545431u;
 constexpr uint16_t GOLEM_ATTENTION_DESC_VERSION = 2u;
 constexpr uint32_t GOLEM_ATTENTION_FLAG_CAUSAL = 0x1u;
@@ -993,6 +997,7 @@ public:
         if (workerCommandProcessor != nullptr && workerCommandProcessor->isBusy()) {
             workerCommandProcessor->tick(cycle);
         }
+        if (projectionJob_ != nullptr) projectionJob_->tick(cycle);
 
         if (roccCmd_q.empty() && !busy) {
             output->verbose(CALL_INFO, 16, 0, "--> nothing to do in RoCC\n");
@@ -1169,6 +1174,22 @@ public:
                 if (!tryIssueSfuJobCommand(next_cmd)) {
                     roccCmd_q.push_front(next_cmd);
                 }
+                return;
+            }
+            if (next_cmd->inst->func7 == GOLEM_ROCC_FUNC7_PROJECTION_JOB) {
+                roccCmd_q.pop_front();
+                issueProjectionJob(next_cmd);
+                return;
+            }
+            if (next_cmd->inst->func7 == GOLEM_ROCC_FUNC7_PROJECTION_WAIT) {
+                if (projectionJob_ == nullptr || !projectionJob_->active()) {
+                    roccCmd_q.pop_front();
+                    waitProjectionJob(next_cmd);
+                }
+                return;
+            }
+            if (next_cmd->inst->func7 == GOLEM_ROCC_FUNC7_HBM_FLAG_WAIT) {
+                waitHbmFlag(next_cmd);
                 return;
             }
             if (next_cmd->inst->func7 == GOLEM_ROCC_FUNC7_TENSOR_MANAGER_JOB) {
@@ -1764,6 +1785,73 @@ public:
             cmd->inst->rd, 0, cmd->cmd_id, cmd->hw_thread));
         delete cmd;
         return true;
+    }
+
+    void issueProjectionJob(SST::Vanadis::RoCCCommand* cmd) {
+        uint64_t result = 1;
+        if (workerCommandProcessor != nullptr && globalMem != nullptr) {
+            if (projectionJob_ == nullptr)
+                projectionJob_.reset(new ProjectionJob(globalMem, workerCommandProcessor));
+            std::vector<uint8_t> raw;
+            globalMem->rd_from_globalmem(cmd->rs1, sizeof(ProjectionJobDesc), raw);
+            if (raw.size() == sizeof(ProjectionJobDesc)) {
+                ProjectionJobDesc desc{};
+                std::memcpy(&desc, raw.data(), sizeof(desc));
+                if (desc.manager_slot == coreID && projectionJob_->start(desc)) result = 0;
+            }
+        }
+        enqueueResponse(new SST::Vanadis::RoCCResponse(
+            cmd->inst->rd, result, cmd->cmd_id, cmd->hw_thread));
+        delete cmd;
+    }
+
+    void waitProjectionJob(SST::Vanadis::RoCCCommand* cmd) {
+        const uint64_t result = projectionJob_ != nullptr && projectionJob_->complete() ?
+            projectionJob_->status() : 1;
+        if (projectionJob_ != nullptr && projectionJob_->complete()) projectionJob_->retire();
+        enqueueResponse(new SST::Vanadis::RoCCResponse(
+            cmd->inst->rd, result, cmd->cmd_id, cmd->hw_thread));
+        delete cmd;
+    }
+
+    void waitHbmFlag(SST::Vanadis::RoCCCommand* cmd) {
+        if (globalMem == nullptr) {
+            roccCmd_q.pop_front();
+            enqueueResponse(new SST::Vanadis::RoCCResponse(
+                cmd->inst->rd, 1, cmd->cmd_id, cmd->hw_thread));
+            delete cmd;
+            return;
+        }
+        if (projectionFlagPending_) return;
+        if (projectionFlagReady_) {
+            projectionFlagReady_ = false;
+            if (!projectionFlagOk_) {
+                roccCmd_q.pop_front();
+                enqueueResponse(new SST::Vanadis::RoCCResponse(
+                    cmd->inst->rd, 1, cmd->cmd_id, cmd->hw_thread));
+                delete cmd;
+                return;
+            }
+            std::vector<uint8_t> raw;
+            globalMem->rd_from_globalmem(coreID * 0x00200000ull + 0x3800, 8, raw);
+            uint64_t value = 0;
+            if (raw.size() == 8) std::memcpy(&value, raw.data(), 8);
+            if (value == cmd->rs2) {
+                roccCmd_q.pop_front();
+                enqueueResponse(new SST::Vanadis::RoCCResponse(
+                    cmd->inst->rd, 0, cmd->cmd_id, cmd->hw_thread));
+                delete cmd;
+                return;
+            }
+        }
+        projectionFlagPending_ = true;
+        globalMem->dma_read_from_host_to_globalmem(
+            cmd->rs1, 8, coreID * 0x00200000ull + 0x3800,
+            [this](bool ok) {
+                projectionFlagPending_ = false;
+                projectionFlagReady_ = true;
+                projectionFlagOk_ = ok;
+            });
     }
 
     enum class AttentionWorkerPhase : uint8_t {
@@ -13676,6 +13764,10 @@ private:
     SST::Golem::SFUAPI *sfu;
     std::unordered_map<uint64_t, ManagerTensorJobState> managerTensorJobs_;
     std::unordered_map<uint64_t, ManagerAttentionJobState> managerAttentionJobs_;
+    std::unique_ptr<ProjectionJob> projectionJob_;
+    bool projectionFlagPending_ = false;
+    bool projectionFlagReady_ = false;
+    bool projectionFlagOk_ = false;
     std::unique_ptr<AttentionWorkerState> attentionWorker_;
     std::vector<double> attentionRopeTableCache_;
     uint64_t attentionRopeTableCacheBytes_ = 0;

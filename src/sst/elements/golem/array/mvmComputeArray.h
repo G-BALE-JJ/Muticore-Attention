@@ -384,7 +384,8 @@ public:
         if (!validateInputScatterRequest(arrayIDs, inputs.size(), elemBytes) ||
             operandBank >= operandContextBanks ||
             (trafficClass != AttentionClusterTrafficClass::SequentialQkInputScatter &&
-             trafficClass != AttentionClusterTrafficClass::SequentialPvInputScatter)) {
+             trafficClass != AttentionClusterTrafficClass::SequentialPvInputScatter &&
+             trafficClass != AttentionClusterTrafficClass::ProjectionInputScatter)) {
             return false;
         }
         return enqueueInputScatterTransfer(
@@ -583,7 +584,8 @@ public:
             }
             return true;
         }
-        if (trafficClass == AttentionClusterTrafficClass::SequentialPvORestore ||
+        if (trafficClass == AttentionClusterTrafficClass::ProjectionOutput ||
+            trafficClass == AttentionClusterTrafficClass::SequentialPvORestore ||
             trafficClass == AttentionClusterTrafficClass::SequentialPvOOutput) {
             if (arrayIDs.empty() || arrayIDs.size() > 64) return false;
             for (uint32_t index = 0; index < arrayIDs.size(); ++index) {

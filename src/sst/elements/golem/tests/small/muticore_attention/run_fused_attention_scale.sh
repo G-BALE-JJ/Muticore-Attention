@@ -144,6 +144,7 @@ HEAD_DIM=128
 ATTENTION_DTYPE="${GOLEM_ATTENTION_DTYPE:-fp16}"
 ATTENTION_CAUSAL="${GOLEM_ATTENTION_CAUSAL:-0}"
 ATTENTION_ROPE="${GOLEM_ATTENTION_ROPE:-0}"
+ATTENTION_PROJECTION="${GOLEM_ATTENTION_PROJECTION:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -231,6 +232,7 @@ while [[ $# -gt 0 ]]; do
     --direct-gemm) GENERIC_GEMM=0; shift ;;
     --causal) ATTENTION_CAUSAL=1; shift ;;
     --rope) ATTENTION_ROPE=1; shift ;;
+    --projection) ATTENTION_PROJECTION=1; ATTENTION_CAUSAL=1; ATTENTION_ROPE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help)
       echo "Worker dataflow: selected by the architecture wrapper"
@@ -250,6 +252,11 @@ if [[ "$ATTENTION_CAUSAL" != 0 && "$ATTENTION_CAUSAL" != 1 ]]; then
 fi
 if [[ "$ATTENTION_ROPE" != 0 && "$ATTENTION_ROPE" != 1 ]]; then
   echo "GOLEM_ATTENTION_ROPE must be 0 or 1" >&2
+  exit 2
+fi
+if (( ATTENTION_PROJECTION )) &&
+   { [[ "$ATTENTION_DTYPE" != fp16 ]] || (( QUERY_LENGTH != KV_LENGTH || QUERY_LENGTH % 1024 )); }; then
+  echo "projection requires FP16 causal self attention with S divisible by 1024" >&2
   exit 2
 fi
 if (( ATTENTION_ROPE )) && [[ "$ATTENTION_DTYPE" != fp16 ]]; then
@@ -581,6 +588,7 @@ NUM_ARRAYS=64
 RUN_ID="fused_attention_q${QUERY_LENGTH}_k${KV_LENGTH}_d${HEAD_DIM}"
 if (( ATTENTION_CAUSAL )); then RUN_ID="${RUN_ID}_causal"; fi
 if (( ATTENTION_ROPE )); then RUN_ID="${RUN_ID}_rope"; fi
+if (( ATTENTION_PROJECTION )); then RUN_ID="${RUN_ID}_projection"; fi
 if (( NUM_QUERY_HEADS > 1 || NUM_KV_HEADS > 1 )); then
   RUN_ID="${RUN_ID}_hq${NUM_QUERY_HEADS}_hkv${NUM_KV_HEADS}"
 fi
@@ -619,6 +627,9 @@ Q_FILE="$ARTIFACT_ROOT/q_${NUM_QUERY_HEADS}x${QUERY_LENGTH}x${HEAD_DIM}.bin"
 K_FILE="$ARTIFACT_ROOT/k_${NUM_KV_HEADS}x${KV_LENGTH}x${HEAD_DIM}.bin"
 V_FILE="$ARTIFACT_ROOT/v_${NUM_KV_HEADS}x${KV_LENGTH}x${HEAD_DIM}.bin"
 ROPE_TABLE_FILE="$ARTIFACT_ROOT/rope_${HEAD_DIM}.bin"
+PROJECTION_X_FILE="$ARTIFACT_ROOT/projection_x.bin"
+PROJECTION_GAMMA_FILE="$ARTIFACT_ROOT/projection_gamma.bin"
+PROJECTION_WEIGHTS_FILE="$ARTIFACT_ROOT/projection_weights.bin"
 RESULT_JSON="$ARTIFACT_ROOT/fused_attention_result.json"
 LIFECYCLE_JSON="$ARTIFACT_ROOT/attention_lifecycle.json"
 METRICS_JSON="$ARTIFACT_ROOT/attention_metrics.json"
@@ -662,6 +673,12 @@ GENERATE_CMD=(python3 "$SCRIPT_DIR/attention_case.py" generate
   --dtype "$ATTENTION_DTYPE" \
   --q-file "$Q_FILE" --k-file "$K_FILE" --v-file "$V_FILE")
 if (( ATTENTION_ROPE )); then GENERATE_CMD+=(--rope-table-file "$ROPE_TABLE_FILE"); fi
+if (( ATTENTION_PROJECTION )); then
+  GENERATE_CMD=(python3 "$SCRIPT_DIR/projection_case.py"
+    --sequence "$QUERY_LENGTH" --query-heads "$NUM_QUERY_HEADS"
+    --kv-heads "$NUM_KV_HEADS" --head-dim "$HEAD_DIM"
+    --output-dir "$ARTIFACT_ROOT")
+fi
 
 RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "PYTHONPATH=$TESTS_DIR${PYTHONPATH:+:$PYTHONPATH}"
@@ -692,6 +709,10 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ATTENTION_DTYPE=$ATTENTION_DTYPE"
   "GOLEM_ATTENTION_CAUSAL=$ATTENTION_CAUSAL"
   "GOLEM_ATTENTION_ROPE=$ATTENTION_ROPE"
+  "GOLEM_ATTENTION_PROJECTION=$ATTENTION_PROJECTION"
+  "GOLEM_PROJECTION_X_FILE=$PROJECTION_X_FILE"
+  "GOLEM_PROJECTION_GAMMA_FILE=$PROJECTION_GAMMA_FILE"
+  "GOLEM_PROJECTION_WEIGHTS_FILE=$PROJECTION_WEIGHTS_FILE"
   "GOLEM_ATTENTION_ROPE_TABLE_FILE=$([[ $ATTENTION_ROPE == 1 ]] && echo "$ROPE_TABLE_FILE")"
   "GOLEM_ATTENTION_GUEST_MANAGER_QUERY_ROWS=$MANAGER_QUERY_ROWS"
   "GOLEM_ATTENTION_GUEST_KV_LENGTH=$KV_LENGTH"
@@ -842,6 +863,8 @@ VERIFY_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_output.py"
   --output-offset "$O_OFFSET" --result-json "$RESULT_JSON")
 if (( ATTENTION_CAUSAL )); then VERIFY_CMD+=(--causal); fi
 if (( ATTENTION_ROPE )); then VERIFY_CMD+=(--rope-table-file "$ROPE_TABLE_FILE"); fi
+LAYOUT_PROJECTION_ARGS=()
+if (( ATTENTION_PROJECTION )); then LAYOUT_PROJECTION_ARGS+=(--projection); fi
 VERIFY_STATS_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_stats.py"
   --case-id "$RUN_ID"
   --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
@@ -1221,6 +1244,7 @@ if (( REUSE_WINDOW_QK_BRIDGE )); then
       --num-query-heads "$NUM_QUERY_HEADS" --num-kv-heads "$NUM_KV_HEADS" \
       --head-dim "$HEAD_DIM" --dtype "$ATTENTION_DTYPE" \
       --q-offset "$Q_OFFSET" --k-offset "$K_OFFSET" --v-offset "$V_OFFSET" --o-offset "$O_OFFSET" \
+      "${LAYOUT_PROJECTION_ARGS[@]}" \
       --result-json "$ARTIFACT_ROOT/attention_hbm_layout.json"
     attention_ui_key_value "Artifacts" "$ARTIFACT_ROOT"
     attention_ui_key_value "Worker-cluster result" "$QK_BRIDGE_RESULT"

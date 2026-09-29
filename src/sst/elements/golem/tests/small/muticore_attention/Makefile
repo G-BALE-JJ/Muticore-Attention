@@ -21,7 +21,7 @@ $(RMSNORM_EXE): golem_rmsnorm_runtime.cpp
 	mkdir -p $(ARCH)
 	$(CXX) $(CFLAGS) -static -no-pie -O2 -o $@ $<
 
-$(ATTENTION_EXE): golem_attention_runtime.cpp golem_attention_runtime.h
+$(ATTENTION_EXE): golem_attention_runtime.cpp golem_attention_runtime.h golem_projection_runtime.h ../../../attention/projectionJobAbi.h
 	mkdir -p $(ARCH)
 	$(CXX) $(CFLAGS) -DGOLEM_ATTENTION_SCALE=1 \
 		-DGOLEM_GLOBAL_STRIDE_BYTES=2097152 \
