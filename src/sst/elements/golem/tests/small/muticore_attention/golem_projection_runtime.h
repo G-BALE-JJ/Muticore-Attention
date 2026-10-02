@@ -31,15 +31,18 @@ static bool run_projection(uint32_t manager, uint32_t rows, uint32_t sequence,
     if (hidden == 0 || hidden > 2048 || hidden % 64) return false;
     constexpr uint64_t nodeStride = 0x08000000ull;
     constexpr uint64_t gmStride = 0x00200000ull;
+    constexpr uint64_t normOffset = 0x01100000ull;
     const uint64_t node = (manager + 1) * nodeStride;
     const uint64_t gm = manager * gmStride;
     const uint32_t batch = 8192 / hidden;
+    const uint64_t normBytes = static_cast<uint64_t>(rows) * hidden * 2;
+    const uint64_t weightsOffset = (normOffset + normBytes + 0xfffffull) & ~0xfffffull;
     for (uint32_t first = 0; first < rows; first += batch) {
         ProjectionSfuJobDesc norm = {};
         norm.job_id = 0x524d0000ull + manager * 4096 + first;
         norm.input0_addr = node + first * hidden * 2;
         norm.input1_addr = node + 0x01000000ull;
-        norm.output_addr = node + 0x01100000ull + first * hidden * 2;
+        norm.output_addr = node + normOffset + first * hidden * 2;
         norm.scratch_addr = gm + 0x40000;
         norm.op_type = 0x13;
         norm.dtype = 2;
@@ -77,8 +80,8 @@ static bool run_projection(uint32_t manager, uint32_t rows, uint32_t sequence,
     job.kv_heads = hkv;
     job.rows_per_node = rows;
     job.manager_slot = manager;
-    job.input_addr = node + 0x01100000ull;
-    job.weights_addr = node + 0x01200000ull;
+    job.input_addr = node + normOffset;
+    job.weights_addr = node + weightsOffset;
     job.q_addr = node + q_offset;
     job.k_addr = node + k_offset;
     job.v_addr = node + v_offset;

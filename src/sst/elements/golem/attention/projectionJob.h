@@ -16,7 +16,7 @@
 namespace SST { namespace Golem {
 
 // A bounded, descriptor-driven producer of the raw and panel Q/K/V layouts.
-// One 16-token group, 16 weight tiles in local GM, and one V tile are resident.
+// One 16-token group, 32 D=64 weight tiles in local GM, and one V tile are resident.
 class ProjectionJob {
 public:
     ProjectionJob(GlobalMemoryAPI* memory, WorkerCommandProcessorAPI* processor)
@@ -238,15 +238,16 @@ private:
                  dimTile_) * (desc_.hidden_dim / 64) + inputTile_);
     }
     uint64_t cachedWeightAddr() const {
-        return desc_.scratch_addr + 0x10000 +
+        // Keep the 256 KiB cache above the RMSNorm scratch at GM+0x40000.
+        return desc_.scratch_addr + 0x60000 +
             cacheSlot() * 8192;
     }
     size_t cacheSlot() const {
         return static_cast<size_t>(inputTile_ % cachedTiles_.size());
     }
     bool cacheTileEnabled() const {
-        // Llama 1B uses D=64 and 32 input tiles. Keep the first 16 tiles
-        // resident for the current head; the remaining tiles use scratch.
+        // Llama 1B uses D=64 and 32 input tiles. Keep the current head's
+        // complete tile row resident; larger dimensions use scratch fallback.
         return desc_.head_dim == 64 && dimTile_ == 0 &&
             inputTile_ < cachedTiles_.size();
     }
@@ -331,7 +332,7 @@ private:
     uint32_t remaining_ = 0;
     uint64_t tag_ = 0, status_ = 0;
     uint64_t residentTile_ = ~uint64_t{0};
-    std::array<uint64_t, 16> cachedTiles_{};
+    std::array<uint64_t, 32> cachedTiles_{};
     uint64_t weightLoads_ = 0, weightPrograms_ = 0, weightReuses_ = 0;
     uint64_t startCycle_ = 0;
     bool pending_ = false;

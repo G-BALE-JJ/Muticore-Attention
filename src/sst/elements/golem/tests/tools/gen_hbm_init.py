@@ -382,9 +382,14 @@ def _preload_fused_attention(node_buffers):
             raise ValueError("projection requires four striped HBM data nodes")
         hidden = ATTENTION_NUM_QUERY_HEADS * ATTENTION_HEAD_DIM
         rows = ATTENTION_QUERY_LENGTH // 4
+        norm_offset = 0x01100000
+        # Keep weights after the complete per-node RMSNorm output.  The old
+        # fixed 0x01200000 address overlapped this region once S grew to 2048.
+        norm_bytes = rows * hidden * 2
+        weights_offset = (norm_offset + norm_bytes + 0xFFFFF) & ~0xFFFFF
         files = (("X", "GOLEM_PROJECTION_X_FILE", 0, rows * hidden * 2),
                  ("GAMMA", "GOLEM_PROJECTION_GAMMA_FILE", 0x01000000, hidden * 2),
-                 ("WEIGHTS", "GOLEM_PROJECTION_WEIGHTS_FILE", 0x01200000,
+                 ("WEIGHTS", "GOLEM_PROJECTION_WEIGHTS_FILE", weights_offset,
                   (ATTENTION_NUM_QUERY_HEADS + 2 * ATTENTION_NUM_KV_HEADS) *
                   ATTENTION_HEAD_DIM * hidden * 2))
         for name, env, offset, expected in files:
@@ -406,7 +411,7 @@ def _preload_fused_attention(node_buffers):
                 for node_idx in DATA_NODE_IDS:
                     _write_block(node_buffers[node_idx], offset, data,
                                  f"projection_{name.lower()}")
-        if 0x01200000 + files[2][3] > 0x01ff0000:
+        if weights_offset + files[2][3] > 0x01ff0000:
             raise ValueError("projection weights overlap completion flags")
         print("Preloaded projection X/gamma/weights; Q/K/V are device-produced")
         return
