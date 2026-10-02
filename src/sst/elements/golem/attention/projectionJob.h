@@ -89,11 +89,11 @@ public:
         }
         case Phase::LoadWeight: {
             const uint64_t tile = weightTile();
-            if (!cacheEnabled()) {
+            if (!cacheTileEnabled()) {
                 phase_ = Phase::LoadWeightDma;
                 break;
             }
-            if (cachedTiles_[tile % cachedTiles_.size()] == tile) {
+            if (cachedTiles_[cacheSlot()] == tile) {
                 phase_ = Phase::ProgramWeight;
                 break;
             }
@@ -103,7 +103,7 @@ public:
                 [this, tile](bool ok) {
                     pending_ = false;
                     if (ok) {
-                        cachedTiles_[tile % cachedTiles_.size()] = tile;
+                        cachedTiles_[cacheSlot()] = tile;
                         ++weightLoads_;
                     }
                     phase_ = ok ? Phase::ProgramWeight : Phase::Failed;
@@ -126,7 +126,7 @@ public:
         }
         case Phase::ProgramWeight: {
             std::vector<uint8_t> raw;
-            memory_->rd_from_globalmem(cacheEnabled() ? cachedWeightAddr() :
+            memory_->rd_from_globalmem(cacheTileEnabled() ? cachedWeightAddr() :
                 desc_.scratch_addr + 0x2000, 8192, raw);
             if (raw.size() != 8192) { fail(); break; }
             std::vector<double> matrix(4096);
@@ -239,13 +239,16 @@ private:
     }
     uint64_t cachedWeightAddr() const {
         return desc_.scratch_addr + 0x10000 +
-            (weightTile() % cachedTiles_.size()) * 8192;
+            cacheSlot() * 8192;
     }
-    bool cacheEnabled() const {
-        const uint64_t tiles = static_cast<uint64_t>(desc_.query_heads +
-            2 * desc_.kv_heads) * (desc_.head_dim / 64) *
-            (desc_.hidden_dim / 64);
-        return tiles <= cachedTiles_.size();
+    size_t cacheSlot() const {
+        return static_cast<size_t>(inputTile_ % cachedTiles_.size());
+    }
+    bool cacheTileEnabled() const {
+        // Llama 1B uses D=64 and 32 input tiles. Keep the first 16 tiles
+        // resident for the current head; the remaining tiles use scratch.
+        return desc_.head_dim == 64 && dimTile_ == 0 &&
+            inputTile_ < cachedTiles_.size();
     }
     uint64_t rawBase() const {
         return kind_ == 0 ? desc_.q_addr : kind_ == 1 ? desc_.k_addr : desc_.v_addr;
