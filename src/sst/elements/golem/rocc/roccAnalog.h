@@ -1808,6 +1808,9 @@ public:
     void waitProjectionJob(SST::Vanadis::RoCCCommand* cmd) {
         const uint64_t result = projectionJob_ != nullptr && projectionJob_->complete() ?
             projectionJob_->status() : 1;
+        std::printf("[PROJECTION_SYNC] core=%u stage=local_wait cycle=%llu status=%llu\n",
+            coreID, static_cast<unsigned long long>(LastTickCycle),
+            static_cast<unsigned long long>(result));
         if (projectionJob_ != nullptr && projectionJob_->complete()) projectionJob_->retire();
         enqueueResponse(new SST::Vanadis::RoCCResponse(
             cmd->inst->rd, result, cmd->cmd_id, cmd->hw_thread));
@@ -1837,6 +1840,9 @@ public:
             uint64_t value = 0;
             if (raw.size() == 8) std::memcpy(&value, raw.data(), 8);
             if (value == cmd->rs2) {
+                std::printf("[PROJECTION_SYNC] core=%u stage=flag_wait cycle=%llu flag=%llu status=0\n",
+                    coreID, static_cast<unsigned long long>(LastTickCycle),
+                    static_cast<unsigned long long>(cmd->rs1));
                 roccCmd_q.pop_front();
                 enqueueResponse(new SST::Vanadis::RoCCResponse(
                     cmd->inst->rd, 0, cmd->cmd_id, cmd->hw_thread));

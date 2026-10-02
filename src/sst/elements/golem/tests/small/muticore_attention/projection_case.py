@@ -36,8 +36,15 @@ def generate(sequence, hq, hkv, dim, root):
     for name, first, heads in names:
         projected = np.empty((heads, sequence, dim), dtype="<f2")
         for head in range(heads):
-            projected[head] = (norm.astype(np.float32) @
-                weights[first + head].astype(np.float32).T).astype("<f2")
+            output = np.zeros((sequence, dim), dtype=np.float16)
+            for tile in range(hidden // 64):
+                partial = np.zeros_like(output)
+                for col in range(64):
+                    product = (norm[:, tile * 64 + col, None] *
+                               weights[first + head, :, tile * 64 + col]).astype(np.float16)
+                    partial = (partial + product).astype(np.float16)
+                output = (output + partial).astype(np.float16)
+            projected[head] = output
         projected.tofile(root / f"{name}_{heads}x{sequence}x{dim}.bin")
     generate_rope_table(root / f"rope_{dim}.bin", sequence, dim)
 

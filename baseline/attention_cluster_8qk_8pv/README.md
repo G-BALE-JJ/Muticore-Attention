@@ -76,6 +76,53 @@ The FP16 `Hq=32,Hkv=8,D=64` kernel sweep also passed at
 `results/fp16_e2e_llama32_8_d64/summary-latest.csv`. This is noncausal
 attention-kernel validation, not full Llama inference.
 
+## RMSNorm and projection end-to-end
+
+The `--projection` path starts from FP16 X, gamma, and projection weights in
+HBM. The four manager cores run RMSNorm, Q/K/V projection and the causal RoPE
+attention kernel. It verifies the projected raw and panel layouts, final O,
+memory backend, and MPI placement. Projection uses FP16 multiplication and
+accumulation; the existing attention workers still use FP32 for QK/softmax/PV
+internal accumulation while storing tensor payloads in FP16.
+
+```bash
+baseline/attention_cluster_8qk_8pv/run_sst.sh --projection \
+  --query-length 1024 --kv-length 1024 --num-query-heads 1 \
+  --num-kv-heads 1 --head-dim 128 \
+  --artifact-root /tmp/attention_projection_e2e
+```
+
+`projection_e2e_result.json` records RMSNorm, projection, and attention stage
+spans, handoff gaps, weight reuse, total cycles, and an optimistic resource
+floor. A negative RMSNorm-to-projection gap means different managers overlap
+those stages. The floor uses RMSNorm vector work, 16 modeled 64x64 arrays per
+manager, and 16 exp lanes per QK worker; it omits data movement, control, and
+handoff costs. The stages can overlap across managers and should not be added
+as elapsed times.
+
+The projection manager retains up to 16 weight tiles (128 KiB) in local GM and
+keeps the active tile programmed in its arrays. Raw Q/K/V for each 16-token
+group is written with one DMA after all dimension tiles complete.
+The guest prepares attention descriptors while the projection job runs, then
+waits for all four managers before dispatching attention.
+
+At `S=1024`, all four projection cases passed numerical, HBM layout, backend,
+and MPI checks. The values below are measured from the first RMSNorm issue to
+the last attention worker completion in this worktree:
+
+| Hq:Hkv | D | End-to-end cycles | Optimistic floor | Actual / floor |
+| --- | ---: | ---: | ---: | ---: |
+| 1:1 | 64 | 50,685 | 15,670 | 3.24x |
+| 1:1 | 128 | 98,333 | 19,916 | 4.94x |
+| 2:1 | 64 | 85,246 | 24,204 | 3.52x |
+| 2:1 | 128 | 209,088 | 31,768 | 6.58x |
+
+The single-head D64 case took 73,514 cycles before weight reuse and descriptor
+overlap; D128 took 185,132 cycles before those optimizations and the grouped
+raw writeback. The gap to the resource floor is primarily projection transfer
+and programming overhead, especially at D128, followed by guest descriptor
+setup and attention scheduling.
+
 ## Causal prefill
 
 The public runner accepts `--causal` for `Sq=Skv`. The QK scheduler omits

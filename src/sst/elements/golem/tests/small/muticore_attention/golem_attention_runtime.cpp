@@ -217,6 +217,10 @@ int main(int argc, char** argv) {
         attention_write_metadata(desc_gm, desc);
     }
 
+    if (projection && !finish_projection(manager_id)) {
+        std::fprintf(stderr, "[PROJECTION_GUEST_FAIL] manager=%u\n", manager_id);
+        return 1;
+    }
     for (uint32_t kv_head = 0; kv_head < num_kv_heads; ++kv_head) {
         const uint64_t tag = 0xD1000101ull + kv_length +
             (static_cast<uint64_t>(kv_head) << 32);

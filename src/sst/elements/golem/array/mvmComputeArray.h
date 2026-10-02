@@ -530,7 +530,8 @@ public:
                 if (callback) callback(true, tag, values);
             };
         const size_t bytes = arrayIDs.size() * outputArraySize * elemBytes;
-        if (trafficClass == AttentionClusterTrafficClass::SequentialPvOOutput) {
+        if (trafficClass == AttentionClusterTrafficClass::SequentialPvOOutput ||
+            trafficClass == AttentionClusterTrafficClass::ProjectionOutput) {
             return enqueueOutputScatterGatherTransfer(
                 bytes, arrayIDs.size(), false, tag, std::move(completion),
                 trafficClass);

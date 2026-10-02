@@ -16,7 +16,7 @@
 namespace SST { namespace Golem {
 
 // A bounded, descriptor-driven producer of the raw and panel Q/K/V layouts.
-// Only one 16-token group, one 64x64 weight tile and one V tile are resident.
+// One 16-token group, 16 weight tiles in local GM, and one V tile are resident.
 class ProjectionJob {
 public:
     ProjectionJob(GlobalMemoryAPI* memory, WorkerCommandProcessorAPI* processor)
@@ -28,7 +28,8 @@ public:
         if (phase_ != Phase::Idle || processor_ == nullptr || memory_ == nullptr ||
             processor_->isBusy() || desc.magic != GOLEM_PROJECTION_JOB_MAGIC ||
             desc.size_bytes != sizeof(desc) || desc.hidden_dim == 0 ||
-            desc.hidden_dim % 64 || desc.head_dim == 0 || desc.head_dim % 64 ||
+            desc.hidden_dim % 64 || desc.hidden_dim > 2048 ||
+            desc.head_dim == 0 || desc.head_dim % 64 ||
             desc.query_heads == 0 || desc.kv_heads == 0 ||
             desc.rows_per_node == 0 || desc.rows_per_node % 256 ||
             desc.manager_slot >= 4 || desc.scratch_addr == 0 ||
@@ -39,8 +40,13 @@ public:
         desc_ = desc;
         kind_ = head_ = row_ = dimTile_ = inputTile_ = 0;
         status_ = 0;
+        residentTile_ = ~uint64_t{0};
+        cachedTiles_.fill(~uint64_t{0});
+        weightLoads_ = weightPrograms_ = weightReuses_ = 0;
+        startCycle_ = 0;
         phase_ = Phase::LoadInput;
         vTile_.assign(64 * desc.head_dim, 0);
+        rawTile_.assign(16 * desc.head_dim * 2, 0);
         return true;
     }
 
@@ -51,6 +57,7 @@ public:
 
     void tick(uint64_t cycle) {
         if (!active()) return;
+        if (startCycle_ == 0) startCycle_ = cycle;
         if (pending_) return;
         switch (phase_) {
         case Phase::LoadInput: {
@@ -70,18 +77,31 @@ public:
                             input_[lane * 64 + col] = decode(raw,
                                 lane * desc_.hidden_dim + inputTile_ * 64 + col);
                     pending_ = false;
-                    phase_ = Phase::LoadWeight;
+                    const uint64_t tile = weightTile();
+                    if (residentTile_ == tile) {
+                        ++weightReuses_;
+                        phase_ = Phase::ProgramInput;
+                    } else {
+                        phase_ = Phase::LoadWeight;
+                    }
                 });
             break;
         }
         case Phase::LoadWeight: {
-            const uint64_t tile = ((static_cast<uint64_t>(weightHead()) *
-                (desc_.head_dim / 64) + dimTile_) * (desc_.hidden_dim / 64) + inputTile_);
+            const uint64_t tile = weightTile();
+            if (cachedTiles_[tile % cachedTiles_.size()] == tile) {
+                phase_ = Phase::ProgramWeight;
+                break;
+            }
             const uint64_t addr = desc_.weights_addr + tile * 8192;
             pending_ = true;
-            memory_->dma_read_from_host_to_globalmem(addr, 8192, desc_.scratch_addr + 0x2000,
-                [this](bool ok) {
+            memory_->dma_read_from_host_to_globalmem(addr, 8192, cachedWeightAddr(),
+                [this, tile](bool ok) {
                     pending_ = false;
+                    if (ok) {
+                        cachedTiles_[tile % cachedTiles_.size()] = tile;
+                        ++weightLoads_;
+                    }
                     phase_ = ok ? Phase::ProgramWeight : Phase::Failed;
                     if (!ok) status_ = 1;
                 });
@@ -89,7 +109,7 @@ public:
         }
         case Phase::ProgramWeight: {
             std::vector<uint8_t> raw;
-            memory_->rd_from_globalmem(desc_.scratch_addr + 0x2000, 8192, raw);
+            memory_->rd_from_globalmem(cachedWeightAddr(), 8192, raw);
             if (raw.size() != 8192) { fail(); break; }
             std::vector<double> matrix(4096);
             for (size_t i = 0; i < matrix.size(); ++i) matrix[i] = decode(raw, i);
@@ -98,6 +118,10 @@ public:
                     AttentionClusterTrafficClass::ProjectionWeights, ++tag_, cycle,
                     [this](bool ok, uint64_t) {
                         pending_ = false;
+                        if (ok) {
+                            residentTile_ = weightTile();
+                            ++weightPrograms_;
+                        }
                         phase_ = ok ? Phase::ProgramInput : Phase::Failed;
                         if (!ok) status_ = 1;
                     })) { pending_ = false; break; }
@@ -130,7 +154,7 @@ public:
             break;
         case Phase::ReadOutput:
             pending_ = true;
-            if (!processor_->readGemmOutputGroupClassAsync(arrays_, 4,
+            if (!processor_->readGemmOutputGroupClassAsync(arrays_, 2,
                     AttentionClusterTrafficClass::ProjectionOutput, ++tag_, cycle,
                     [this](bool ok, uint64_t, const std::vector<double>& values) {
                         pending_ = false;
@@ -154,10 +178,19 @@ public:
             pending_ = true;
             memory_->dma_write_to_host(desc_.completion_addr, 8,
                 std::vector<uint8_t>{1, 0, 0, 0, 0, 0, 0, 0},
-                [this](bool ok) {
+                [this, cycle](bool ok) {
                     pending_ = false;
                     phase_ = Phase::Complete;
                     status_ = ok ? 0 : 1;
+                    std::printf("[PROJECTION_JOB] manager=%u start=%llu end=%llu cycles=%llu weight_loads=%llu weight_programs=%llu weight_reuses=%llu status=%llu\n",
+                        desc_.manager_slot,
+                        static_cast<unsigned long long>(startCycle_),
+                        static_cast<unsigned long long>(cycle),
+                        static_cast<unsigned long long>(cycle - startCycle_),
+                        static_cast<unsigned long long>(weightLoads_),
+                        static_cast<unsigned long long>(weightPrograms_),
+                        static_cast<unsigned long long>(weightReuses_),
+                        static_cast<unsigned long long>(status_));
                 });
             break;
         case Phase::Failed: phase_ = Phase::Complete; break;
@@ -182,6 +215,14 @@ private:
         return (kind_ == 0 ? 0 : kind_ == 1 ? desc_.query_heads :
             desc_.query_heads + desc_.kv_heads) + head_;
     }
+    uint64_t weightTile() const {
+        return ((static_cast<uint64_t>(weightHead()) * (desc_.head_dim / 64) +
+                 dimTile_) * (desc_.hidden_dim / 64) + inputTile_);
+    }
+    uint64_t cachedWeightAddr() const {
+        return desc_.scratch_addr + 0x10000 +
+            (weightTile() % cachedTiles_.size()) * 8192;
+    }
     uint64_t rawBase() const {
         return kind_ == 0 ? desc_.q_addr : kind_ == 1 ? desc_.k_addr : desc_.v_addr;
     }
@@ -204,19 +245,14 @@ private:
                         golem_float_to_fp16(static_cast<float>(value));
                 }
             }
-            const uint64_t raw = rawBase() + head_ * headStride +
-                (row_ + lane) * rowStride + dimTile_ * 128;
-            if (dimTiles == 1) {
+            std::memcpy(rawTile_.data() + lane * rowStride + dimTile_ * 128,
+                        packed.data(), 128);
+            if (kind_ != 2)
                 std::memcpy(grouped.data() + lane * 128, packed.data(), 128);
-            } else {
-                writes_.emplace_back(raw, packed);
-                if (kind_ != 2)
-                    std::memcpy(grouped.data() + lane * 128, packed.data(), 128);
-            }
         }
-        if (dimTiles == 1)
+        if (dimTile_ + 1 == dimTiles)
             writes_.emplace_back(rawBase() + head_ * headStride + row_ * rowStride,
-                                 grouped);
+                                 rawTile_);
         if (kind_ != 2) {
             const uint64_t panel = panelBase +
                 ((static_cast<uint64_t>(head_) * (desc_.rows_per_node / 64) +
@@ -262,10 +298,15 @@ private:
     std::vector<uint32_t> arrays_;
     std::vector<double> input_;
     std::vector<uint16_t> vTile_;
+    std::vector<uint8_t> rawTile_;
     std::deque<std::pair<uint64_t, std::vector<uint8_t>>> writes_;
     uint32_t kind_ = 0, head_ = 0, row_ = 0, dimTile_ = 0, inputTile_ = 0;
     uint32_t remaining_ = 0;
     uint64_t tag_ = 0, status_ = 0;
+    uint64_t residentTile_ = ~uint64_t{0};
+    std::array<uint64_t, 16> cachedTiles_{};
+    uint64_t weightLoads_ = 0, weightPrograms_ = 0, weightReuses_ = 0;
+    uint64_t startCycle_ = 0;
     bool pending_ = false;
 };
 

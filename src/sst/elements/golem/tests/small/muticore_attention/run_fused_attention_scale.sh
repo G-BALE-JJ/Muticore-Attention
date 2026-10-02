@@ -1246,6 +1246,19 @@ if (( REUSE_WINDOW_QK_BRIDGE )); then
       --q-offset "$Q_OFFSET" --k-offset "$K_OFFSET" --v-offset "$V_OFFSET" --o-offset "$O_OFFSET" \
       "${LAYOUT_PROJECTION_ARGS[@]}" \
       --result-json "$ARTIFACT_ROOT/attention_hbm_layout.json"
+    if (( ATTENTION_PROJECTION )); then
+      run_attention_stage projection_e2e_report python3 "$SCRIPT_DIR/report_projection_e2e.py" \
+        --log "$SST_RUNTIME_LOG" --attention-result "$QK_BRIDGE_RESULT" \
+        --output "$ARTIFACT_ROOT/projection_e2e_result.json"
+      python3 - "$ARTIFACT_ROOT/projection_e2e_result.json" <<'PY'
+import json
+import sys
+report = json.load(open(sys.argv[1]))
+print("Projection end-to-end: {:,} cycles, optimistic floor {:,}, ratio {:.2f}x".format(
+    report["end_to_end_cycles"], report["optimistic_resource_floor_cycles"],
+    report["actual_to_floor_ratio"]))
+PY
+    fi
     attention_ui_key_value "Artifacts" "$ARTIFACT_ROOT"
     attention_ui_key_value "Worker-cluster result" "$QK_BRIDGE_RESULT"
     exit 0

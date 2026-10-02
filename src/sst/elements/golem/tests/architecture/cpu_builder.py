@@ -1037,7 +1037,13 @@ class CPU_Builder:
             if enable_all_stats:
                 cpu_rocc.enableAllStatistics()
 
-            computeArray = cpu_rocc.setSubComponent("array", array_type)
+            projection_manager = (
+                os.getenv("GOLEM_ATTENTION_PROJECTION", "0") == "1" and
+                matmul_dtype == "fp16" and cpuId < 4
+            )
+            computeArray = cpu_rocc.setSubComponent(
+                "array", "golem.MVMFp16Array" if projection_manager else array_type
+            )
             computeArray.addParams(arrayParams)
             computeArray.addParam("inputOperandSize", matmul_elem_bytes)
             computeArray.addParam("outputOperandSize", matmul_elem_bytes)

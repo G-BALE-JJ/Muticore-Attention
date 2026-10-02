@@ -98,6 +98,12 @@ static bool run_projection(uint32_t manager, uint32_t rows, uint32_t sequence,
             manager, static_cast<unsigned long long>(status));
         return false;
     }
+    return true;
+}
+
+static bool finish_projection(uint32_t manager) {
+    constexpr uint64_t nodeStride = 0x08000000ull;
+    uint64_t status;
     asm volatile(".insn r 0x0b, 7, 0x24, %0, x0, x0" :
         "=r"(status) : : "memory");
     if (status != 0) {
@@ -111,8 +117,7 @@ static bool run_projection(uint32_t manager, uint32_t rows, uint32_t sequence,
             "=r"(status) : "r"(flag), "r"(1ull) : "memory");
         if (status != 0) return false;
     }
-    std::printf("[PROJECTION_GUEST] manager=%u rows=%u hidden=%u heads=%u/%u\n",
-                manager, rows, hidden, hq, hkv);
+    std::printf("[PROJECTION_GUEST] manager=%u status=0\n", manager);
     return true;
 }
 
