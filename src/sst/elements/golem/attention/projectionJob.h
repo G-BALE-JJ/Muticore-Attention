@@ -43,6 +43,8 @@ public:
         residentTile_ = ~uint64_t{0};
         cachedTiles_.fill(~uint64_t{0});
         weightLoads_ = weightPrograms_ = weightReuses_ = 0;
+        inputLoads_ = 0;
+        loadedInputRow_ = ~uint32_t{0};
         startCycle_ = 0;
         phase_ = Phase::LoadInput;
         vTile_.assign(64 * desc.head_dim, 0);
@@ -61,29 +63,21 @@ public:
         if (pending_) return;
         switch (phase_) {
         case Phase::LoadInput: {
+            if (loadedInputRow_ == row_) {
+                prepareInput();
+                break;
+            }
             const uint64_t addr = desc_.input_addr +
                 static_cast<uint64_t>(row_) * desc_.hidden_dim * 2;
             const size_t bytes = static_cast<size_t>(16) * desc_.hidden_dim * 2;
             pending_ = true;
             memory_->dma_read_from_host_to_globalmem(addr, bytes, desc_.scratch_addr,
-                [this, bytes](bool ok) {
+                [this](bool ok) {
                     if (!ok) { pending_ = false; fail(); return; }
-                    std::vector<uint8_t> raw;
-                    memory_->rd_from_globalmem(desc_.scratch_addr, bytes, raw);
-                    if (raw.size() != bytes) { pending_ = false; fail(); return; }
-                    input_.resize(1024);
-                    for (uint32_t lane = 0; lane < 16; ++lane)
-                        for (uint32_t col = 0; col < 64; ++col)
-                            input_[lane * 64 + col] = decode(raw,
-                                lane * desc_.hidden_dim + inputTile_ * 64 + col);
+                    loadedInputRow_ = row_;
+                    ++inputLoads_;
                     pending_ = false;
-                    const uint64_t tile = weightTile();
-                    if (residentTile_ == tile) {
-                        ++weightReuses_;
-                        phase_ = Phase::ProgramInput;
-                    } else {
-                        phase_ = Phase::LoadWeight;
-                    }
+                    prepareInput();
                 });
             break;
         }
@@ -200,7 +194,7 @@ public:
                     pending_ = false;
                     phase_ = Phase::Complete;
                     status_ = ok ? 0 : 1;
-                    std::printf("[PROJECTION_JOB] manager=%u start=%llu end=%llu cycles=%llu weight_loads=%llu weight_programs=%llu weight_reuses=%llu status=%llu\n",
+                    std::printf("[PROJECTION_JOB] manager=%u start=%llu end=%llu cycles=%llu weight_loads=%llu weight_programs=%llu weight_reuses=%llu input_loads=%llu status=%llu\n",
                         desc_.manager_slot,
                         static_cast<unsigned long long>(startCycle_),
                         static_cast<unsigned long long>(cycle),
@@ -208,6 +202,7 @@ public:
                         static_cast<unsigned long long>(weightLoads_),
                         static_cast<unsigned long long>(weightPrograms_),
                         static_cast<unsigned long long>(weightReuses_),
+                        static_cast<unsigned long long>(inputLoads_),
                         static_cast<unsigned long long>(status_));
                 });
             break;
@@ -227,6 +222,24 @@ private:
     static void encode(std::vector<uint8_t>& bytes, size_t index, double value) {
         const uint16_t bits = golem_float_to_fp16(static_cast<float>(value));
         std::memcpy(bytes.data() + index * 2, &bits, 2);
+    }
+    void prepareInput() {
+        const size_t bytes = static_cast<size_t>(16) * desc_.hidden_dim * 2;
+        std::vector<uint8_t> raw;
+        memory_->rd_from_globalmem(desc_.scratch_addr, bytes, raw);
+        if (raw.size() != bytes) { fail(); return; }
+        input_.resize(1024);
+        for (uint32_t lane = 0; lane < 16; ++lane)
+            for (uint32_t col = 0; col < 64; ++col)
+                input_[lane * 64 + col] = decode(raw,
+                    lane * desc_.hidden_dim + inputTile_ * 64 + col);
+        const uint64_t tile = weightTile();
+        if (residentTile_ == tile) {
+            ++weightReuses_;
+            phase_ = Phase::ProgramInput;
+        } else {
+            phase_ = Phase::LoadWeight;
+        }
     }
     uint32_t headCount() const { return kind_ == 0 ? desc_.query_heads : desc_.kv_heads; }
     uint32_t weightHead() const {
@@ -332,8 +345,10 @@ private:
     uint32_t remaining_ = 0;
     uint64_t tag_ = 0, status_ = 0;
     uint64_t residentTile_ = ~uint64_t{0};
+    uint32_t loadedInputRow_ = ~uint32_t{0};
     std::array<uint64_t, 32> cachedTiles_{};
     uint64_t weightLoads_ = 0, weightPrograms_ = 0, weightReuses_ = 0;
+    uint64_t inputLoads_ = 0;
     uint64_t startCycle_ = 0;
     bool pending_ = false;
 };

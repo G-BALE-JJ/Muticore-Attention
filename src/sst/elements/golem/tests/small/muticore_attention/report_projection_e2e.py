@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 RMS = re.compile(r"\[SFU_RMSNORM\] core=(\d+).*?issue_tick=(\d+).*?complete_tick=(\d+).*?vector_cycles=(\d+) status=(\d+)")
-PROJECTION = re.compile(r"\[PROJECTION_JOB\] manager=(\d+) start=(\d+) end=(\d+) cycles=(\d+) weight_loads=(\d+) weight_programs=(\d+) weight_reuses=(\d+) status=(\d+)")
+PROJECTION = re.compile(r"\[PROJECTION_JOB\] manager=(\d+) start=(\d+) end=(\d+) cycles=(\d+) weight_loads=(\d+) weight_programs=(\d+) weight_reuses=(\d+)(?: input_loads=(\d+))? status=(\d+)")
 SYNC = re.compile(r"\[PROJECTION_SYNC\] core=(\d+) stage=flag_wait cycle=(\d+) flag=(\d+) status=(\d+)")
 LOCAL_WAIT = re.compile(r"\[PROJECTION_SYNC\] core=(\d+) stage=local_wait cycle=(\d+) status=(\d+)")
 DESCRIPTOR = re.compile(r"\[ATTENTION_MILESTONE\] stage=(?:root_|manager_)descriptor_accept status=done .*?rocc_cycle=(\d+)")
@@ -17,7 +17,8 @@ DESCRIPTOR = re.compile(r"\[ATTENTION_MILESTONE\] stage=(?:root_|manager_)descri
 
 def summarize(log_text, attention):
     rms = [tuple(map(int, match)) for match in RMS.findall(log_text)]
-    projection = [tuple(map(int, match)) for match in PROJECTION.findall(log_text)]
+    projection = [tuple(int(value) if value else None for value in match)
+                  for match in PROJECTION.findall(log_text)]
     sync = [tuple(map(int, match)) for match in SYNC.findall(log_text)]
     local_wait = [tuple(map(int, match)) for match in LOCAL_WAIT.findall(log_text)]
     descriptors = [int(cycle) for cycle in DESCRIPTOR.findall(log_text)]
@@ -87,6 +88,8 @@ def summarize(log_text, attention):
         "actual_to_floor_ratio": round(actual / floor, 3),
         "floor_scope": "RMSNorm vector work + projection array MACs + causal attention exp lanes; excludes DMA, NoC, control and handoff",
     }
+    if all(event[7] is not None for event in projection):
+        result["stages"]["projection"]["input_loads"] = sum(event[7] for event in projection)
     if sync and descriptors:
         if (len(sync) != 16 or any(event[3] for event in sync) or
                 len(local_wait) != 4 or

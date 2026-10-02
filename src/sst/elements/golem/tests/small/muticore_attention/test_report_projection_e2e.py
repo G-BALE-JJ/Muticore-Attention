@@ -22,10 +22,12 @@ class ProjectionReportTest(unittest.TestCase):
             projection_start = 13800 + core * 200
             lines.append(f"[PROJECTION_JOB] manager={core} start={projection_start} "
                          f"end=30000 cycles={30000-projection_start} "
-                         "weight_loads=12 weight_programs=192 weight_reuses=0 status=0")
+                         "weight_loads=12 weight_programs=192 weight_reuses=0 "
+                         "input_loads=3 status=0")
         report = summarize("\n".join(lines), attention)
         self.assertEqual(report["stages"]["rmsnorm"]["jobs"], 16)
         self.assertEqual(report["stages"]["projection"]["weight_loads"], 48)
+        self.assertEqual(report["stages"]["projection"]["input_loads"], 12)
         self.assertLess(report["stage_handoff_cycles"]["rmsnorm_to_projection"], 0)
         self.assertEqual(report["end_to_end_cycles"], 40000)
 
