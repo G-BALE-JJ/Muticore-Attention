@@ -35,8 +35,12 @@ def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
                 if numeric:
                     found = np.frombuffer(actual, dtype=element).astype(np.float32)
                     wanted = np.frombuffer(expected, dtype=element).astype(np.float32)
+                    # Projection is an FP16 tiled reduction. Its NumPy golden
+                    # uses the same storage format but a different vectorized
+                    # reduction order, so compare with a bounded FP16 error.
+                    tolerance = 8e-2 if projection else 5e-4
                     matches = found.size == wanted.size and np.allclose(
-                        found, wanted, atol=5e-4, rtol=5e-3)
+                        found, wanted, atol=tolerance, rtol=5e-3)
                 else:
                     matches = actual == expected
                 if not matches:

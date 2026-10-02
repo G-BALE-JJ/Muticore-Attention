@@ -89,6 +89,10 @@ public:
         }
         case Phase::LoadWeight: {
             const uint64_t tile = weightTile();
+            if (!cacheEnabled()) {
+                phase_ = Phase::LoadWeightDma;
+                break;
+            }
             if (cachedTiles_[tile % cachedTiles_.size()] == tile) {
                 phase_ = Phase::ProgramWeight;
                 break;
@@ -107,9 +111,23 @@ public:
                 });
             break;
         }
+        case Phase::LoadWeightDma: {
+            const uint64_t tile = weightTile();
+            const uint64_t addr = desc_.weights_addr + tile * 8192;
+            pending_ = true;
+            memory_->dma_read_from_host_to_globalmem(addr, 8192, desc_.scratch_addr + 0x2000,
+                [this](bool ok) {
+                    pending_ = false;
+                    if (ok) ++weightLoads_;
+                    phase_ = ok ? Phase::ProgramWeight : Phase::Failed;
+                    if (!ok) status_ = 1;
+                });
+            break;
+        }
         case Phase::ProgramWeight: {
             std::vector<uint8_t> raw;
-            memory_->rd_from_globalmem(cachedWeightAddr(), 8192, raw);
+            memory_->rd_from_globalmem(cacheEnabled() ? cachedWeightAddr() :
+                desc_.scratch_addr + 0x2000, 8192, raw);
             if (raw.size() != 8192) { fail(); break; }
             std::vector<double> matrix(4096);
             for (size_t i = 0; i < matrix.size(); ++i) matrix[i] = decode(raw, i);
@@ -199,7 +217,7 @@ public:
     }
 
 private:
-    enum class Phase { Idle, LoadInput, LoadWeight, ProgramWeight, ProgramInput,
+    enum class Phase { Idle, LoadInput, LoadWeight, LoadWeightDma, ProgramWeight, ProgramInput,
         Launch, ReadOutput, WriteOutput, WriteCompletion, Failed, Complete };
     static double decode(const std::vector<uint8_t>& bytes, size_t index) {
         uint16_t bits;
@@ -222,6 +240,12 @@ private:
     uint64_t cachedWeightAddr() const {
         return desc_.scratch_addr + 0x10000 +
             (weightTile() % cachedTiles_.size()) * 8192;
+    }
+    bool cacheEnabled() const {
+        const uint64_t tiles = static_cast<uint64_t>(desc_.query_heads +
+            2 * desc_.kv_heads) * (desc_.head_dim / 64) *
+            (desc_.hidden_dim / 64);
+        return tiles <= cachedTiles_.size();
     }
     uint64_t rawBase() const {
         return kind_ == 0 ? desc_.q_addr : kind_ == 1 ? desc_.k_addr : desc_.v_addr;
