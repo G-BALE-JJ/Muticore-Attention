@@ -546,7 +546,8 @@ public:
         AttentionClusterTrafficClass trafficClass, uint64_t tag,
         typename ComputeArray::BufferCallback callback) override {
         if (!validateOutputGroupRequest(arrayIDs, elemBytes, trafficClass) ||
-            trafficClass != AttentionClusterTrafficClass::SequentialPvORestore ||
+            (trafficClass != AttentionClusterTrafficClass::SequentialPvORestore &&
+             trafficClass != AttentionClusterTrafficClass::ProjectionOutput) ||
             outputs.size() != arrayIDs.size() * outputArraySize) {
             return false;
         }

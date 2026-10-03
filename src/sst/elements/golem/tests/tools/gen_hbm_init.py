@@ -1391,25 +1391,26 @@ def main(argv=None):
             )
         print(f"Using external fc3 bias file: {args.fc3_bias_file}")
 
-    for node_idx in DATA_NODE_IDS:
-        _write_block(
-            node_buffers[node_idx],
-            POOL1_READY_OFF,
-            b"\x00" * (POOL1_H * 8),
-            f"pool1_ready_node{node_idx}",
-        )
-        _write_block(
-            node_buffers[node_idx],
-            FC1_READY_OFF,
-            b"\x00" * (8 * 8),
-            f"fc1_ready_node{node_idx}",
-        )
-        _write_block(
-            node_buffers[node_idx],
-            FC1_PARTIAL_OFF,
-            b"\x00" * (4 * 128 * 4),
-            f"fc1_partial_node{node_idx}",
-        )
+    if not ATTENTION_PROJECTION:
+        for node_idx in DATA_NODE_IDS:
+            _write_block(
+                node_buffers[node_idx],
+                POOL1_READY_OFF,
+                b"\x00" * (POOL1_H * 8),
+                f"pool1_ready_node{node_idx}",
+            )
+            _write_block(
+                node_buffers[node_idx],
+                FC1_READY_OFF,
+                b"\x00" * (8 * 8),
+                f"fc1_ready_node{node_idx}",
+            )
+            _write_block(
+                node_buffers[node_idx],
+                FC1_PARTIAL_OFF,
+                b"\x00" * (4 * 128 * 4),
+                f"fc1_partial_node{node_idx}",
+            )
 
     for m_tile in range(0 if ATTENTION_PROJECTION else GEMM_M_TILES):
         node_idx = _a_data_node_for_m_tile(m_tile)

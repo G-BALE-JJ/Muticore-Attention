@@ -164,6 +164,51 @@ the next projection-specific target. Reordering or retaining weight tiles
 across 16-token groups needs a controlled comparison that preserves the
 bounded local GM and output layout.
 
+### 256-row weight reuse and handoff
+
+The next implementation batches D=128 projection in 256-row windows when
+`hidden_dim <= 512` and the local-GM scratch range fits. It stages each window's
+normalized input once, runs each weight tile across the window's 16-token
+groups, and stores FP16 partial outputs and raw rows in disjoint local-GM
+regions. The existing two array operand banks and HBM output layout are
+unchanged. Larger D=128 shapes keep the previous row-major path.
+
+The post-change rebuild passed numerical, memory-backend, MPI, HBM raw/panel,
+and projection-stage checks with four ranks. The baseline column below is the
+preceding two-bank/pipelined writeback result; all S=1024 cases use causal RoPE
+and FP16 projection accumulation.
+
+| S | Hq:Hkv | D | Baseline cycles | Current cycles | Projection span | Weight programs | Reduction |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1024 | 1:1 | 64 | 45,814 | 39,310 | 11,376 | 12 | 14.2% |
+| 1024 | 1:1 | 128 | 79,867 | 63,471 | 22,941 | 48 | 20.5% |
+| 1024 | 2:1 | 64 | 68,633 | 61,346 | 19,682 | 32 | 10.6% |
+| 1024 | 2:1 | 128 | 149,497 | 122,813 | 60,950 | 128 | 17.8% |
+| 2048 | 1:1 | 128 | 159,877 | 135,438 | 43,387 | 96 | 15.3% |
+
+At S=1024, D=128 array weight programs fell from 768 to 48 for 1:1 and
+from 2,048 to 128 for 2:1. The corresponding array-resident reuse counters
+are 720 and 1,920. In 2:1, manager 0 spent 1,248 cycles in matrix programming,
+4,224 restoring partial outputs, 5,632 scattering inputs, 5,632 reading
+outputs, and 34,816 in array compute. These phase counters count residence
+in the job state, including issue/wait time; they are not independent hardware
+utilization or additive end-to-end costs. Array compute and partial-result
+movement are now the main projection-specific costs at that shape.
+
+Removing one guest status print after the projection flag barrier reduced the
+per-manager flag-to-descriptor interval from roughly 7,000 cycles to 51 cycles.
+The 2:1/D128 projection-to-attention gap fell from 8,520 to 1,533 cycles.
+For S=2048/D128, 12,696 cycles remain between the last descriptor and first
+Attention job start; worker dispatch occurs within about 20 cycles of the
+descriptor, so this is Attention startup rather than projection synchronization.
+
+The 4:2/D128/S=1024 case also passes after fixing an HBM initialization
+collision: generic LeNet ready/partial zeroing had overwritten part of the
+fourth Q head's projection weights. With intact weight images, the row-major
+control run took 396,899 cycles and the reuse path took 338,531 cycles, with
+8,192 to 512 total weight programs. Projection HBM layout verification now
+checks the initialized weight bytes as well as the produced tensors.
+
 ## Causal prefill
 
 The public runner accepts `--causal` for `Sq=Skv`. The QK scheduler omits

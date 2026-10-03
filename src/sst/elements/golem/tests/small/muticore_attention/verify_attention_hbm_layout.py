@@ -22,7 +22,19 @@ def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
     panel_bytes = 64 * 64 * elem_bytes
     checked = 0
     nodes = []
+    if projection:
+        hidden = hq * head_dim
+        norm_end = 0x01100000 + (query_length // 4) * hidden * 2
+        weights_offset = (norm_end + 0xFFFFF) & ~0xFFFFF
+        weights = (Path(hbm_dir).parent / "projection_weights.bin").read_bytes()
     for band in range(4):
+        if projection:
+            init_path = Path(hbm_dir) / f"hbm_init_node{band + 1}.bin"
+            with init_path.open("rb") as init:
+                init.seek(weights_offset)
+                if init.read(len(weights)) != weights:
+                    raise ValueError(f"{init_path}: projection weights differ at {weights_offset:#x}")
+            checked += len(weights)
         source = "hbm_out" if projection else "hbm_init"
         path = Path(hbm_dir) / f"{source}_node{band + 1}.bin"
         capacity = path.stat().st_size

@@ -111,6 +111,23 @@ class AttentionCluster8Qk8PvTest(unittest.TestCase):
             self.assertEqual(report["pv_service"]["core_busy_cycles"]["12"], 84)
             self.assertEqual(report["pv_tail_after_sfu_cycles"], 20)
             self.assertTrue(report["sfu_exp_work"]["complete"])
+            missing_exp = "GOLEM_SFU_HW_PIPELINE core=4 unit=exp lanes=16 "
+            corroborated = "\n".join((
+                "GOLEM_SFU_HW_PIPELINE core=4 unit=scale lanes=16 accepted_tokens=2048",
+                "GOLEM_SFU_HW_PIPELINE core=4 unit=sum_reduction lanes=16 accepted_tokens=2048",
+            ))
+            original = log.read_text(encoding="utf-8")
+            log.write_text(original.replace(missing_exp, "BROKEN core=4 unit=exp lanes=16 ", 1)
+                           + "\n" + corroborated, encoding="utf-8")
+            recovered = subprocess.run(
+                [sys.executable, str(REPORT_SOURCE), "--log", str(log),
+                 "--num-query-heads", "1", "--num-kv-heads", "1",
+                 "--query-length", "512", "--kv-length", "512",
+                 "--head-dim", "64", "--qk-workers-per-manager", "2",
+                 "--output", str(result)], capture_output=True, text=True,
+            )
+            self.assertEqual(recovered.returncode, 0, recovered.stdout + recovered.stderr)
+            self.assertEqual(json.loads(result.read_text())["sfu_exp_work"]["corroborated_cores"], [4])
             log.write_text("\n".join(lines).replace(
                 "accepted_tokens=2048", "accepted_tokens=2047", 1), encoding="utf-8")
             failed = subprocess.run(

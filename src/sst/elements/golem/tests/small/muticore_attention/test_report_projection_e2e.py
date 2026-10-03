@@ -24,10 +24,24 @@ class ProjectionReportTest(unittest.TestCase):
                          f"end=30000 cycles={30000-projection_start} "
                          "weight_loads=12 weight_programs=192 weight_reuses=0 "
                          "input_loads=3 status=0")
+            lines.append(f"[PROJECTION_PHASE] manager={core} input_dma=10 "
+                         "weight_dma=20 matrix_program=30 input_scatter=40 "
+                         "output_restore=50 compute=60 output_read=70 write_drain=80")
+            lines.append(f"[PROJECTION_SYNC] core={core} stage=local_wait cycle=30000 status=0")
+            last_flag = 30100 + core * 100
+            for slot in range(4):
+                lines.append(f"[PROJECTION_SYNC] core={core} stage=flag_wait "
+                             f"cycle={last_flag - 3 + slot} flag={slot} status=0")
+            lines.append("[ATTENTION_MILESTONE] stage=manager_descriptor_accept "
+                         f"status=done sst_tick=0 rocc_cycle={last_flag + 51} "
+                         f"core={core} role=manager job=0 tag=0 query_tile=-1 kv_tile=-1")
         report = summarize("\n".join(lines), attention)
         self.assertEqual(report["stages"]["rmsnorm"]["jobs"], 16)
         self.assertEqual(report["stages"]["projection"]["weight_loads"], 48)
         self.assertEqual(report["stages"]["projection"]["input_loads"], 12)
+        self.assertEqual(report["stages"]["projection"]["phase_cycles_by_manager"]["0"]["matrix_program"], 30)
+        self.assertEqual(report["stage_handoff_cycles"]["sync_to_descriptor"], 51)
+        self.assertEqual(report["stage_handoff_cycles"]["sync_to_descriptor_by_manager"]["0"], 51)
         self.assertLess(report["stage_handoff_cycles"]["rmsnorm_to_projection"], 0)
         self.assertEqual(report["end_to_end_cycles"], 40000)
 

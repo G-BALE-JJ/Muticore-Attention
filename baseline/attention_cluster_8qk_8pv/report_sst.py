@@ -11,7 +11,7 @@ PV_TIMING = re.compile(r"\[ATTENTION_WORKER_CLUSTER_PV\].*p_ready=(\d+) pv_send=
 E2E = re.compile(r"\[ATTENTION_WORKER_CLUSTER_E2E\] core=(\d+) start=(\d+) end=(\d+) cycles=(\d+)")
 V_RESIDENCY = re.compile(r"\[Core (\d+)\] \[wcp\] PV_V_RESIDENCY hit=([01])")
 WCP_LATENCY = re.compile(r"\[Core (\d+)\] \[wcp\] LATENCY\(cycles\): ([^\n]+)")
-SFU_EXP = re.compile(r"GOLEM_SFU_HW_PIPELINE core=(\d+) unit=exp lanes=(\d+).*?accepted_tokens=(\d+)")
+SFU_PIPELINE = re.compile(r"GOLEM_SFU_HW_PIPELINE core=(\d+) unit=(exp|scale|sum_reduction) lanes=(\d+).*?accepted_tokens=(\d+)")
 
 
 def stage_span(events, start_index, end_index):
@@ -72,9 +72,25 @@ def main():
     observed_qk_cores = sorted({int(x[0]) for x in qk})
     observed_sfu_cores = sorted({int(x[0]) for x in sfu})
     observed_pv_cores = sorted({int(x[0]) for x in pv})
-    exp_events = [tuple(map(int, event)) for event in SFU_EXP.findall(text)
-                  if int(event[0]) in observed_qk_cores]
-    exp_elements = sum(lanes * tokens for _, lanes, tokens in exp_events)
+    pipeline_tokens = {}
+    for core, unit, lanes, tokens in SFU_PIPELINE.findall(text):
+        core = int(core)
+        if core in observed_qk_cores:
+            pipeline_tokens.setdefault(core, {})[unit] = int(lanes) * int(tokens)
+    corroborated_cores = []
+    exp_complete = True
+    for core in observed_qk_cores:
+        counters = pipeline_tokens.get(core, {})
+        if "exp" in counters:
+            continue
+        elif counters.get("scale", 0) > 0 and \
+                counters.get("scale") == counters.get("sum_reduction"):
+            corroborated_cores.append(core)
+        else:
+            exp_complete = False
+    exp_elements = sum(pipeline_tokens.get(core, {}).get("exp",
+                       pipeline_tokens[core]["scale"] if core in corroborated_cores else 0)
+                       for core in observed_qk_cores)
     expected_exp_elements = (expected_qk_tiles * 64 * 64 if args.causal else
                              args.num_query_heads * args.query_length * args.kv_length)
     valid_exp_elements = (args.num_query_heads * args.query_length *
@@ -100,8 +116,8 @@ def main():
         observed_sfu_cores == expected_qk_cores and
         observed_pv_cores == expected_pv_cores
     )
-    if exp_events:
-        valid = valid and exp_elements == expected_exp_elements
+    if pipeline_tokens:
+        valid = valid and exp_complete and exp_elements == expected_exp_elements
     starts = [int(x[1]) for x in e2e]
     ends = [int(x[2]) for x in e2e]
     transport = {}
@@ -153,8 +169,10 @@ def main():
         "sfu_exp_work": {"expected_elements": expected_exp_elements,
                          "logically_valid_elements": valid_exp_elements,
                          "masked_elements": expected_exp_elements - valid_exp_elements,
-                         "observed_elements": exp_elements if exp_events else None,
-                         "complete": exp_elements == expected_exp_elements if exp_events else None},
+                         "observed_elements": exp_elements if pipeline_tokens else None,
+                         "complete": exp_complete and exp_elements == expected_exp_elements
+                         if pipeline_tokens else None,
+                         "corroborated_cores": corroborated_cores},
         "pv_tail_after_sfu_cycles": max(0, max(ends, default=0) -
             max((int(item[2]) for item in sfu), default=0)),
         "start_cycle": min(starts, default=0), "end_cycle": max(ends, default=0),

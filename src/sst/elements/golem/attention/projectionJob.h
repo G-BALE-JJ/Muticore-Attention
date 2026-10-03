@@ -16,7 +16,8 @@
 namespace SST { namespace Golem {
 
 // A bounded, descriptor-driven producer of the raw and panel Q/K/V layouts.
-// One 16-token group, a bounded local-GM weight tile cache, and one V tile are resident.
+// The row-major path holds one 16-token group; the reuse path holds one
+// 256-token input block in bounded local GM. Both retain one V tile.
 class ProjectionJob {
 public:
     ProjectionJob(GlobalMemoryAPI* memory, WorkerCommandProcessorAPI* processor)
@@ -45,6 +46,19 @@ public:
         cachedTiles_.fill(~uint64_t{0});
         weightLoads_ = weightPrograms_ = weightReuses_ = 0;
         inputLoads_ = 0;
+        phaseCycles_.fill(0);
+        // The reuse path stages 256 input rows and per-row FP16 partials in
+        // local GM, leaving the physical two-bank array configuration intact.
+        const uint64_t gmBase = memory_->getBaseAddr();
+        const uint64_t gmSize = memory_->getSize();
+        const uint64_t reuseBytes = 0xF8000 + static_cast<uint64_t>(256) *
+            desc.hidden_dim * 2;
+        reuseBlock_ = desc.head_dim == 128 && desc.hidden_dim <= 512 &&
+            desc.scratch_addr >= gmBase &&
+            desc.scratch_addr - gmBase <= gmSize &&
+            reuseBytes <= gmSize - (desc.scratch_addr - gmBase);
+        blockStart_ = 0;
+        blockLoaded_ = false;
         writeOutstanding_ = 0;
         writes_.clear();
         nextInputIssued_ = false;
@@ -52,7 +66,7 @@ public:
         nextInputFailed_ = false;
         loadedInputRow_ = ~uint32_t{0};
         startCycle_ = 0;
-        phase_ = Phase::LoadInput;
+        phase_ = reuseBlock_ ? Phase::LoadBlock : Phase::LoadInput;
         vTile_.assign(64 * desc.head_dim, 0);
         rawTile_.assign(16 * desc.head_dim * 2, 0);
         return true;
@@ -66,9 +80,26 @@ public:
     void tick(uint64_t cycle) {
         if (!active()) return;
         if (startCycle_ == 0) startCycle_ = cycle;
+        ++phaseCycles_[static_cast<size_t>(phase_)];
         if (pending_) return;
         switch (phase_) {
+        case Phase::LoadBlock: {
+            const uint64_t addr = desc_.input_addr +
+                static_cast<uint64_t>(blockStart_) * desc_.hidden_dim * 2;
+            const size_t bytes = static_cast<size_t>(256) * desc_.hidden_dim * 2;
+            pending_ = true;
+            memory_->dma_read_from_host_to_globalmem(addr, bytes, inputBlockAddr(),
+                [this](bool ok) {
+                    pending_ = false;
+                    if (!ok) { fail(); return; }
+                    ++inputLoads_;
+                    blockLoaded_ = true;
+                    phase_ = Phase::LoadInput;
+                });
+            break;
+        }
         case Phase::LoadInput: {
+            if (reuseBlock_) { prepareInput(); break; }
             if (loadedInputRow_ == row_) {
                 prepareInput();
                 break;
@@ -162,7 +193,8 @@ public:
                             nextInputIssued_ = false;
                             nextInputReady_ = false;
                         }
-                        phase_ = ok ? Phase::Launch : Phase::Failed;
+                        phase_ = ok ? (reuseBlock_ && inputTile_ != 0 ?
+                            Phase::RestoreOutput : Phase::Launch) : Phase::Failed;
                         if (!ok) status_ = 1;
                     })) { pending_ = false; break; }
             break;
@@ -179,7 +211,7 @@ public:
             }
             break;
         case Phase::Launch:
-            if (inputTile_ == 0 && desc_.hidden_dim == 128 &&
+            if (!reuseBlock_ && inputTile_ == 0 && desc_.hidden_dim == 128 &&
                 !nextInputIssued_) {
                 issueNextInputPrefetch(cycle);
             }
@@ -190,8 +222,9 @@ public:
                     [this](uint32_t, uint64_t) {
                         if (--remaining_ == 0) {
                             pending_ = false;
-                            phase_ = ++inputTile_ < desc_.hidden_dim / 64 ?
-                                Phase::LoadInput : Phase::ReadOutput;
+                            phase_ = reuseBlock_ ? Phase::ReadOutput :
+                                (++inputTile_ < desc_.hidden_dim / 64 ?
+                                    Phase::LoadInput : Phase::ReadOutput);
                         }
                     })) { pending_ = false; break; }
             break;
@@ -202,10 +235,31 @@ public:
                     [this](bool ok, uint64_t, const std::vector<double>& values) {
                         pending_ = false;
                         if (!ok || values.size() != 1024) { fail(); return; }
-                        queueOutput(values);
-                        phase_ = Phase::WriteOutput;
+                        if (reuseBlock_ && inputTile_ + 1 < desc_.hidden_dim / 64) {
+                            stagePartial(values);
+                            advance();
+                        } else {
+                            queueOutput(values);
+                            phase_ = Phase::WriteOutput;
+                        }
                     })) { pending_ = false; break; }
             break;
+        case Phase::RestoreOutput: {
+            std::vector<uint8_t> raw;
+            memory_->rd_from_globalmem(partialAddr(), 2048, raw);
+            if (raw.size() != 2048) { fail(); break; }
+            std::vector<double> values(1024);
+            for (size_t i = 0; i < values.size(); ++i) values[i] = decode(raw, i);
+            pending_ = true;
+            if (!processor_->writeGemmOutputGroupClassAsync(arrays_, values, 2,
+                    AttentionClusterTrafficClass::ProjectionOutput, ++tag_, cycle,
+                    [this](bool ok, uint64_t) {
+                        pending_ = false;
+                        phase_ = ok ? Phase::Launch : Phase::Failed;
+                        if (!ok) status_ = 1;
+                    })) { pending_ = false; break; }
+            break;
+        }
         case Phase::WriteOutput:
             issueWritebacks();
             // Output DMA owns copies of the payload vectors, so the next
@@ -233,6 +287,16 @@ public:
                         static_cast<unsigned long long>(weightReuses_),
                         static_cast<unsigned long long>(inputLoads_),
                         static_cast<unsigned long long>(status_));
+                    std::printf("[PROJECTION_PHASE] manager=%u input_dma=%llu weight_dma=%llu matrix_program=%llu input_scatter=%llu output_restore=%llu compute=%llu output_read=%llu write_drain=%llu\n",
+                        desc_.manager_slot,
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LoadBlock)] + phaseCycles_[static_cast<size_t>(Phase::LoadInput)]),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LoadWeight)] + phaseCycles_[static_cast<size_t>(Phase::LoadWeightDma)]),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::ProgramWeight)]),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::ProgramInput)] + phaseCycles_[static_cast<size_t>(Phase::WaitInputPrefetch)]),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::RestoreOutput)]),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::Launch)]),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::ReadOutput)]),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::WriteDrain)]));
                 });
             break;
         case Phase::Failed: phase_ = Phase::Complete; break;
@@ -241,8 +305,9 @@ public:
     }
 
 private:
-    enum class Phase { Idle, LoadInput, LoadWeight, LoadWeightDma, ProgramWeight, ProgramInput,
-        Launch, WaitInputPrefetch, ReadOutput, WriteOutput, WriteDrain, WriteCompletion, Failed, Complete };
+    enum class Phase { Idle, LoadBlock, LoadInput, LoadWeight, LoadWeightDma, ProgramWeight,
+        ProgramInput, Launch, WaitInputPrefetch, ReadOutput, RestoreOutput, WriteOutput,
+        WriteDrain, WriteCompletion, Failed, Complete, Count };
     static double decode(const std::vector<uint8_t>& bytes, size_t index) {
         uint16_t bits;
         std::memcpy(&bits, bytes.data() + index * 2, 2);
@@ -255,7 +320,9 @@ private:
     void prepareInput() {
         const size_t bytes = static_cast<size_t>(16) * desc_.hidden_dim * 2;
         std::vector<uint8_t> raw;
-        memory_->rd_from_globalmem(desc_.scratch_addr, bytes, raw);
+        memory_->rd_from_globalmem(reuseBlock_ ? inputBlockAddr() +
+            static_cast<uint64_t>(row_ - blockStart_) * desc_.hidden_dim * 2 :
+            desc_.scratch_addr, bytes, raw);
         if (raw.size() != bytes) { fail(); return; }
         input_.resize(1024);
         for (uint32_t lane = 0; lane < 16; ++lane)
@@ -266,7 +333,7 @@ private:
         // consumed.  The first tile overwrites the shared output vector;
         // later tiles accumulate into it before the single readback.
         activeOperandBank_ = inputTile_ & 1u;
-        if (inputTile_ == 1 && nextInputIssued_ && !nextInputReady_ &&
+        if (!reuseBlock_ && inputTile_ == 1 && nextInputIssued_ && !nextInputReady_ &&
             !nextInputFailed_) {
             phase_ = Phase::WaitInputPrefetch;
             return;
@@ -296,6 +363,17 @@ private:
         return desc_.scratch_addr + 0x60000 +
             cacheSlot() * 8192;
     }
+    uint64_t partialAddr() const {
+        // Cache ends at +0xE0000; partials, raw rows, and input occupy
+        // disjoint bounded regions above it.
+        return desc_.scratch_addr + 0xE0000 +
+            static_cast<uint64_t>(row_ - blockStart_) * 128;
+    }
+    uint64_t rawBlockAddr() const {
+        return desc_.scratch_addr + 0xE8000 +
+            static_cast<uint64_t>(row_ - blockStart_) * desc_.head_dim * 2;
+    }
+    uint64_t inputBlockAddr() const { return desc_.scratch_addr + 0xF8000; }
     size_t cacheSlot() const {
         const size_t inputTiles = desc_.hidden_dim / 64;
         return static_cast<size_t>(dimTile_) * inputTiles + inputTile_;
@@ -345,6 +423,11 @@ private:
                 });
         }
     }
+    void stagePartial(const std::vector<double>& values) {
+        std::vector<uint8_t> raw(2048);
+        for (size_t i = 0; i < values.size(); ++i) encode(raw, i, values[i]);
+        memory_->wr_to_globalmem(partialAddr(), raw.size(), raw);
+    }
     void queueOutput(const std::vector<double>& values) {
         const uint64_t rowStride = static_cast<uint64_t>(desc_.head_dim) * 2;
         const uint64_t headStride = static_cast<uint64_t>(desc_.rows_per_node) * rowStride;
@@ -352,6 +435,8 @@ private:
         const uint64_t panelBase = kind_ == 0 ? desc_.q_panel_addr :
             kind_ == 1 ? desc_.k_panel_addr : desc_.v_panel_addr;
         const uint32_t dimTiles = desc_.head_dim / 64;
+        if (reuseBlock_ && dimTile_ != 0)
+            memory_->rd_from_globalmem(rawBlockAddr(), rawTile_.size(), rawTile_);
         std::vector<uint8_t> grouped(16 * 128);
         for (uint32_t lane = 0; lane < 16; ++lane) {
             std::vector<uint8_t> packed(128);
@@ -368,6 +453,8 @@ private:
             if (kind_ != 2)
                 std::memcpy(grouped.data() + lane * 128, packed.data(), 128);
         }
+        if (reuseBlock_ && dimTile_ == 0)
+            memory_->wr_to_globalmem(rawBlockAddr(), rawTile_.size(), rawTile_);
         if (dimTile_ + 1 == dimTiles)
             writes_.emplace_back(rawBase() + head_ * headStride + row_ * rowStride,
                                  rawTile_);
@@ -378,8 +465,10 @@ private:
                 (row_ % 64) * 128;
             writes_.emplace_back(panel, std::move(grouped));
         }
-        if (kind_ == 2 && row_ % 64 == 48 && dimTile_ + 1 == dimTiles) {
-            for (uint32_t tile = 0; tile < dimTiles; ++tile) {
+        if (kind_ == 2 && row_ % 64 == 48 &&
+            (reuseBlock_ || dimTile_ + 1 == dimTiles)) {
+            for (uint32_t tile = reuseBlock_ ? dimTile_ : 0;
+                 tile < (reuseBlock_ ? dimTile_ + 1 : dimTiles); ++tile) {
                 std::vector<uint8_t> packed(tileBytes);
                 for (uint32_t dim = 0; dim < 64; ++dim)
                     for (uint32_t key = 0; key < 64; ++key) {
@@ -395,6 +484,32 @@ private:
         }
     }
     void advance() {
+        if (reuseBlock_) {
+            if ((row_ += 16) == blockStart_ + 256) {
+                row_ = blockStart_;
+                if (++inputTile_ == desc_.hidden_dim / 64) {
+                    inputTile_ = 0;
+                    if (++dimTile_ == 2) {
+                        dimTile_ = 0;
+                        blockStart_ += 256;
+                        row_ = blockStart_;
+                        blockLoaded_ = false;
+                        if (blockStart_ == desc_.rows_per_node) {
+                            blockStart_ = row_ = 0;
+                            if (++head_ == headCount()) {
+                                head_ = 0;
+                                if (++kind_ == 3) {
+                                    phase_ = writeOutstanding_ == 0 ? Phase::WriteCompletion : Phase::WriteDrain;
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            phase_ = blockLoaded_ ? Phase::LoadInput : Phase::LoadBlock;
+            return;
+        }
         inputTile_ = 0;
         if (++dimTile_ == desc_.head_dim / 64) {
             dimTile_ = 0;
@@ -431,6 +546,10 @@ private:
     std::array<uint64_t, 64> cachedTiles_{};
     uint64_t weightLoads_ = 0, weightPrograms_ = 0, weightReuses_ = 0;
     uint64_t inputLoads_ = 0;
+    std::array<uint64_t, static_cast<size_t>(Phase::Count)> phaseCycles_{};
+    bool reuseBlock_ = false;
+    bool blockLoaded_ = false;
+    uint32_t blockStart_ = 0;
     uint32_t writeOutstanding_ = 0;
     uint64_t startCycle_ = 0;
     bool pending_ = false;

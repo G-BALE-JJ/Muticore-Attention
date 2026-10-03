@@ -120,7 +120,6 @@ static bool finish_projection(uint32_t manager) {
             "=r"(status) : "r"(flag), "r"(1ull) : "memory");
         if (status != 0) return false;
     }
-    std::printf("[PROJECTION_GUEST] manager=%u status=0\n", manager);
     return true;
 }
 

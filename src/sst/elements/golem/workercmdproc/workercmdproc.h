@@ -850,7 +850,8 @@ public:
         AttentionClusterTrafficClass trafficClass, uint64_t tag,
         uint64_t enqueueCycle, GemmBufferCallback callback) override {
         if (array_ == nullptr ||
-            trafficClass != AttentionClusterTrafficClass::SequentialPvORestore ||
+            (trafficClass != AttentionClusterTrafficClass::SequentialPvORestore &&
+             trafficClass != AttentionClusterTrafficClass::ProjectionOutput) ||
             !array_->validateOutputGroupRequest(
                 arrayIds, elemBytes, trafficClass) ||
             outputs.size() != arrayIds.size() * 64) {
