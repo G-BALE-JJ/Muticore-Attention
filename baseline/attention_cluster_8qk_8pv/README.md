@@ -100,15 +100,18 @@ manager, and 16 exp lanes per QK worker; it omits data movement, control, and
 handoff costs. The stages can overlap across managers and should not be added
 as elapsed times.
 
-The projection manager retains up to 16 weight tiles (128 KiB) in local GM and
-keeps the active tile programmed in its arrays. Raw Q/K/V for each 16-token
-group is written with one DMA after all dimension tiles complete.
+The projection manager retains up to 64 weight tiles (512 KiB) in local GM.
+For D=128, two operand banks allow the next input tile to be scattered while
+the first tile computes. Up to four output DMAs may remain in flight as the
+next tile starts; all writes drain before the completion flag. Raw Q/K/V for
+each 16-token group is written with one DMA after all dimension tiles complete.
 The guest prepares attention descriptors while the projection job runs, then
 waits for all four managers before dispatching attention.
 
-At `S=1024`, all four projection cases passed numerical, HBM layout, backend,
-and MPI checks. The values below are measured from the first RMSNorm issue to
-the last attention worker completion in this worktree:
+Before the two-bank/pipelined writeback change, all four `S=1024` projection
+cases passed numerical, HBM layout, backend, and MPI checks. These archived
+measurements run from the first RMSNorm issue to the last attention worker
+completion:
 
 | Hq:Hkv | D | End-to-end cycles | Optimistic floor | Actual / floor |
 | --- | ---: | ---: | ---: | ---: |
@@ -122,6 +125,44 @@ overlap; D128 took 185,132 cycles before those optimizations and the grouped
 raw writeback. The gap to the resource floor is primarily projection transfer
 and programming overhead, especially at D128, followed by guest descriptor
 setup and attention scheduling.
+
+### Projection pipeline validation and remaining cost
+
+The 2026-10-04 rebuild and 4-rank reruns passed numerical output, projected
+HBM layout, memory backend, MPI placement, and stage reporting. The table
+compares the previous measurements above with the current two-bank/pipelined
+writeback implementation. All S=1024 runs use causal RoPE attention and FP16
+projection accumulation.
+
+| Hq:Hkv | D | Previous cycles | Current cycles | Projection span | Projection weight loads / programs | Reduction |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1:1 | 64 | 50,685 | 45,814 | 12,116 | 12 / 12 | 9.6% |
+| 1:1 | 128 | 98,333 | 79,867 | 33,352 | 48 / 768 | 18.8% |
+| 2:1 | 64 | 85,246 | 68,633 | 20,504 | 32 / 32 | 19.5% |
+| 2:1 | 128 | 209,088 | 149,497 | 79,966 | 128 / 2,048 | 28.5% |
+
+An additional `S=2048,Hq:Hkv=1:1,D=128` run passed with 159,877 total
+cycles and a 63,334-cycle projection span. These are simulator cycles, not
+host wall time. Stage spans overlap across managers and are not additive.
+
+At S=1024, D=128 projection is the largest measured stage: 33,352 of 79,867
+cycles for 1:1 and 79,966 of 149,497 for 2:1. The projection-to-attention
+handoff adds 8,950 and 8,520 cycles, respectively; about 7,000 cycles of each
+handoff lie between the last projection synchronization and descriptor issue.
+The optimistic array-only projection floors are 192 and 512 cycles, so they
+do not model the dominant transfer, programming, and controller work.
+
+The D=128 weight cache removes repeated HBM weight reads, but the row-major
+job order still alternates dimension/input tiles and reprograms weights for
+every 16-token group. It records zero array-resident weight reuses in both
+D=128 cases. Per manager, array-buffer transfer counters report 7,104 of
+9,696 transfer cycles in matrix broadcast for 1:1 and 18,944 of 24,704 for
+2:1. Input scatter and output gather account for the rest of those transfer
+counters. These are summed transfer-service cycles, not an isolated critical
+path contribution, but the counts identify repeated matrix programming as
+the next projection-specific target. Reordering or retaining weight tiles
+across 16-token groups needs a controlled comparison that preserves the
+bounded local GM and output layout.
 
 ## Causal prefill
 

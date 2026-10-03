@@ -16,7 +16,7 @@
 namespace SST { namespace Golem {
 
 // A bounded, descriptor-driven producer of the raw and panel Q/K/V layouts.
-// One 16-token group, 32 D=64 weight tiles in local GM, and one V tile are resident.
+// One 16-token group, a bounded local-GM weight tile cache, and one V tile are resident.
 class ProjectionJob {
 public:
     ProjectionJob(GlobalMemoryAPI* memory, WorkerCommandProcessorAPI* processor)
@@ -40,10 +40,16 @@ public:
         desc_ = desc;
         kind_ = head_ = row_ = dimTile_ = inputTile_ = 0;
         status_ = 0;
-        residentTile_ = ~uint64_t{0};
+        residentTiles_.fill(~uint64_t{0});
+        activeOperandBank_ = 0;
         cachedTiles_.fill(~uint64_t{0});
         weightLoads_ = weightPrograms_ = weightReuses_ = 0;
         inputLoads_ = 0;
+        writeOutstanding_ = 0;
+        writes_.clear();
+        nextInputIssued_ = false;
+        nextInputReady_ = false;
+        nextInputFailed_ = false;
         loadedInputRow_ = ~uint32_t{0};
         startCycle_ = 0;
         phase_ = Phase::LoadInput;
@@ -126,12 +132,12 @@ public:
             std::vector<double> matrix(4096);
             for (size_t i = 0; i < matrix.size(); ++i) matrix[i] = decode(raw, i);
             pending_ = true;
-            if (!processor_->programGemmMatrixGroupClassBankAsync(arrays_, 0, matrix, 2,
+            if (!processor_->programGemmMatrixGroupClassBankAsync(arrays_, activeOperandBank_, matrix, 2,
                     AttentionClusterTrafficClass::ProjectionWeights, ++tag_, cycle,
                     [this](bool ok, uint64_t) {
                         pending_ = false;
                         if (ok) {
-                            residentTile_ = weightTile();
+                            residentTiles_[activeOperandBank_] = weightTile();
                             ++weightPrograms_;
                         }
                         phase_ = ok ? Phase::ProgramInput : Phase::Failed;
@@ -140,21 +146,46 @@ public:
             break;
         }
         case Phase::ProgramInput: {
+            if (inputTile_ == 1 && nextInputReady_) {
+                nextInputReady_ = false;
+                nextInputIssued_ = false;
+                phase_ = Phase::Launch;
+                break;
+            }
             std::vector<double> values(input_.begin(), input_.end());
             pending_ = true;
-            if (!processor_->programGemmInputScatterBankAsync(arrays_, 0, values, 2,
+            if (!processor_->programGemmInputScatterBankAsync(arrays_, activeOperandBank_, values, 2,
                     AttentionClusterTrafficClass::ProjectionInputScatter, ++tag_, cycle,
                     [this](bool ok, uint64_t) {
                         pending_ = false;
+                        if (inputTile_ == 1) {
+                            nextInputIssued_ = false;
+                            nextInputReady_ = false;
+                        }
                         phase_ = ok ? Phase::Launch : Phase::Failed;
                         if (!ok) status_ = 1;
                     })) { pending_ = false; break; }
             break;
         }
+        case Phase::WaitInputPrefetch:
+            if (nextInputFailed_) {
+                nextInputIssued_ = false;
+                nextInputFailed_ = false;
+                phase_ = Phase::LoadWeight;
+            } else if (nextInputReady_) {
+                nextInputIssued_ = false;
+                nextInputReady_ = false;
+                phase_ = Phase::LoadWeight;
+            }
+            break;
         case Phase::Launch:
+            if (inputTile_ == 0 && desc_.hidden_dim == 128 &&
+                !nextInputIssued_) {
+                issueNextInputPrefetch(cycle);
+            }
             pending_ = true;
             remaining_ = 16;
-            if (!processor_->launchGemmArrayGroupActiveBank(arrays_, 0,
+            if (!processor_->launchGemmArrayGroupActiveBank(arrays_, activeOperandBank_,
                     inputTile_ == 0 ? 0 : 1, 64, cycle,
                     [this](uint32_t, uint64_t) {
                         if (--remaining_ == 0) {
@@ -176,15 +207,13 @@ public:
                     })) { pending_ = false; break; }
             break;
         case Phase::WriteOutput:
-            if (writes_.empty()) { advance(); break; }
-            pending_ = true;
-            memory_->dma_write_to_host(writes_.front().first,
-                writes_.front().second.size(), writes_.front().second,
-                [this](bool ok) {
-                    pending_ = false;
-                    if (!ok) { fail(); return; }
-                    writes_.pop_front();
-                });
+            issueWritebacks();
+            // Output DMA owns copies of the payload vectors, so the next
+            // input/array tile can proceed while bounded writebacks drain.
+            advance();
+            break;
+        case Phase::WriteDrain:
+            if (writeOutstanding_ == 0) phase_ = Phase::WriteCompletion;
             break;
         case Phase::WriteCompletion:
             pending_ = true;
@@ -193,7 +222,7 @@ public:
                 [this, cycle](bool ok) {
                     pending_ = false;
                     phase_ = Phase::Complete;
-                    status_ = ok ? 0 : 1;
+                    status_ = (ok && status_ == 0) ? 0 : 1;
                     std::printf("[PROJECTION_JOB] manager=%u start=%llu end=%llu cycles=%llu weight_loads=%llu weight_programs=%llu weight_reuses=%llu input_loads=%llu status=%llu\n",
                         desc_.manager_slot,
                         static_cast<unsigned long long>(startCycle_),
@@ -213,7 +242,7 @@ public:
 
 private:
     enum class Phase { Idle, LoadInput, LoadWeight, LoadWeightDma, ProgramWeight, ProgramInput,
-        Launch, ReadOutput, WriteOutput, WriteCompletion, Failed, Complete };
+        Launch, WaitInputPrefetch, ReadOutput, WriteOutput, WriteDrain, WriteCompletion, Failed, Complete };
     static double decode(const std::vector<uint8_t>& bytes, size_t index) {
         uint16_t bits;
         std::memcpy(&bits, bytes.data() + index * 2, 2);
@@ -233,8 +262,17 @@ private:
             for (uint32_t col = 0; col < 64; ++col)
                 input_[lane * 64 + col] = decode(raw,
                     lane * desc_.hidden_dim + inputTile_ * 64 + col);
+        // Each input tile owns one operand bank until its partial result is
+        // consumed.  The first tile overwrites the shared output vector;
+        // later tiles accumulate into it before the single readback.
+        activeOperandBank_ = inputTile_ & 1u;
+        if (inputTile_ == 1 && nextInputIssued_ && !nextInputReady_ &&
+            !nextInputFailed_) {
+            phase_ = Phase::WaitInputPrefetch;
+            return;
+        }
         const uint64_t tile = weightTile();
-        if (residentTile_ == tile) {
+        if (residentTiles_[activeOperandBank_] == tile) {
             ++weightReuses_;
             phase_ = Phase::ProgramInput;
         } else {
@@ -247,27 +285,66 @@ private:
             desc_.query_heads + desc_.kv_heads) + head_;
     }
     uint64_t weightTile() const {
+        return weightTileForInputTile(inputTile_);
+    }
+    uint64_t weightTileForInputTile(uint32_t inputTile) const {
         return ((static_cast<uint64_t>(weightHead()) * (desc_.head_dim / 64) +
-                 dimTile_) * (desc_.hidden_dim / 64) + inputTile_);
+                 dimTile_) * (desc_.hidden_dim / 64) + inputTile);
     }
     uint64_t cachedWeightAddr() const {
-        // Keep the 256 KiB cache above the RMSNorm scratch at GM+0x40000.
+        // Keep the 512 KiB cache above the RMSNorm scratch at GM+0x40000.
         return desc_.scratch_addr + 0x60000 +
             cacheSlot() * 8192;
     }
     size_t cacheSlot() const {
-        return static_cast<size_t>(inputTile_ % cachedTiles_.size());
+        const size_t inputTiles = desc_.hidden_dim / 64;
+        return static_cast<size_t>(dimTile_) * inputTiles + inputTile_;
     }
     bool cacheTileEnabled() const {
-        // Llama 1B uses D=64 and 32 input tiles. Keep the current head's
-        // complete tile row resident; larger dimensions use scratch fallback.
-        return desc_.head_dim == 64 && dimTile_ == 0 &&
-            inputTile_ < cachedTiles_.size();
+        // Keep one complete hidden-dimension tile row resident. The 64-entry
+        // cache covers the largest supported hidden dimension (2048) and both
+        // D=64/D=128 dimension tiles without aliasing cache slots.
+        return desc_.head_dim == 64 || desc_.head_dim == 128;
     }
     uint64_t rawBase() const {
         return kind_ == 0 ? desc_.q_addr : kind_ == 1 ? desc_.k_addr : desc_.v_addr;
     }
     void fail() { status_ = 1; phase_ = Phase::Failed; }
+    void issueNextInputPrefetch(uint64_t cycle) {
+        const size_t bytes = static_cast<size_t>(16) * desc_.hidden_dim * 2;
+        std::vector<uint8_t> raw;
+        memory_->rd_from_globalmem(desc_.scratch_addr, bytes, raw);
+        if (raw.size() != bytes) { nextInputFailed_ = true; return; }
+        std::vector<double> values(1024, 0.0);
+        for (uint32_t lane = 0; lane < 16; ++lane)
+            for (uint32_t col = 0; col < 64; ++col)
+                values[lane * 64 + col] = decode(raw,
+                    lane * desc_.hidden_dim + 64 + col);
+        nextInputIssued_ = true;
+        nextInputReady_ = false;
+        nextInputFailed_ = false;
+        if (!processor_->programGemmInputScatterBankAsync(
+                arrays_, 1, values, 2,
+                AttentionClusterTrafficClass::ProjectionInputScatter,
+                ++tag_, cycle,
+                [this](bool ok, uint64_t) {
+                    nextInputReady_ = ok;
+                    nextInputFailed_ = !ok;
+                })) nextInputFailed_ = true;
+    }
+    void issueWritebacks() {
+        constexpr uint32_t kWritebackSlots = 4;
+        while (!writes_.empty() && writeOutstanding_ < kWritebackSlots) {
+            auto write = std::move(writes_.front());
+            writes_.pop_front();
+            ++writeOutstanding_;
+            memory_->dma_write_to_host(write.first, write.second.size(),
+                std::move(write.second), [this](bool ok) {
+                    if (!ok) status_ = 1;
+                    if (writeOutstanding_ > 0) --writeOutstanding_;
+                });
+        }
+    }
     void queueOutput(const std::vector<double>& values) {
         const uint64_t rowStride = static_cast<uint64_t>(desc_.head_dim) * 2;
         const uint64_t headStride = static_cast<uint64_t>(desc_.rows_per_node) * rowStride;
@@ -325,7 +402,11 @@ private:
                 row_ = 0;
                 if (++head_ == headCount()) {
                     head_ = 0;
-                    if (++kind_ == 3) { phase_ = Phase::WriteCompletion; return; }
+                    if (++kind_ == 3) {
+                        phase_ = writeOutstanding_ == 0 ? Phase::WriteCompletion :
+                            Phase::WriteDrain;
+                        return;
+                    }
                 }
             }
         }
@@ -344,13 +425,18 @@ private:
     uint32_t kind_ = 0, head_ = 0, row_ = 0, dimTile_ = 0, inputTile_ = 0;
     uint32_t remaining_ = 0;
     uint64_t tag_ = 0, status_ = 0;
-    uint64_t residentTile_ = ~uint64_t{0};
+    std::array<uint64_t, 2> residentTiles_{};
+    uint32_t activeOperandBank_ = 0;
     uint32_t loadedInputRow_ = ~uint32_t{0};
-    std::array<uint64_t, 32> cachedTiles_{};
+    std::array<uint64_t, 64> cachedTiles_{};
     uint64_t weightLoads_ = 0, weightPrograms_ = 0, weightReuses_ = 0;
     uint64_t inputLoads_ = 0;
+    uint32_t writeOutstanding_ = 0;
     uint64_t startCycle_ = 0;
     bool pending_ = false;
+    bool nextInputIssued_ = false;
+    bool nextInputReady_ = false;
+    bool nextInputFailed_ = false;
 };
 
 }} // namespace SST::Golem
