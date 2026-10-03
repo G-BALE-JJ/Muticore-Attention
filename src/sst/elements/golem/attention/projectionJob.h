@@ -56,12 +56,19 @@ public:
         // local GM, leaving the physical two-bank array configuration intact.
         const uint64_t gmBase = memory_->getBaseAddr();
         const uint64_t gmSize = memory_->getSize();
-        const uint64_t reuseBytes = 0xF8000 + static_cast<uint64_t>(256) *
-            desc.hidden_dim * 2;
-        reuseBlock_ = desc.head_dim == 128 && desc.hidden_dim <= 512 &&
+        pairedWeights_ = desc.head_dim == 64 && desc.hidden_dim >= 256 &&
+            desc.hidden_dim % 128 == 0;
+        // D64 does not stage split-dimension raw rows. Reuse that region
+        // for input, and exclude the GM tail's 64 DMA status bytes.
+        const uint64_t reuseBytes = (pairedWeights_ ? 0xE8000 : 0xF8000) +
+            static_cast<uint64_t>(256) * desc.hidden_dim * 2;
+        reuseBlock_ = (pairedWeights_ ||
+            (desc.head_dim == 128 && desc.hidden_dim <= 512)) &&
+            gmSize >= 64 &&
             desc.scratch_addr >= gmBase &&
-            desc.scratch_addr - gmBase <= gmSize &&
-            reuseBytes <= gmSize - (desc.scratch_addr - gmBase);
+            desc.scratch_addr - gmBase <= gmSize - 64 &&
+            reuseBytes <= gmSize - 64 - (desc.scratch_addr - gmBase);
+        pairedWeights_ = pairedWeights_ && reuseBlock_;
         blockStart_ = 0;
         blockLoaded_ = false;
         writeOutstanding_ = 0;
@@ -204,7 +211,8 @@ public:
                             nextInputIssued_ = false;
                             nextInputReady_ = false;
                         }
-                        phase_ = ok ? (reuseBlock_ && inputTile_ != 0 ?
+                        phase_ = ok ? (reuseBlock_ && inputTile_ != 0 &&
+                            (!pairedWeights_ || inputTile_ % 2 == 0) ?
                             Phase::RestoreOutput : Phase::Launch) : Phase::Failed;
                         if (!ok) status_ = 1;
                     })) { pending_ = false; break; }
@@ -233,6 +241,11 @@ public:
                     [this](uint32_t, uint64_t) {
                         if (--remaining_ == 0) {
                             pending_ = false;
+                            if (pairedWeights_ && inputTile_ % 2 == 0) {
+                                ++inputTile_;
+                                phase_ = Phase::LoadInput;
+                                return;
+                            }
                             phase_ = reuseBlock_ ? Phase::ReadOutput :
                                 (++inputTile_ < desc_.hidden_dim / 64 ?
                                     Phase::LoadInput : Phase::ReadOutput);
@@ -321,13 +334,13 @@ public:
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::Launch)]),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::ReadOutput)]),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::WriteDrain)]));
-                    std::printf("[PROJECTION_LOCAL_GM] manager=%u read_bytes=%llu write_bytes=%llu read_cycles=%llu write_cycles=%llu timed=1 reuse_block=%u\n",
+                    std::printf("[PROJECTION_LOCAL_GM] manager=%u read_bytes=%llu write_bytes=%llu read_cycles=%llu write_cycles=%llu timed=1 reuse_block=%u paired_weights=%u\n",
                         desc_.manager_slot,
                         static_cast<unsigned long long>(localReadBytes_),
                         static_cast<unsigned long long>(localWriteBytes_),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LocalRead)]),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LocalWrite)]),
-                        reuseBlock_ ? 1u : 0u);
+                        reuseBlock_ ? 1u : 0u, pairedWeights_ ? 1u : 0u);
                 });
             break;
         case Phase::Failed: phase_ = Phase::Complete; break;
@@ -356,10 +369,20 @@ private:
         localAddr_ = addr;
         localData_.assign(bytes, 0);
         localOffset_ = 0;
+        localGather_ = false;
         localReadDone_ = std::move(done);
         localWriteDone_ = {};
         pending_ = true;
         phase_ = Phase::LocalRead;
+    }
+    void beginLocalInputPairRead(uint64_t addr,
+                        std::function<void(const std::vector<uint8_t>&)> done) {
+        // Gather exactly two adjacent 64-element tiles from each input row.
+        // Each lane is a separate timed SRAM request, with shared-port
+        // contention and queue backpressure. No full-hidden row reread.
+        beginLocalRead(addr, 16 * 256, std::move(done));
+        localGather_ = true;
+        gatherSubmitted_ = gatherCompleted_ = 0;
     }
     void beginLocalWrite(uint64_t addr, std::vector<uint8_t> data,
                          std::function<void()> done) {
@@ -372,6 +395,35 @@ private:
         phase_ = Phase::LocalWrite;
     }
     void pumpLocalAccess() {
+        if (phase_ == Phase::LocalRead && localGather_) {
+            const size_t limit = memory_->localMaxRequestBytes();
+            if (limit == 0) { pending_ = false; fail(); return; }
+            while (gatherSubmitted_ < localData_.size()) {
+                const size_t offset = gatherSubmitted_;
+                const size_t chunk = std::min(limit, 256 - offset % 256);
+                const uint64_t addr = localAddr_ +
+                    (offset / 256) * desc_.hidden_dim * 2 + offset % 256;
+                const bool accepted = memory_->localReadAsync(addr, chunk,
+                    LocalMemoryClient::RoCC, ++tag_,
+                    [this, offset, chunk](bool ok, uint64_t,
+                                          const std::vector<uint8_t>& raw) {
+                        if (phase_ != Phase::LocalRead) return;
+                        if (!ok || raw.size() != chunk) { pending_ = false; fail(); return; }
+                        std::copy(raw.begin(), raw.end(), localData_.begin() + offset);
+                        localReadBytes_ += chunk;
+                        gatherCompleted_ += chunk;
+                        if (gatherCompleted_ == localData_.size()) {
+                            pending_ = false;
+                            localGather_ = false;
+                            auto done = std::move(localReadDone_);
+                            done(localData_);
+                        }
+                    });
+                if (!accepted) break;
+                gatherSubmitted_ += chunk;
+            }
+            return;
+        }
         if ((phase_ != Phase::LocalRead && phase_ != Phase::LocalWrite) ||
             localInFlight_) return;
         const size_t limit = memory_->localMaxRequestBytes();
@@ -416,6 +468,17 @@ private:
         if (!accepted) localInFlight_ = false;
     }
     void prepareInput() {
+        if (pairedWeights_) {
+            if (inputTile_ % 2 != 0) { prepareInputReady(); return; }
+            beginLocalInputPairRead(inputBlockAddr() +
+                static_cast<uint64_t>(row_ - blockStart_) * desc_.hidden_dim * 2 +
+                static_cast<uint64_t>(inputTile_) * 128,
+                [this](const std::vector<uint8_t>& raw) {
+                    inputRaw_ = raw;
+                    prepareInputReady();
+                });
+            return;
+        }
         const size_t bytes = static_cast<size_t>(16) * desc_.hidden_dim * 2;
         if (reuseBlock_ || localInputRow_ != row_) {
             beginLocalRead(reuseBlock_ ? inputBlockAddr() +
@@ -433,6 +496,7 @@ private:
         for (uint32_t lane = 0; lane < 16; ++lane)
             for (uint32_t col = 0; col < 64; ++col)
                 input_[lane * 64 + col] = decode(inputRaw_,
+                    pairedWeights_ ? lane * 128 + (inputTile_ % 2) * 64 + col :
                     lane * desc_.hidden_dim + inputTile_ * 64 + col);
         // Each input tile owns one operand bank until its partial result is
         // consumed.  The first tile overwrites the shared output vector;
@@ -478,7 +542,9 @@ private:
         return desc_.scratch_addr + 0xE8000 +
             static_cast<uint64_t>(row_ - blockStart_) * desc_.head_dim * 2;
     }
-    uint64_t inputBlockAddr() const { return desc_.scratch_addr + 0xF8000; }
+    uint64_t inputBlockAddr() const {
+        return desc_.scratch_addr + (pairedWeights_ ? 0xE8000 : 0xF8000);
+    }
     size_t cacheSlot() const {
         const size_t inputTiles = desc_.hidden_dim / 64;
         return static_cast<size_t>(dimTile_) * inputTiles + inputTile_;
@@ -532,7 +598,7 @@ private:
     }
     void finishOutput() {
         queueOutput(outputValues_);
-        if (reuseBlock_ && dimTile_ == 0)
+        if (reuseBlock_ && desc_.head_dim == 128 && dimTile_ == 0)
             beginLocalWrite(rawBlockAddr(), rawTile_,
                 [this]() { phase_ = Phase::WriteOutput; });
         else phase_ = Phase::WriteOutput;
@@ -590,11 +656,15 @@ private:
     }
     void advance() {
         if (reuseBlock_) {
+            // ReadOutput leaves a paired traversal on its odd input tile.
+            // Keep the same two weights while moving to the next row group.
+            if (pairedWeights_) --inputTile_;
             if ((row_ += 16) == blockStart_ + 256) {
                 row_ = blockStart_;
-                if (++inputTile_ == desc_.hidden_dim / 64) {
+                inputTile_ += pairedWeights_ ? 2 : 1;
+                if (inputTile_ == desc_.hidden_dim / 64) {
                     inputTile_ = 0;
-                    if (++dimTile_ == 2) {
+                    if (++dimTile_ == desc_.head_dim / 64) {
                         dimTile_ = 0;
                         blockStart_ += 256;
                         row_ = blockStart_;
@@ -659,11 +729,14 @@ private:
     uint64_t localReadBytes_ = 0, localWriteBytes_ = 0, localAddr_ = 0;
     size_t localOffset_ = 0;
     bool localInFlight_ = false;
+    bool localGather_ = false;
+    size_t gatherSubmitted_ = 0, gatherCompleted_ = 0;
     std::vector<uint8_t> localData_;
     std::function<void(const std::vector<uint8_t>&)> localReadDone_;
     std::function<void()> localWriteDone_;
     std::array<uint64_t, static_cast<size_t>(Phase::Count)> phaseCycles_{};
     bool reuseBlock_ = false;
+    bool pairedWeights_ = false;
     bool blockLoaded_ = false;
     uint32_t blockStart_ = 0;
     uint32_t writeOutstanding_ = 0;

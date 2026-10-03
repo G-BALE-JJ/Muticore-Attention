@@ -49,8 +49,10 @@ def summarize(case):
     if (shape["Hq"], shape["Hkv"], shape["head_dim"]) != (32, 8, 64):
         raise ValueError(f"{case}: requires Llama 32:8/D64 shape")
     gm = pipeline["stages"]["projection"].get("local_gm_by_manager", {})
-    if len(gm) != 4 or any(x["timed"] != 1 or x["reuse_block"] for x in gm.values()):
-        raise ValueError(f"{case}: missing row-major timed GM evidence")
+    if len(gm) != 4 or any(x["timed"] != 1 for x in gm.values()):
+        raise ValueError(f"{case}: missing timed GM evidence")
+    if any(x["reuse_block"] and not x.get("paired_weights") for x in gm.values()):
+        raise ValueError(f"{case}: missing paired-weight reuse evidence")
     rope = pipeline.get("attention_rope_table_first_load_by_worker", {})
     if len(rope) != 8 or any(x["local_read_cycles"] <= 0 for x in rope.values()):
         raise ValueError(f"{case}: missing timed RoPE table evidence")

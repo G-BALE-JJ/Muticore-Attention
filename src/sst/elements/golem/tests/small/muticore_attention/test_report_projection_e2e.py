@@ -65,6 +65,35 @@ class ProjectionReportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             summarize("", attention)
 
+    def test_paired_weight_work_and_sram_bytes(self):
+        attention = {
+            "status": "PASS",
+            "shape": {"Hq": 4, "Hkv": 2, "query_length": 1024,
+                      "kv_length": 1024, "head_dim": 64, "causal": True},
+            "start_cycle": 40000, "end_cycle": 50000,
+        }
+        lines = []
+        for core in range(4):
+            for batch in range(8):
+                start = (10000 + batch * 100) * 1000
+                lines.append(f"[SFU_RMSNORM] core={core} issue_tick={start} "
+                             f"complete_tick={start + 50000} vector_cycles=40 status=0")
+            lines.append(f"[PROJECTION_JOB] manager={core} start=13000 "
+                         "end=30000 cycles=17000 weight_loads=32 weight_programs=32 "
+                         "weight_reuses=480 input_loads=8 status=0")
+            lines.append(f"[PROJECTION_LOCAL_GM] manager={core} read_bytes=1572864 "
+                         "write_bytes=262144 read_cycles=100 write_cycles=50 "
+                         "timed=1 reuse_block=1 paired_weights=1")
+        log = "\n".join(lines)
+        report = summarize(log, attention, 66)
+        self.assertEqual(report["stages"]["projection"]["weight_programs"], 128)
+        self.assertEqual(report["stages"]["projection"]["local_gm_by_manager"]["0"]["paired_weights"], 1)
+        for corruption in (log.replace("read_bytes=1572864", "read_bytes=1"),
+                           log.replace("weight_programs=32", "weight_programs=33"),
+                           log.replace("weight_reuses=480", "weight_reuses=481")):
+            with self.assertRaisesRegex(ValueError, "paired projection"):
+                summarize(corruption, attention, 66)
+
 
 if __name__ == "__main__":
     unittest.main()

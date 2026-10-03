@@ -83,6 +83,10 @@ The current audited Llama-shape baseline is documented in
 measurements below precede the projection/QK/RoPE local-GM timing correction
 and the configured-array resource-floor correction.
 
+The subsequent D64/hidden2048 optimization is documented in
+[LLAMA_PROJECTION_PAIR_REUSE.md](LLAMA_PROJECTION_PAIR_REUSE.md): two resident
+weight tiles process a bounded row block with timed FP16 partial staging.
+
 The `--projection` path starts from FP16 X, gamma, and projection weights in
 HBM. The four manager cores run RMSNorm, Q/K/V projection and the causal RoPE
 attention kernel. It verifies the projected raw and panel layouts, final O,
