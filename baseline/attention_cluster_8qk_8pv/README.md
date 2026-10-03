@@ -78,6 +78,11 @@ attention-kernel validation, not full Llama inference.
 
 ## RMSNorm and projection end-to-end
 
+The current audited Llama-shape baseline is documented in
+[LLAMA_PROJECTION_BASELINE.md](LLAMA_PROJECTION_BASELINE.md). The historical
+measurements below precede the projection/QK/RoPE local-GM timing correction
+and the configured-array resource-floor correction.
+
 The `--projection` path starts from FP16 X, gamma, and projection weights in
 HBM. The four manager cores run RMSNorm, Q/K/V projection and the causal RoPE
 attention kernel. It verifies the projected raw and panel layouts, final O,

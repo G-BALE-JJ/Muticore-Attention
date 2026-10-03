@@ -2537,6 +2537,9 @@ private:
         activeIssuedMicroOp_ = MicroOp{};
         activeTilePayloadLoaded_ = false;
         refreshActiveComputeReadyQueue();
+        qkPayloadReady_ = false;
+        qkPayloadReadsPending_ = 0;
+        qkPayloadReadFailed_ = false;
         return true;
     }
 
@@ -3751,6 +3754,34 @@ private:
                            : (local_tile_idx % slotCount));
         const uint64_t mat_addr = header_.local_mat_ping_gm_addr + static_cast<uint64_t>(matSlotIdx) * header_.local_mat_slot_stride_bytes;
         const uint64_t vec_addr = header_.local_vec_ping_gm_addr + static_cast<uint64_t>(vecSlotIdx) * header_.local_vec_slot_stride_bytes;
+        if (header_.attention_rope && !usesAttentionPvPanels() && !qkPayloadReady_) {
+            if (qkPayloadReadFailed_) return TilePayloadLoadStatus::Failed;
+            if (qkPayloadReadsPending_) return TilePayloadLoadStatus::Pending;
+            const uint64_t generation = attentionPvVectorReadGeneration_;
+            const int tile = activeComputeTileIndex_;
+            qkPayloadReadsPending_ = 2;
+            const auto complete = [this, generation, tile](bool matrix, bool ok,
+                                                          std::vector<uint8_t> bytes) {
+                if (generation != attentionPvVectorReadGeneration_ ||
+                    tile != activeComputeTileIndex_) return;
+                qkPayloadReadFailed_ = qkPayloadReadFailed_ || !ok;
+                if (ok) {
+                    if (matrix) activeMatPayload_ = std::move(bytes);
+                    else activeVecPayload_ = std::move(bytes);
+                }
+                if (--qkPayloadReadsPending_ == 0)
+                    qkPayloadReady_ = !qkPayloadReadFailed_;
+            };
+            if (!readAttentionPvPanelAsync(mat_addr, current_.mat_stride_bytes,
+                    [complete](bool ok, std::vector<uint8_t> bytes) {
+                        complete(true, ok, std::move(bytes));
+                    })) complete(true, false, {});
+            if (!readAttentionPvPanelAsync(vec_addr, vec_bytes,
+                    [complete](bool ok, std::vector<uint8_t> bytes) {
+                        complete(false, ok, std::move(bytes));
+                    })) complete(false, false, {});
+            return TilePayloadLoadStatus::Pending;
+        }
         if (usesAttentionPvPanels() && !residentMatPayload_.empty()) {
             const size_t matOffset = static_cast<size_t>(matSlotIdx) *
                 header_.local_mat_slot_stride_bytes;
@@ -3762,7 +3793,7 @@ private:
             activeMatPayload_.assign(
                 residentMatPayload_.begin() + matOffset,
                 residentMatPayload_.begin() + matOffset + matBytes);
-        } else {
+        } else if (!header_.attention_rope) {
             globalMem_->rd_from_globalmem(
                 mat_addr, static_cast<size_t>(current_.mat_stride_bytes),
                 activeMatPayload_);
@@ -3813,8 +3844,9 @@ private:
             attentionPvVectorReadInFlight_ = true;
             return TilePayloadLoadStatus::Pending;
         }
-        globalMem_->rd_from_globalmem(
-            vec_addr, static_cast<size_t>(vec_bytes), activeVecPayload_);
+        if (!header_.attention_rope)
+            globalMem_->rd_from_globalmem(
+                vec_addr, static_cast<size_t>(vec_bytes), activeVecPayload_);
         if (activeMatPayload_.size() < current_.mat_stride_bytes || activeVecPayload_.size() < vec_bytes) {
             return TilePayloadLoadStatus::Failed;
         }
@@ -5291,6 +5323,9 @@ private:
     bool activeMicroOpIssued_ = false;
     MicroOp activeIssuedMicroOp_{};
     bool activeTilePayloadLoaded_ = false;
+    bool qkPayloadReady_ = false;
+    bool qkPayloadReadFailed_ = false;
+    uint32_t qkPayloadReadsPending_ = 0;
     bool ropePayloadPending_ = false;
     uint64_t ropePayloadReadyTick_ = 0;
     SFUVectorResult ropeMatResult_;

@@ -7,6 +7,8 @@
 #include <sst/elements/golem/workercmdproc/workercmdproc.h>
 
 #include <array>
+#include <algorithm>
+#include <functional>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -46,6 +48,9 @@ public:
         cachedTiles_.fill(~uint64_t{0});
         weightLoads_ = weightPrograms_ = weightReuses_ = 0;
         inputLoads_ = 0;
+        localReadBytes_ = localWriteBytes_ = 0;
+        inputRaw_.clear();
+        localInputRow_ = ~uint32_t{0};
         phaseCycles_.fill(0);
         // The reuse path stages 256 input rows and per-row FP16 partials in
         // local GM, leaving the physical two-bank array configuration intact.
@@ -81,6 +86,7 @@ public:
         if (!active()) return;
         if (startCycle_ == 0) startCycle_ = cycle;
         ++phaseCycles_[static_cast<size_t>(phase_)];
+        pumpLocalAccess();
         if (pending_) return;
         switch (phase_) {
         case Phase::LoadBlock: {
@@ -114,7 +120,7 @@ public:
                     loadedInputRow_ = row_;
                     ++inputLoads_;
                     pending_ = false;
-                    prepareInput();
+                    phase_ = Phase::LoadInput;
                 });
             break;
         }
@@ -156,12 +162,17 @@ public:
             break;
         }
         case Phase::ProgramWeight: {
-            std::vector<uint8_t> raw;
-            memory_->rd_from_globalmem(cacheTileEnabled() ? cachedWeightAddr() :
-                desc_.scratch_addr + 0x2000, 8192, raw);
-            if (raw.size() != 8192) { fail(); break; }
+            beginLocalRead(cacheTileEnabled() ? cachedWeightAddr() :
+                desc_.scratch_addr + 0x2000, 8192,
+                [this](const std::vector<uint8_t>& raw) {
+                    weightRaw_ = raw;
+                    phase_ = Phase::ProgramWeightReady;
+                });
+            break;
+        }
+        case Phase::ProgramWeightReady: {
             std::vector<double> matrix(4096);
-            for (size_t i = 0; i < matrix.size(); ++i) matrix[i] = decode(raw, i);
+            for (size_t i = 0; i < matrix.size(); ++i) matrix[i] = decode(weightRaw_, i);
             pending_ = true;
             if (!processor_->programGemmMatrixGroupClassBankAsync(arrays_, activeOperandBank_, matrix, 2,
                     AttentionClusterTrafficClass::ProjectionWeights, ++tag_, cycle,
@@ -237,19 +248,23 @@ public:
                         if (!ok || values.size() != 1024) { fail(); return; }
                         if (reuseBlock_ && inputTile_ + 1 < desc_.hidden_dim / 64) {
                             stagePartial(values);
-                            advance();
                         } else {
-                            queueOutput(values);
-                            phase_ = Phase::WriteOutput;
+                            outputValues_ = values;
+                            phase_ = Phase::PrepareOutput;
                         }
                     })) { pending_ = false; break; }
             break;
         case Phase::RestoreOutput: {
-            std::vector<uint8_t> raw;
-            memory_->rd_from_globalmem(partialAddr(), 2048, raw);
-            if (raw.size() != 2048) { fail(); break; }
+            beginLocalRead(partialAddr(), 2048,
+                [this](const std::vector<uint8_t>& raw) {
+                    partialRaw_ = raw;
+                    phase_ = Phase::RestoreOutputReady;
+                });
+            break;
+        }
+        case Phase::RestoreOutputReady: {
             std::vector<double> values(1024);
-            for (size_t i = 0; i < values.size(); ++i) values[i] = decode(raw, i);
+            for (size_t i = 0; i < values.size(); ++i) values[i] = decode(partialRaw_, i);
             pending_ = true;
             if (!processor_->writeGemmOutputGroupClassAsync(arrays_, values, 2,
                     AttentionClusterTrafficClass::ProjectionOutput, ++tag_, cycle,
@@ -260,6 +275,15 @@ public:
                     })) { pending_ = false; break; }
             break;
         }
+        case Phase::PrepareOutput:
+            if (reuseBlock_ && dimTile_ != 0) {
+                beginLocalRead(rawBlockAddr(), rawTile_.size(),
+                    [this](const std::vector<uint8_t>& raw) {
+                        rawTile_ = raw;
+                        finishOutput();
+                    });
+            } else finishOutput();
+            break;
         case Phase::WriteOutput:
             issueWritebacks();
             // Output DMA owns copies of the payload vectors, so the next
@@ -291,12 +315,19 @@ public:
                         desc_.manager_slot,
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LoadBlock)] + phaseCycles_[static_cast<size_t>(Phase::LoadInput)]),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LoadWeight)] + phaseCycles_[static_cast<size_t>(Phase::LoadWeightDma)]),
-                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::ProgramWeight)]),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::ProgramWeightReady)]),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::ProgramInput)] + phaseCycles_[static_cast<size_t>(Phase::WaitInputPrefetch)]),
-                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::RestoreOutput)]),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::RestoreOutputReady)]),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::Launch)]),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::ReadOutput)]),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::WriteDrain)]));
+                    std::printf("[PROJECTION_LOCAL_GM] manager=%u read_bytes=%llu write_bytes=%llu read_cycles=%llu write_cycles=%llu timed=1 reuse_block=%u\n",
+                        desc_.manager_slot,
+                        static_cast<unsigned long long>(localReadBytes_),
+                        static_cast<unsigned long long>(localWriteBytes_),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LocalRead)]),
+                        static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LocalWrite)]),
+                        reuseBlock_ ? 1u : 0u);
                 });
             break;
         case Phase::Failed: phase_ = Phase::Complete; break;
@@ -306,7 +337,8 @@ public:
 
 private:
     enum class Phase { Idle, LoadBlock, LoadInput, LoadWeight, LoadWeightDma, ProgramWeight,
-        ProgramInput, Launch, WaitInputPrefetch, ReadOutput, RestoreOutput, WriteOutput,
+        ProgramWeightReady, ProgramInput, Launch, WaitInputPrefetch, ReadOutput,
+        RestoreOutput, RestoreOutputReady, PrepareOutput, LocalRead, LocalWrite, WriteOutput,
         WriteDrain, WriteCompletion, Failed, Complete, Count };
     static double decode(const std::vector<uint8_t>& bytes, size_t index) {
         uint16_t bits;
@@ -317,17 +349,90 @@ private:
         const uint16_t bits = golem_float_to_fp16(static_cast<float>(value));
         std::memcpy(bytes.data() + index * 2, &bits, 2);
     }
+    // Bound every request to the SRAM API limit and retry queue backpressure.
+    // One chunk is in flight; all producers share the existing GM ports.
+    void beginLocalRead(uint64_t addr, size_t bytes,
+                        std::function<void(const std::vector<uint8_t>&)> done) {
+        localAddr_ = addr;
+        localData_.assign(bytes, 0);
+        localOffset_ = 0;
+        localReadDone_ = std::move(done);
+        localWriteDone_ = {};
+        pending_ = true;
+        phase_ = Phase::LocalRead;
+    }
+    void beginLocalWrite(uint64_t addr, std::vector<uint8_t> data,
+                         std::function<void()> done) {
+        localAddr_ = addr;
+        localData_ = std::move(data);
+        localOffset_ = 0;
+        localWriteDone_ = std::move(done);
+        localReadDone_ = {};
+        pending_ = true;
+        phase_ = Phase::LocalWrite;
+    }
+    void pumpLocalAccess() {
+        if ((phase_ != Phase::LocalRead && phase_ != Phase::LocalWrite) ||
+            localInFlight_) return;
+        const size_t limit = memory_->localMaxRequestBytes();
+        if (limit == 0) { pending_ = false; fail(); return; }
+        const size_t chunk = std::min(limit, localData_.size() - localOffset_);
+        const size_t offset = localOffset_;
+        localInFlight_ = true;
+        bool accepted;
+        if (phase_ == Phase::LocalRead) {
+            accepted = memory_->localReadAsync(localAddr_ + offset, chunk,
+                LocalMemoryClient::RoCC, ++tag_,
+                [this, offset, chunk](bool ok, uint64_t,
+                                      const std::vector<uint8_t>& raw) {
+                    localInFlight_ = false;
+                    if (!ok || raw.size() != chunk) { pending_ = false; fail(); return; }
+                    std::copy(raw.begin(), raw.end(), localData_.begin() + offset);
+                    localReadBytes_ += chunk;
+                    localOffset_ += chunk;
+                    if (localOffset_ == localData_.size()) {
+                        pending_ = false;
+                        auto done = std::move(localReadDone_);
+                        done(localData_);
+                    }
+                });
+        } else {
+            std::vector<uint8_t> data(localData_.begin() + offset,
+                                      localData_.begin() + offset + chunk);
+            accepted = memory_->localWriteAsync(localAddr_ + offset, data,
+                LocalMemoryClient::RoCC, ++tag_,
+                [this, chunk](bool ok, uint64_t) {
+                    localInFlight_ = false;
+                    if (!ok) { pending_ = false; fail(); return; }
+                    localWriteBytes_ += chunk;
+                    localOffset_ += chunk;
+                    if (localOffset_ == localData_.size()) {
+                        pending_ = false;
+                        auto done = std::move(localWriteDone_);
+                        done();
+                    }
+                });
+        }
+        if (!accepted) localInFlight_ = false;
+    }
     void prepareInput() {
         const size_t bytes = static_cast<size_t>(16) * desc_.hidden_dim * 2;
-        std::vector<uint8_t> raw;
-        memory_->rd_from_globalmem(reuseBlock_ ? inputBlockAddr() +
-            static_cast<uint64_t>(row_ - blockStart_) * desc_.hidden_dim * 2 :
-            desc_.scratch_addr, bytes, raw);
-        if (raw.size() != bytes) { fail(); return; }
+        if (reuseBlock_ || localInputRow_ != row_) {
+            beginLocalRead(reuseBlock_ ? inputBlockAddr() +
+                static_cast<uint64_t>(row_ - blockStart_) * desc_.hidden_dim * 2 :
+                desc_.scratch_addr, bytes,
+                [this](const std::vector<uint8_t>& raw) {
+                    inputRaw_ = raw;
+                    localInputRow_ = row_;
+                    prepareInputReady();
+                });
+        } else prepareInputReady();
+    }
+    void prepareInputReady() {
         input_.resize(1024);
         for (uint32_t lane = 0; lane < 16; ++lane)
             for (uint32_t col = 0; col < 64; ++col)
-                input_[lane * 64 + col] = decode(raw,
+                input_[lane * 64 + col] = decode(inputRaw_,
                     lane * desc_.hidden_dim + inputTile_ * 64 + col);
         // Each input tile owns one operand bank until its partial result is
         // consumed.  The first tile overwrites the shared output vector;
@@ -389,14 +494,11 @@ private:
     }
     void fail() { status_ = 1; phase_ = Phase::Failed; }
     void issueNextInputPrefetch(uint64_t cycle) {
-        const size_t bytes = static_cast<size_t>(16) * desc_.hidden_dim * 2;
-        std::vector<uint8_t> raw;
-        memory_->rd_from_globalmem(desc_.scratch_addr, bytes, raw);
-        if (raw.size() != bytes) { nextInputFailed_ = true; return; }
+        // The current row group was already fetched through the timed GM port.
         std::vector<double> values(1024, 0.0);
         for (uint32_t lane = 0; lane < 16; ++lane)
             for (uint32_t col = 0; col < 64; ++col)
-                values[lane * 64 + col] = decode(raw,
+                values[lane * 64 + col] = decode(inputRaw_,
                     lane * desc_.hidden_dim + 64 + col);
         nextInputIssued_ = true;
         nextInputReady_ = false;
@@ -426,7 +528,14 @@ private:
     void stagePartial(const std::vector<double>& values) {
         std::vector<uint8_t> raw(2048);
         for (size_t i = 0; i < values.size(); ++i) encode(raw, i, values[i]);
-        memory_->wr_to_globalmem(partialAddr(), raw.size(), raw);
+        beginLocalWrite(partialAddr(), std::move(raw), [this]() { advance(); });
+    }
+    void finishOutput() {
+        queueOutput(outputValues_);
+        if (reuseBlock_ && dimTile_ == 0)
+            beginLocalWrite(rawBlockAddr(), rawTile_,
+                [this]() { phase_ = Phase::WriteOutput; });
+        else phase_ = Phase::WriteOutput;
     }
     void queueOutput(const std::vector<double>& values) {
         const uint64_t rowStride = static_cast<uint64_t>(desc_.head_dim) * 2;
@@ -435,8 +544,6 @@ private:
         const uint64_t panelBase = kind_ == 0 ? desc_.q_panel_addr :
             kind_ == 1 ? desc_.k_panel_addr : desc_.v_panel_addr;
         const uint32_t dimTiles = desc_.head_dim / 64;
-        if (reuseBlock_ && dimTile_ != 0)
-            memory_->rd_from_globalmem(rawBlockAddr(), rawTile_.size(), rawTile_);
         std::vector<uint8_t> grouped(16 * 128);
         for (uint32_t lane = 0; lane < 16; ++lane) {
             std::vector<uint8_t> packed(128);
@@ -453,8 +560,6 @@ private:
             if (kind_ != 2)
                 std::memcpy(grouped.data() + lane * 128, packed.data(), 128);
         }
-        if (reuseBlock_ && dimTile_ == 0)
-            memory_->wr_to_globalmem(rawBlockAddr(), rawTile_.size(), rawTile_);
         if (dimTile_ + 1 == dimTiles)
             writes_.emplace_back(rawBase() + head_ * headStride + row_ * rowStride,
                                  rawTile_);
@@ -494,6 +599,7 @@ private:
                         blockStart_ += 256;
                         row_ = blockStart_;
                         blockLoaded_ = false;
+                        localInputRow_ = ~uint32_t{0};
                         if (blockStart_ == desc_.rows_per_node) {
                             blockStart_ = row_ = 0;
                             if (++head_ == headCount()) {
@@ -515,6 +621,7 @@ private:
             dimTile_ = 0;
             if ((row_ += 16) == desc_.rows_per_node) {
                 row_ = 0;
+                localInputRow_ = ~uint32_t{0};
                 if (++head_ == headCount()) {
                     head_ = 0;
                     if (++kind_ == 3) {
@@ -534,6 +641,9 @@ private:
     Phase phase_ = Phase::Idle;
     std::vector<uint32_t> arrays_;
     std::vector<double> input_;
+    std::vector<double> outputValues_;
+    std::vector<uint8_t> inputRaw_, weightRaw_, partialRaw_;
+    uint32_t localInputRow_ = ~uint32_t{0};
     std::vector<uint16_t> vTile_;
     std::vector<uint8_t> rawTile_;
     std::deque<std::pair<uint64_t, std::vector<uint8_t>>> writes_;
@@ -546,6 +656,12 @@ private:
     std::array<uint64_t, 64> cachedTiles_{};
     uint64_t weightLoads_ = 0, weightPrograms_ = 0, weightReuses_ = 0;
     uint64_t inputLoads_ = 0;
+    uint64_t localReadBytes_ = 0, localWriteBytes_ = 0, localAddr_ = 0;
+    size_t localOffset_ = 0;
+    bool localInFlight_ = false;
+    std::vector<uint8_t> localData_;
+    std::function<void(const std::vector<uint8_t>&)> localReadDone_;
+    std::function<void()> localWriteDone_;
     std::array<uint64_t, static_cast<size_t>(Phase::Count)> phaseCycles_{};
     bool reuseBlock_ = false;
     bool blockLoaded_ = false;

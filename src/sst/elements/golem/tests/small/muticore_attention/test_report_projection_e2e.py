@@ -12,7 +12,7 @@ class ProjectionReportTest(unittest.TestCase):
             "start_cycle": 40000,
             "end_cycle": 50000,
         }
-        lines = []
+        lines = ["[GOLEM] MVM compute latency cycles=64"]
         for core in range(4):
             for batch in range(4):
                 start = (10000 + core * 200 + batch * 1000) * 1000
@@ -27,6 +27,9 @@ class ProjectionReportTest(unittest.TestCase):
             lines.append(f"[PROJECTION_PHASE] manager={core} input_dma=10 "
                          "weight_dma=20 matrix_program=30 input_scatter=40 "
                          "output_restore=50 compute=60 output_read=70 write_drain=80")
+            lines.append(f"[PROJECTION_LOCAL_GM] manager={core} "
+                         f"read_bytes={3 * 16 * 128 * 2 + 192 * 8192} "
+                         "write_bytes=0 read_cycles=100 write_cycles=0 timed=1 reuse_block=0")
             lines.append(f"[PROJECTION_SYNC] core={core} stage=local_wait cycle=30000 status=0")
             last_flag = 30100 + core * 100
             for slot in range(4):
@@ -44,6 +47,12 @@ class ProjectionReportTest(unittest.TestCase):
         self.assertEqual(report["stage_handoff_cycles"]["sync_to_descriptor_by_manager"]["0"], 51)
         self.assertLess(report["stage_handoff_cycles"]["rmsnorm_to_projection"], 0)
         self.assertEqual(report["end_to_end_cycles"], 40000)
+        self.assertEqual(report["floor_components_cycles"]["projection_array"], 12288)
+        self.assertEqual(report["stages"]["projection"]["local_gm_by_manager"]["0"]["timed"], 1)
+        with self.assertRaisesRegex(ValueError, "byte accounting"):
+            summarize("\n".join(lines).replace("read_bytes=1585152", "read_bytes=1"), attention)
+        with self.assertRaisesRegex(ValueError, "Local-GM timing"):
+            summarize("\n".join(lines).replace("timed=1", "timed=0"), attention)
 
     def test_rejects_missing_projection_manager(self):
         attention = {

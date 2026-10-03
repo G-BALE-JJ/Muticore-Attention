@@ -10345,6 +10345,33 @@ public:
         }
     }
 
+    void readAttentionRopeTableLocal(uint64_t addr, size_t bytes,
+            std::function<void(bool, const std::vector<uint8_t>&)> done) {
+        struct ReadState {
+            std::vector<uint8_t> data;
+            size_t pending = 0;
+            bool ok = true;
+        };
+        const size_t limit = globalMem->localMaxRequestBytes();
+        if (limit == 0 || bytes == 0) { done(false, {}); return; }
+        auto state = std::make_shared<ReadState>();
+        state->data.resize(bytes);
+        state->pending = (bytes + limit - 1) / limit;
+        for (size_t offset = 0; offset < bytes; offset += limit) {
+            const size_t chunk = std::min(limit, bytes - offset);
+            const auto complete = [state, offset, chunk, done](
+                    bool ok, uint64_t, const std::vector<uint8_t>& data) {
+                state->ok = state->ok && ok && data.size() == chunk;
+                if (ok && data.size() == chunk)
+                    std::copy(data.begin(), data.end(), state->data.begin() + offset);
+                if (--state->pending == 0) done(state->ok, state->data);
+            };
+            if (!globalMem->localReadAsync(addr + offset, chunk,
+                    LocalMemoryClient::RoCC, ++attentionRopeLocalReadTag_, complete))
+                complete(false, 0, {});
+        }
+    }
+
     bool startAttentionReuseWindowQkBridge(AttentionWorkerState& state) {
         if (!attentionReuseWindowQkBridge_ || workerCommandProcessor == nullptr ||
             state.dispatch.nodeStrideBytes == 0 || coreID < 4 ||
@@ -10385,20 +10412,29 @@ public:
                     state.dispatch.nodeStrideBytes + tableOffset, tableBytes,
                     localAddr, [this, target, generation, localAddr, tableBytes](bool ok) {
                         if (!attentionReuseWindowStateValid(target, generation)) return;
-                        target->ropeTableLoading = false;
-                        std::vector<uint8_t> bytes;
-                        if (ok) {
-                            globalMem->rd_from_globalmem(
-                                localAddr, static_cast<size_t>(tableBytes), bytes);
+                        if (!ok) {
+                            if (attentionWorker_.get() == target) finishAttentionWorker(false);
+                            return;
                         }
-                        if (!ok || bytes.size() != tableBytes) {
+                        const uint64_t dmaEnd = LastTickCycle;
+                        readAttentionRopeTableLocal(localAddr, tableBytes,
+                            [this, target, generation, tableBytes, dmaEnd](
+                                bool readOk, const std::vector<uint8_t>& bytes) {
+                        if (!attentionReuseWindowStateValid(target, generation)) return;
+                        target->ropeTableLoading = false;
+                        if (!readOk || bytes.size() != tableBytes) {
                             if (attentionWorker_.get() == target) finishAttentionWorker(false);
                             return;
                         }
                         output->output("[ATTENTION_ROPE_TABLE] core=%" PRIu64
-                            " bytes=%" PRIu64 " cycles=%" PRIu64 "\n",
+                            " bytes=%" PRIu64 " cycles=%" PRIu64
+                            " dma_cycles=%" PRIu64 " local_read_cycles=%" PRIu64
+                            " start=%" PRIu64 " end=%" PRIu64 "\n",
                             coreID, tableBytes,
-                            LastTickCycle - target->ropeTableLoadStartCycle);
+                            LastTickCycle - target->ropeTableLoadStartCycle,
+                            dmaEnd - target->ropeTableLoadStartCycle,
+                            LastTickCycle - dmaEnd,
+                            target->ropeTableLoadStartCycle, LastTickCycle);
                         target->ropeTable.resize(bytes.size() / sizeof(uint16_t));
                         for (size_t i = 0; i < target->ropeTable.size(); ++i) {
                             uint16_t bits;
@@ -10413,6 +10449,7 @@ public:
                         target->ropeTableReady = true;
                         if (!startAttentionReuseWindowQkBridge(*target) &&
                             attentionWorker_.get() == target) finishAttentionWorker(false);
+                        });
                     }, DmaRequestKind::AttentionQuery);
                 return true;
             }
@@ -13833,6 +13870,7 @@ private:
     bool attentionWorkerClusterWindowMajor_ = true;
     bool attentionWorkerClusterVBroadcast_ = false;
     bool attentionWorkerClusterDynamicPv_ = false;
+    uint64_t attentionRopeLocalReadTag_ = 0;
     bool attentionMilestoneTrace_;
     bool attentionTileTrace_;
     bool attentionClusterEnable_ = false;

@@ -11,16 +11,20 @@ from pathlib import Path
 RMS = re.compile(r"\[SFU_RMSNORM\] core=(\d+).*?issue_tick=(\d+).*?complete_tick=(\d+).*?vector_cycles=(\d+) status=(\d+)")
 PROJECTION = re.compile(r"\[PROJECTION_JOB\] manager=(\d+) start=(\d+) end=(\d+) cycles=(\d+) weight_loads=(\d+) weight_programs=(\d+) weight_reuses=(\d+)(?: input_loads=(\d+))? status=(\d+)")
 PHASE = re.compile(r"\[PROJECTION_PHASE\] manager=(\d+) input_dma=(\d+) weight_dma=(\d+) matrix_program=(\d+) input_scatter=(\d+) output_restore=(\d+) compute=(\d+) output_read=(\d+) write_drain=(\d+)")
+LOCAL_GM = re.compile(r"\[PROJECTION_LOCAL_GM\] manager=(\d+) read_bytes=(\d+) write_bytes=(\d+) read_cycles=(\d+) write_cycles=(\d+) timed=(\d+) reuse_block=(\d+)")
+ARRAY_LATENCY = re.compile(r"MVM compute latency cycles=(\d+)")
+ROPE_TABLE = re.compile(r"\[ATTENTION_ROPE_TABLE\] core=(\d+) bytes=(\d+) cycles=(\d+) dma_cycles=(\d+) local_read_cycles=(\d+) start=(\d+) end=(\d+)")
 SYNC = re.compile(r"\[PROJECTION_SYNC\] core=(\d+) stage=flag_wait cycle=(\d+) flag=(\d+) status=(\d+)")
 LOCAL_WAIT = re.compile(r"\[PROJECTION_SYNC\] core=(\d+) stage=local_wait cycle=(\d+) status=(\d+)")
 DESCRIPTOR = re.compile(r"\[ATTENTION_MILESTONE\] stage=(?:root_|manager_)descriptor_accept status=done .*?rocc_cycle=(\d+) core=(\d+)")
 
 
-def summarize(log_text, attention):
+def summarize(log_text, attention, array_compute_cycles=None):
     rms = [tuple(map(int, match)) for match in RMS.findall(log_text)]
     projection = [tuple(int(value) if value else None for value in match)
                   for match in PROJECTION.findall(log_text)]
     phases = [tuple(map(int, match)) for match in PHASE.findall(log_text)]
+    local_gm = [tuple(map(int, match)) for match in LOCAL_GM.findall(log_text)]
     sync = [tuple(map(int, match)) for match in SYNC.findall(log_text)]
     local_wait = [tuple(map(int, match)) for match in LOCAL_WAIT.findall(log_text)]
     descriptors = [tuple(map(int, event)) for event in DESCRIPTOR.findall(log_text)]
@@ -56,6 +60,13 @@ def summarize(log_text, attention):
         rms_core_work[core] = rms_core_work.get(core, 0) + vector_cycles
     projection_macs = sequence * (hq + 2 * hkv) * dim * hidden
     projection_floor = math.ceil(projection_macs / (4 * 16 * 64 * 64))
+    array_latencies = {int(value) for value in ARRAY_LATENCY.findall(log_text)}
+    if array_compute_cycles is not None:
+        array_latencies.add(array_compute_cycles)
+    if len(array_latencies) > 1:
+        raise ValueError("inconsistent array compute latency")
+    array_latency = next(iter(array_latencies), 1)
+    projection_floor *= array_latency
     causal_tiles = hq * (sequence // 64) * (sequence // 64 + 1) // 2
     exp_elements = causal_tiles * 64 * 64
     attention_exp_floor = math.ceil(exp_elements / (8 * 16))
@@ -88,10 +99,36 @@ def summarize(log_text, attention):
             "attention_sfu_exp": attention_exp_floor,
         },
         "actual_to_floor_ratio": round(actual / floor, 3),
-        "floor_scope": "RMSNorm vector work + projection array MACs + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+        "projection_full_width_compute_cycles": array_latency,
+        "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
     }
     if all(event[7] is not None for event in projection):
         result["stages"]["projection"]["input_loads"] = sum(event[7] for event in projection)
+    if local_gm:
+        if not array_latencies:
+            raise ValueError("missing projection array compute latency")
+        if (sorted(event[0] for event in local_gm) != list(range(4)) or
+                any(event[1] <= 0 or event[3] <= 0 or event[5] != 1
+                    for event in local_gm)):
+            raise ValueError("incomplete projection Local-GM timing")
+        for core, read_bytes, write_bytes, _, _, _, reuse in local_gm:
+            job = next(event for event in projection if event[0] == core)
+            if not reuse and job[7] is not None:
+                expected = job[7] * 16 * hidden * 2 + job[5] * 8192
+                if read_bytes != expected or write_bytes != 0:
+                    raise ValueError("projection Local-GM byte accounting mismatch")
+        names = ("read_bytes", "write_bytes", "read_cycles", "write_cycles",
+                 "timed", "reuse_block")
+        result["stages"]["projection"]["local_gm_by_manager"] = {
+            str(event[0]): dict(zip(names, event[1:])) for event in local_gm
+        }
+    rope_tables = [tuple(map(int, event)) for event in ROPE_TABLE.findall(log_text)]
+    if rope_tables:
+        names = ("bytes", "elapsed_cycles", "dma_cycles", "local_read_cycles",
+                 "start_cycle", "end_cycle")
+        result["attention_rope_table_first_load_by_worker"] = {
+            str(event[0]): dict(zip(names, event[1:])) for event in rope_tables
+        }
     if sorted(event[0] for event in phases) == list(range(4)):
         names = ("input_dma", "weight_dma", "matrix_program", "input_scatter",
                  "output_restore", "compute", "output_read", "write_drain")
@@ -135,9 +172,18 @@ def main():
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--attention-result", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--run-config", type=Path)
     args = parser.parse_args()
+    array_cycles = None
+    if args.run_config:
+        config = args.run_config.read_text()
+        mac = re.search(r"GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=([0-9.]+)", config)
+        depth = re.search(r"GOLEM_ARRAY_PIPELINE_DEPTH=(\d+)", config)
+        if not mac or not depth:
+            raise ValueError("missing array timing configuration")
+        array_cycles = math.ceil(64 / float(mac[1])) + int(depth[1])
     report = summarize(args.log.read_text(errors="replace"),
-                       json.loads(args.attention_result.read_text()))
+                       json.loads(args.attention_result.read_text()), array_cycles)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
 

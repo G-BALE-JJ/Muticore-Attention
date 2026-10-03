@@ -1249,6 +1249,7 @@ if (( REUSE_WINDOW_QK_BRIDGE )); then
     if (( ATTENTION_PROJECTION )); then
       run_attention_stage projection_e2e_report python3 "$SCRIPT_DIR/report_projection_e2e.py" \
         --log "$SST_RUNTIME_LOG" --attention-result "$QK_BRIDGE_RESULT" \
+        --run-config "$RUN_CONFIG_FILE" \
         --output "$ARTIFACT_ROOT/projection_e2e_result.json"
       python3 - "$ARTIFACT_ROOT/projection_e2e_result.json" <<'PY'
 import json

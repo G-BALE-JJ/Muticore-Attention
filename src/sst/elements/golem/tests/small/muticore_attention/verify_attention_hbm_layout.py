@@ -39,6 +39,7 @@ def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
         path = Path(hbm_dir) / f"{source}_node{band + 1}.bin"
         capacity = path.stat().st_size
         regions = []
+        numerical = {}
         with path.open("rb") as handle:
             def check(name, offset, expected, numeric=False):
                 nonlocal checked
@@ -50,9 +51,19 @@ def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
                     # Projection is an FP16 tiled reduction. Its NumPy golden
                     # uses the same storage format but a different vectorized
                     # reduction order, so compare with a bounded FP16 error.
-                    tolerance = 8e-2 if projection else 5e-4
+                    tolerance = 2e-3 if name == "RMSNorm" else 5e-4
                     matches = found.size == wanted.size and np.allclose(
                         found, wanted, atol=tolerance, rtol=5e-3)
+                    if found.size == wanted.size:
+                        errors = np.abs(found - wanted)
+                        numerical[name] = {
+                            "elements": int(found.size),
+                            "max_abs_error": float(np.max(errors)),
+                            "mean_abs_error": float(np.mean(errors)),
+                            "rmse": float(np.sqrt(np.mean(errors * errors))),
+                            "reference_max_abs": float(np.max(np.abs(wanted))),
+                            "atol": tolerance, "rtol": 5e-3,
+                        }
                 else:
                     matches = actual == expected
                 if not matches:
@@ -107,6 +118,7 @@ def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
             if left[2] > right[1]:
                 raise ValueError(f"{path}: {left[0]} overlaps {right[0]}")
         nodes.append({"node": band + 1, "capacity_bytes": capacity,
+                      "numerical_errors": numerical,
                       "regions": [{"name": n, "begin": b, "end": e} for n, b, e in regions]})
     return {"status": "PASS", "dtype": dtype, "element_bytes": elem_bytes,
             "checked_bytes": checked, "nodes": nodes}
