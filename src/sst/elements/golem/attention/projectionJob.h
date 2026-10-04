@@ -11,6 +11,7 @@
 #include <functional>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <deque>
 #include <utility>
 #include <vector>
@@ -69,6 +70,19 @@ public:
             desc.scratch_addr - gmBase <= gmSize - 64 &&
             reuseBytes <= gmSize - 64 - (desc.scratch_addr - gmBase);
         pairedWeights_ = pairedWeights_ && reuseBlock_;
+        // Budget the additional 8 KiB of transfer snapshots against the same
+        // local-GM capacity, including the reserved DMA tail. This is not an
+        // additional array bank or an unbounded software cache.
+        pipeline_ = pairedWeights_ && enabled("GOLEM_PROJECTION_PIPELINE") &&
+            reuseBytes + 8192 <= gmSize - 64 - (desc.scratch_addr - gmBase);
+        sharedInput_ = pairedWeights_ && enabled("GOLEM_PROJECTION_SHARED_INPUT");
+        prefetchInput_ = AsyncRead{};
+        prefetchPartial_ = AsyncRead{};
+        partialStore_ = AsyncStore{};
+        scatterIssued_ = scatterReady_ = computing_ = false;
+        inputPrefetches_ = partialPrefetches_ = scatterPrefetches_ = 0;
+        backgroundReadCycles_ = backgroundWriteCycles_ = 0;
+        backgroundReadRejects_ = backgroundWriteRejects_ = 0;
         blockStart_ = 0;
         blockLoaded_ = false;
         writeOutstanding_ = 0;
@@ -93,6 +107,7 @@ public:
         if (!active()) return;
         if (startCycle_ == 0) startCycle_ = cycle;
         ++phaseCycles_[static_cast<size_t>(phase_)];
+        if (pipeline_) pumpBackground(cycle);
         pumpLocalAccess();
         if (pending_) return;
         switch (phase_) {
@@ -195,6 +210,14 @@ public:
             break;
         }
         case Phase::ProgramInput: {
+            if (pipeline_ && scatterIssued_ && scatterRow_ == row_ &&
+                scatterTile_ == inputTile_) {
+                if (!scatterReady_) break;
+                scatterIssued_ = scatterReady_ = false;
+                phase_ = inputTile_ != 0 && inputTile_ % 2 == 0 ?
+                    Phase::RestoreOutput : Phase::Launch;
+                break;
+            }
             if (inputTile_ == 1 && nextInputReady_) {
                 nextInputReady_ = false;
                 nextInputIssued_ = false;
@@ -241,6 +264,7 @@ public:
                     [this](uint32_t, uint64_t) {
                         if (--remaining_ == 0) {
                             pending_ = false;
+                            computing_ = false;
                             if (pairedWeights_ && inputTile_ % 2 == 0) {
                                 ++inputTile_;
                                 phase_ = Phase::LoadInput;
@@ -251,6 +275,24 @@ public:
                                     Phase::LoadInput : Phase::ReadOutput);
                         }
                     })) { pending_ = false; break; }
+            if (pipeline_) {
+                computing_ = true;
+                computeBank_ = activeOperandBank_;
+                if (inputTile_ % 2 == 0 && row_ + 16 < blockStart_ + 256) {
+                    prefetchRow_ = row_ + 16;
+                    prefetchTile_ = inputTile_;
+                    armRead(prefetchInput_, inputBlockAddr() +
+                        static_cast<uint64_t>(prefetchRow_ - blockStart_) * desc_.hidden_dim * 2 +
+                        static_cast<uint64_t>(inputTile_) * 128, 4096, 256);
+                    ++inputPrefetches_;
+                    if (inputTile_ != 0) {
+                        armRead(prefetchPartial_, desc_.scratch_addr + 0xE0000 +
+                            static_cast<uint64_t>(prefetchRow_ - blockStart_) * 128,
+                            2048, 2048);
+                        ++partialPrefetches_;
+                    }
+                }
+            }
             break;
         case Phase::ReadOutput:
             pending_ = true;
@@ -260,14 +302,40 @@ public:
                         pending_ = false;
                         if (!ok || values.size() != 1024) { fail(); return; }
                         if (reuseBlock_ && inputTile_ + 1 < desc_.hidden_dim / 64) {
-                            stagePartial(values);
+                            if (pipeline_) {
+                                outputValues_ = values;
+                                phase_ = Phase::StagePartial;
+                            } else stagePartial(values);
                         } else {
                             outputValues_ = values;
                             phase_ = Phase::PrepareOutput;
                         }
                     })) { pending_ = false; break; }
             break;
+        case Phase::StagePartial:
+            if (!partialStore_.active) {
+                partialStore_.addr = partialAddr();
+                partialStore_.data.resize(2048);
+                for (size_t i = 0; i < outputValues_.size(); ++i)
+                    encode(partialStore_.data, i, outputValues_[i]);
+                partialStore_.offset = 0;
+                partialStore_.inFlight = false;
+                partialStore_.active = true;
+                advance();
+            }
+            break;
         case Phase::RestoreOutput: {
+            if (pipeline_ && prefetchRow_ == row_ && prefetchTile_ == inputTile_ &&
+                (prefetchPartial_.active || prefetchPartial_.ready)) {
+                if (!prefetchPartial_.ready) break;
+                partialRaw_ = std::move(prefetchPartial_.data);
+                prefetchPartial_ = AsyncRead{};
+                phase_ = Phase::RestoreOutputReady;
+                break;
+            }
+            // A store owns its snapshot until timed SRAM completion. Do not
+            // read a matching address, even under slow-write/backpressure profiles.
+            if (pipeline_ && partialStore_.active && partialStore_.addr == partialAddr()) break;
             beginLocalRead(partialAddr(), 2048,
                 [this](const std::vector<uint8_t>& raw) {
                     partialRaw_ = raw;
@@ -304,7 +372,7 @@ public:
             advance();
             break;
         case Phase::WriteDrain:
-            if (writeOutstanding_ == 0) phase_ = Phase::WriteCompletion;
+            if (writeOutstanding_ == 0 && !partialStore_.active) phase_ = Phase::WriteCompletion;
             break;
         case Phase::WriteCompletion:
             pending_ = true;
@@ -341,6 +409,16 @@ public:
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LocalRead)]),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LocalWrite)]),
                         reuseBlock_ ? 1u : 0u, pairedWeights_ ? 1u : 0u);
+                    std::printf("[PROJECTION_PIPELINE] manager=%u enabled=%u shared_input=%u input_prefetches=%llu partial_prefetches=%llu scatter_prefetches=%llu background_read_cycles=%llu background_write_cycles=%llu staging_bytes=%u read_retries=%llu write_retries=%llu\n",
+                        desc_.manager_slot, pipeline_ ? 1u : 0u, sharedInput_ ? 1u : 0u,
+                        static_cast<unsigned long long>(inputPrefetches_),
+                        static_cast<unsigned long long>(partialPrefetches_),
+                        static_cast<unsigned long long>(scatterPrefetches_),
+                        static_cast<unsigned long long>(backgroundReadCycles_),
+                        static_cast<unsigned long long>(backgroundWriteCycles_),
+                        pipeline_ ? 8192u : 0u,
+                        static_cast<unsigned long long>(backgroundReadRejects_),
+                        static_cast<unsigned long long>(backgroundWriteRejects_));
                 });
             break;
         case Phase::Failed: phase_ = Phase::Complete; break;
@@ -349,9 +427,114 @@ public:
     }
 
 private:
+    // One future input pair, one future partial, and one output snapshot.
+    // These bounded transfer buffers add 8 KiB of staging, not array contexts.
+    struct AsyncRead {
+        uint64_t addr = 0;
+        size_t laneBytes = 0, submitted = 0, completed = 0;
+        bool active = false, ready = false;
+        std::vector<uint8_t> data;
+    };
+    struct AsyncStore {
+        uint64_t addr = 0;
+        size_t offset = 0;
+        bool active = false, inFlight = false;
+        std::vector<uint8_t> data;
+    };
+    static bool enabled(const char* name) {
+        const char* value = std::getenv(name);
+        return value == nullptr || std::strcmp(value, "0") != 0;
+    }
+    void armRead(AsyncRead& transfer, uint64_t addr, size_t bytes, size_t laneBytes) {
+        transfer = AsyncRead{};
+        transfer.addr = addr;
+        transfer.laneBytes = laneBytes;
+        transfer.data.assign(bytes, 0);
+        transfer.active = true;
+    }
+    void pumpRead(AsyncRead& transfer) {
+        if (!transfer.active) return;
+        const size_t limit = memory_->localMaxRequestBytes();
+        if (limit == 0) { fail(); return; }
+        while (transfer.submitted < transfer.data.size()) {
+            const size_t offset = transfer.submitted;
+            const size_t chunk = std::min(limit, transfer.laneBytes - offset % transfer.laneBytes);
+            const uint64_t addr = transfer.addr + (transfer.laneBytes == 256 ?
+                (offset / 256) * desc_.hidden_dim * 2 + offset % 256 : offset);
+            AsyncRead* slot = &transfer;
+            if (!memory_->localReadAsync(addr, chunk, LocalMemoryClient::RoCC, ++tag_,
+                [this, slot, offset, chunk](bool ok, uint64_t, const std::vector<uint8_t>& raw) {
+                    if (!ok || raw.size() != chunk) { fail(); return; }
+                    std::copy(raw.begin(), raw.end(), slot->data.begin() + offset);
+                    localReadBytes_ += chunk;
+                    slot->completed += chunk;
+                    if (slot->completed == slot->data.size()) {
+                        slot->active = false;
+                        slot->ready = true;
+                    }
+                })) { ++backgroundReadRejects_; break; }
+            transfer.submitted += chunk;
+        }
+    }
+    void prefetchScatter(uint32_t row, uint32_t tile,
+                         const std::vector<uint8_t>& raw, uint64_t cycle) {
+        if (scatterIssued_) return;
+        std::vector<double> values(1024);
+        for (uint32_t lane = 0; lane < 16; ++lane)
+            for (uint32_t col = 0; col < 64; ++col)
+                values[lane * 64 + col] = decode(raw, lane * 128 + (tile % 2) * 64 + col);
+        if (processor_->programGemmInputScatterBankAsync(arrays_, tile & 1u, values, 2,
+            AttentionClusterTrafficClass::ProjectionInputScatter, ++tag_, cycle,
+            [this](bool ok, uint64_t) {
+                if (!ok) { fail(); return; }
+                scatterReady_ = true;
+            })) {
+            scatterIssued_ = true;
+            scatterReady_ = false;
+            scatterRow_ = row;
+            scatterTile_ = tile;
+            ++scatterPrefetches_;
+        }
+    }
+    void pumpBackground(uint64_t cycle) {
+        if (prefetchInput_.active || prefetchPartial_.active) ++backgroundReadCycles_;
+        pumpRead(prefetchInput_);
+        // Different row addresses cannot alias the current row's store.
+        if (!partialStore_.active || partialStore_.addr != prefetchPartial_.addr)
+            pumpRead(prefetchPartial_);
+        if (partialStore_.active) {
+            ++backgroundWriteCycles_;
+            if (!partialStore_.inFlight) {
+                const size_t limit = memory_->localMaxRequestBytes();
+                if (limit == 0) { fail(); return; }
+                const size_t chunk = std::min(limit, partialStore_.data.size() - partialStore_.offset);
+                std::vector<uint8_t> payload(partialStore_.data.begin() + partialStore_.offset,
+                    partialStore_.data.begin() + partialStore_.offset + chunk);
+                if (memory_->localWriteAsync(partialStore_.addr + partialStore_.offset, payload,
+                    LocalMemoryClient::RoCC, ++tag_, [this, chunk](bool ok, uint64_t) {
+                        partialStore_.inFlight = false;
+                        if (!ok) { fail(); return; }
+                        localWriteBytes_ += chunk;
+                        partialStore_.offset += chunk;
+                        if (partialStore_.offset == partialStore_.data.size())
+                            partialStore_.active = false;
+                    })) partialStore_.inFlight = true;
+                else ++backgroundWriteRejects_;
+            }
+        }
+        // Only the inactive input bank is written. Output restore remains on
+        // the serial path, after the preceding output read has completed.
+        if (computing_ && !scatterIssued_) {
+            if (computeBank_ == 0 &&
+                residentTiles_[1] == weightTileForInputTile(inputTile_ + 1))
+                prefetchScatter(row_, inputTile_ + 1, inputRaw_, cycle);
+            else if (computeBank_ == 1 && prefetchInput_.ready)
+                prefetchScatter(prefetchRow_, prefetchTile_, prefetchInput_.data, cycle);
+        }
+    }
     enum class Phase { Idle, LoadBlock, LoadInput, LoadWeight, LoadWeightDma, ProgramWeight,
         ProgramWeightReady, ProgramInput, Launch, WaitInputPrefetch, ReadOutput,
-        RestoreOutput, RestoreOutputReady, PrepareOutput, LocalRead, LocalWrite, WriteOutput,
+        RestoreOutput, RestoreOutputReady, PrepareOutput, LocalRead, LocalWrite, StagePartial, WriteOutput,
         WriteDrain, WriteCompletion, Failed, Complete, Count };
     static double decode(const std::vector<uint8_t>& bytes, size_t index) {
         uint16_t bits;
@@ -470,6 +653,14 @@ private:
     void prepareInput() {
         if (pairedWeights_) {
             if (inputTile_ % 2 != 0) { prepareInputReady(); return; }
+            if (pipeline_ && prefetchRow_ == row_ && prefetchTile_ == inputTile_ &&
+                (prefetchInput_.active || prefetchInput_.ready)) {
+                if (!prefetchInput_.ready) return;
+                inputRaw_ = std::move(prefetchInput_.data);
+                prefetchInput_ = AsyncRead{};
+                prepareInputReady();
+                return;
+            }
             beginLocalInputPairRead(inputBlockAddr() +
                 static_cast<uint64_t>(row_ - blockStart_) * desc_.hidden_dim * 2 +
                 static_cast<uint64_t>(inputTile_) * 128,
@@ -558,7 +749,7 @@ private:
     uint64_t rawBase() const {
         return kind_ == 0 ? desc_.q_addr : kind_ == 1 ? desc_.k_addr : desc_.v_addr;
     }
-    void fail() { status_ = 1; phase_ = Phase::Failed; }
+    void fail() { status_ = 1; pending_ = false; phase_ = Phase::Failed; }
     void issueNextInputPrefetch(uint64_t cycle) {
         // The current row group was already fetched through the timed GM port.
         std::vector<double> values(1024, 0.0);
@@ -666,16 +857,32 @@ private:
                     inputTile_ = 0;
                     if (++dimTile_ == desc_.head_dim / 64) {
                         dimTile_ = 0;
+                        if (sharedInput_) {
+                            if (++head_ == headCount()) {
+                                head_ = 0;
+                                ++kind_;
+                            }
+                            if (kind_ != 3) {
+                                phase_ = Phase::LoadInput;
+                                return;
+                            }
+                            head_ = kind_ = 0;
+                        }
                         blockStart_ += 256;
                         row_ = blockStart_;
                         blockLoaded_ = false;
                         localInputRow_ = ~uint32_t{0};
                         if (blockStart_ == desc_.rows_per_node) {
+                            if (sharedInput_) {
+                                phase_ = (writeOutstanding_ == 0 && !partialStore_.active) ?
+                                    Phase::WriteCompletion : Phase::WriteDrain;
+                                return;
+                            }
                             blockStart_ = row_ = 0;
                             if (++head_ == headCount()) {
                                 head_ = 0;
                                 if (++kind_ == 3) {
-                                    phase_ = writeOutstanding_ == 0 ? Phase::WriteCompletion : Phase::WriteDrain;
+                                    phase_ = (writeOutstanding_ == 0 && !partialStore_.active) ? Phase::WriteCompletion : Phase::WriteDrain;
                                     return;
                                 }
                             }
@@ -735,6 +942,17 @@ private:
     std::function<void(const std::vector<uint8_t>&)> localReadDone_;
     std::function<void()> localWriteDone_;
     std::array<uint64_t, static_cast<size_t>(Phase::Count)> phaseCycles_{};
+    bool pipeline_ = false, sharedInput_ = false;
+    bool computing_ = false;
+    uint32_t computeBank_ = 0;
+    AsyncRead prefetchInput_, prefetchPartial_;
+    AsyncStore partialStore_;
+    uint32_t prefetchRow_ = ~uint32_t{0}, prefetchTile_ = ~uint32_t{0};
+    bool scatterIssued_ = false, scatterReady_ = false;
+    uint32_t scatterRow_ = 0, scatterTile_ = 0;
+    uint64_t inputPrefetches_ = 0, partialPrefetches_ = 0, scatterPrefetches_ = 0;
+    uint64_t backgroundReadCycles_ = 0, backgroundWriteCycles_ = 0;
+    uint64_t backgroundReadRejects_ = 0, backgroundWriteRejects_ = 0;
     bool reuseBlock_ = false;
     bool pairedWeights_ = false;
     bool blockLoaded_ = false;

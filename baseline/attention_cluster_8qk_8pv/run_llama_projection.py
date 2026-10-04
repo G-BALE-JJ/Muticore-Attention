@@ -71,11 +71,52 @@ def summarize(case):
     }
 
 
+def compare_reference(case, reference):
+    """Compare measured cycles and byte-exact projection layouts."""
+    current, previous = summarize(case), summarize(reference)
+    if current["pipeline"]["shape"] != previous["pipeline"]["shape"]:
+        raise ValueError("reference shape mismatch")
+    for name in ("projection_x.bin", "projection_gamma.bin", "projection_weights.bin"):
+        if digest(case / name) != digest(reference / name):
+            raise ValueError(f"reference input mismatch: {name}")
+    current_layout = json.loads((case / "attention_hbm_layout.json").read_text())
+    prior_layout = json.loads((reference / "attention_hbm_layout.json").read_text())
+    checked = []
+    names = {"RMSNorm", "Q", "K", "V", "Q_panels", "K_panels", "V_panels"}
+    for node, prior in zip(current_layout["nodes"], prior_layout["nodes"], strict=True):
+        if node["node"] != prior["node"] or node["regions"] != prior["regions"]:
+            raise ValueError("reference HBM layout mismatch")
+        filename = f"hbm_out_node{node['node']}.bin"
+        with (case / "hbm" / filename).open("rb") as actual, (reference / "hbm" / filename).open("rb") as expected:
+            for region in node["regions"]:
+                if region["name"] not in names:
+                    continue
+                actual.seek(region["begin"])
+                expected.seek(region["begin"])
+                length = region["end"] - region["begin"]
+                if actual.read(length) != expected.read(length):
+                    raise ValueError(f"reference byte mismatch: node {node['node']} {region['name']}")
+                checked.append({"node": node["node"], "region": region["name"], "bytes": length})
+    def reduction(old, new):
+        return {"before": old, "after": new, "saved_cycles": old - new,
+                "reduction_percent": 100 * (old - new) / old}
+    comparison = {
+        "status": "PASS", "reference_root": str(reference),
+        "byte_exact_regions": checked,
+        "end_to_end": reduction(previous["pipeline"]["end_to_end_cycles"], current["pipeline"]["end_to_end_cycles"]),
+        "projection": reduction(previous["pipeline"]["stages"]["projection"]["elapsed_cycles"], current["pipeline"]["stages"]["projection"]["elapsed_cycles"]),
+    }
+    (case / "reference_comparison.json").write_text(json.dumps(comparison, indent=2) + "\n")
+    return comparison
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-root", type=Path, required=True)
     parser.add_argument("--sequences", type=int, nargs="+", default=[1024, 2048])
     parser.add_argument("--summarize-only", action="store_true")
+    parser.add_argument("--reference-root", type=Path,
+                        help="prior artifact root containing s1024/s2048; check exact projection bytes and cycle savings")
     args = parser.parse_args()
     env = {**os.environ, **GM_PROFILE}
     cases = []
@@ -122,6 +163,9 @@ def main():
                 p.name: digest(p) for p in sorted(case.glob("*.bin"))}
             (case / "baseline_provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
         cases.append(summarize(case))
+        if args.reference_root:
+            cases[-1]["reference_comparison"] = compare_reference(
+                case, args.reference_root.resolve() / f"s{sequence}")
         print(f"S={sequence}: {cases[-1]['pipeline']['end_to_end_cycles']:,} cycles, PASS", flush=True)
     output = args.artifact_root.resolve() / "summary.json"
     output.write_text(json.dumps({"status": "PASS", "cases": cases}, indent=2) + "\n")

@@ -12,6 +12,7 @@ RMS = re.compile(r"\[SFU_RMSNORM\] core=(\d+).*?issue_tick=(\d+).*?complete_tick
 PROJECTION = re.compile(r"\[PROJECTION_JOB\] manager=(\d+) start=(\d+) end=(\d+) cycles=(\d+) weight_loads=(\d+) weight_programs=(\d+) weight_reuses=(\d+)(?: input_loads=(\d+))? status=(\d+)")
 PHASE = re.compile(r"\[PROJECTION_PHASE\] manager=(\d+) input_dma=(\d+) weight_dma=(\d+) matrix_program=(\d+) input_scatter=(\d+) output_restore=(\d+) compute=(\d+) output_read=(\d+) write_drain=(\d+)")
 LOCAL_GM = re.compile(r"\[PROJECTION_LOCAL_GM\] manager=(\d+) read_bytes=(\d+) write_bytes=(\d+) read_cycles=(\d+) write_cycles=(\d+) timed=(\d+) reuse_block=(\d+)(?: paired_weights=(\d+))?")
+PIPELINE = re.compile(r"\[PROJECTION_PIPELINE\] manager=(\d+) enabled=(\d+) shared_input=(\d+) input_prefetches=(\d+) partial_prefetches=(\d+) scatter_prefetches=(\d+) background_read_cycles=(\d+) background_write_cycles=(\d+) staging_bytes=(\d+)")
 ARRAY_LATENCY = re.compile(r"MVM compute latency cycles=(\d+)")
 ROPE_TABLE = re.compile(r"\[ATTENTION_ROPE_TABLE\] core=(\d+) bytes=(\d+) cycles=(\d+) dma_cycles=(\d+) local_read_cycles=(\d+) start=(\d+) end=(\d+)")
 SYNC = re.compile(r"\[PROJECTION_SYNC\] core=(\d+) stage=flag_wait cycle=(\d+) flag=(\d+) status=(\d+)")
@@ -26,6 +27,10 @@ def summarize(log_text, attention, array_compute_cycles=None):
     phases = [tuple(map(int, match)) for match in PHASE.findall(log_text)]
     local_gm = [tuple(int(value) if value else 0 for value in match)
                 for match in LOCAL_GM.findall(log_text)]
+    pipelines = [tuple(map(int, match)) for match in PIPELINE.findall(log_text)]
+    if pipelines and sorted(event[0] for event in pipelines) != list(range(4)):
+        raise ValueError("incomplete projection overlap evidence")
+    pipeline_by_core = {event[0]: event for event in pipelines}
     sync = [tuple(map(int, match)) for match in SYNC.findall(log_text)]
     local_wait = [tuple(map(int, match)) for match in LOCAL_WAIT.findall(log_text)]
     descriptors = [tuple(map(int, event)) for event in DESCRIPTOR.findall(log_text)]
@@ -120,10 +125,22 @@ def summarize(log_text, attention, array_compute_cycles=None):
                 programs = blocks * (hidden // 64)
                 partials = groups * (hidden // 128 - 1) * 2048
                 expected_reads = groups * 16 * hidden * 2 + programs * 8192 + partials
+                overlap = pipeline_by_core.get(core)
+                shared = overlap[2] if overlap else 0
+                expected_inputs = sequence // 4 // 256 if shared else blocks
+                expected_weights = programs if shared else (hq + 2 * hkv) * (hidden // 64)
+                if overlap and overlap[1]:
+                    expected_prefetches = blocks * (hidden // 128) * 15
+                    expected_partial_prefetches = blocks * (hidden // 128 - 1) * 15
+                    if (overlap[3] != expected_prefetches or
+                            overlap[4] != expected_partial_prefetches or
+                            overlap[5] <= 0 or overlap[6] <= 0 or
+                            overlap[7] <= 0 or overlap[8] != 8192):
+                        raise ValueError("projection overlap work mismatch")
                 if (dim != 64 or not reuse or hidden % 128 or
                         read_bytes != expected_reads or write_bytes != partials or
                         job[5] != programs or job[6] != groups * (hidden // 64) - programs or
-                        job[7] != blocks):
+                        job[7] != expected_inputs or job[4] != expected_weights):
                     raise ValueError("paired projection work or byte accounting mismatch")
             if not reuse and job[7] is not None:
                 expected = job[7] * 16 * hidden * 2 + job[5] * 8192
@@ -134,6 +151,12 @@ def summarize(log_text, attention, array_compute_cycles=None):
         result["stages"]["projection"]["local_gm_by_manager"] = {
             str(event[0]): dict(zip(names, event[1:])) for event in local_gm
         }
+    if pipelines:
+        names = ("enabled", "shared_input", "input_prefetches", "partial_prefetches",
+                 "scatter_prefetches", "background_read_cycles", "background_write_cycles",
+                 "staging_bytes")
+        result["stages"]["projection"]["pipeline_by_manager"] = {
+            str(event[0]): dict(zip(names, event[1:])) for event in pipelines}
     rope_tables = [tuple(map(int, event)) for event in ROPE_TABLE.findall(log_text)]
     if rope_tables:
         names = ("bytes", "elapsed_cycles", "dma_cycles", "local_read_cycles",

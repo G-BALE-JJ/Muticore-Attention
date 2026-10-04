@@ -78,6 +78,10 @@ attention-kernel validation, not full Llama inference.
 
 ## RMSNorm and projection end-to-end
 
+The latest measured Llama-shape projection pipeline and input sharing results
+are in [LLAMA_PROJECTION_PIPELINE.md](LLAMA_PROJECTION_PIPELINE.md). Its
+comparison reference is the two-bank paired-weight implementation at `adb912f`.
+
 The current audited Llama-shape baseline is documented in
 [LLAMA_PROJECTION_BASELINE.md](LLAMA_PROJECTION_BASELINE.md). The historical
 measurements below precede the projection/QK/RoPE local-GM timing correction

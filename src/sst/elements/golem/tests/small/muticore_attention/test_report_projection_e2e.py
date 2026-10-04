@@ -88,6 +88,21 @@ class ProjectionReportTest(unittest.TestCase):
         report = summarize(log, attention, 66)
         self.assertEqual(report["stages"]["projection"]["weight_programs"], 128)
         self.assertEqual(report["stages"]["projection"]["local_gm_by_manager"]["0"]["paired_weights"], 1)
+        overlap = log.replace("input_loads=8", "input_loads=1") + "\n" + "\n".join(
+            f"[PROJECTION_PIPELINE] manager={core} enabled=1 shared_input=1 "
+            "input_prefetches=240 partial_prefetches=120 scatter_prefetches=400 "
+            "background_read_cycles=100 background_write_cycles=100 staging_bytes=8192"
+            for core in range(4))
+        shared_report = summarize(overlap, attention, 66)
+        self.assertEqual(shared_report["stages"]["projection"]["input_loads"], 4)
+        self.assertEqual(shared_report["stages"]["projection"]["pipeline_by_manager"]["0"]["enabled"], 1)
+        for wrong in (overlap.replace("input_prefetches=240", "input_prefetches=241"),
+                      overlap.replace("partial_prefetches=120", "partial_prefetches=119"),
+                      overlap.replace("staging_bytes=8192", "staging_bytes=0")):
+            with self.assertRaisesRegex(ValueError, "overlap work"):
+                summarize(wrong, attention, 66)
+        with self.assertRaisesRegex(ValueError, "paired projection"):
+            summarize(overlap.replace("shared_input=1", "shared_input=0"), attention, 66)
         for corruption in (log.replace("read_bytes=1572864", "read_bytes=1"),
                            log.replace("weight_programs=32", "weight_programs=33"),
                            log.replace("weight_reuses=480", "weight_reuses=481")):

@@ -1,0 +1,2843 @@
+{
+  "status": "PASS",
+  "reference_commit": "adb912f",
+  "reference": "llama_projection_pair.json",
+  "scope": "synthetic Llama 32:8/D64/hidden2048; RMSNorm -> QKV -> RoPE -> causal GQA -> O; excludes Wo/residual/MLP",
+  "optimized": {
+    "status": "PASS",
+    "cases": [
+      {
+        "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024",
+        "pipeline": {
+          "status": "PASS",
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 1024,
+            "kv_length": 1024,
+            "head_dim": 64,
+            "causal": true
+          },
+          "stages": {
+            "rmsnorm": {
+              "start_cycle": 91394,
+              "end_cycle": 279228,
+              "elapsed_cycles": 187834,
+              "jobs": 256
+            },
+            "projection": {
+              "start_cycle": 279275,
+              "end_cycle": 2660134,
+              "elapsed_cycles": 2380859,
+              "jobs": 4,
+              "weight_loads": 6144,
+              "weight_programs": 6144,
+              "weight_reuses": 92160,
+              "input_loads": 4,
+              "local_gm_by_manager": {
+                "0": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 87840,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "1": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 87840,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "3": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 87840,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "2": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 87840,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                }
+              },
+              "pipeline_by_manager": {
+                "0": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 11520,
+                  "partial_prefetches": 10800,
+                  "scatter_prefetches": 23040,
+                  "background_read_cycles": 477360,
+                  "background_write_cycles": 115200,
+                  "staging_bytes": 8192
+                },
+                "1": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 11520,
+                  "partial_prefetches": 10800,
+                  "scatter_prefetches": 23040,
+                  "background_read_cycles": 477360,
+                  "background_write_cycles": 115200,
+                  "staging_bytes": 8192
+                },
+                "3": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 11520,
+                  "partial_prefetches": 10800,
+                  "scatter_prefetches": 23040,
+                  "background_read_cycles": 477360,
+                  "background_write_cycles": 115200,
+                  "staging_bytes": 8192
+                },
+                "2": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 11520,
+                  "partial_prefetches": 10800,
+                  "scatter_prefetches": 23040,
+                  "background_read_cycles": 477360,
+                  "background_write_cycles": 115200,
+                  "staging_bytes": 8192
+                }
+              },
+              "phase_cycles_by_manager": {
+                "0": {
+                  "input_dma": 29072,
+                  "weight_dma": 204667,
+                  "matrix_program": 59904,
+                  "input_scatter": 39936,
+                  "output_restore": 126720,
+                  "compute": 1671168,
+                  "output_read": 135168,
+                  "write_drain": 224
+                },
+                "1": {
+                  "input_dma": 29043,
+                  "weight_dma": 204248,
+                  "matrix_program": 59904,
+                  "input_scatter": 39936,
+                  "output_restore": 126720,
+                  "compute": 1671168,
+                  "output_read": 135168,
+                  "write_drain": 224
+                },
+                "3": {
+                  "input_dma": 29035,
+                  "weight_dma": 204248,
+                  "matrix_program": 59904,
+                  "input_scatter": 39936,
+                  "output_restore": 126720,
+                  "compute": 1671168,
+                  "output_read": 135168,
+                  "write_drain": 224
+                },
+                "2": {
+                  "input_dma": 29038,
+                  "weight_dma": 204249,
+                  "matrix_program": 59904,
+                  "input_scatter": 39936,
+                  "output_restore": 126720,
+                  "compute": 1671168,
+                  "output_read": 135168,
+                  "write_drain": 224
+                }
+              }
+            },
+            "attention": {
+              "start_cycle": 2661706,
+              "end_cycle": 2911592,
+              "elapsed_cycles": 249886
+            }
+          },
+          "stage_handoff_cycles": {
+            "rmsnorm_to_projection": 47,
+            "projection_to_attention": 1572,
+            "projection_to_sync": 234,
+            "sync_to_descriptor": 51,
+            "descriptor_to_attention": 1287,
+            "sync_to_descriptor_by_manager": {
+              "0": 51,
+              "1": 51,
+              "2": 51,
+              "3": 51
+            }
+          },
+          "end_to_end_cycles": 2820198,
+          "optimistic_resource_floor_cycles": 1873088,
+          "floor_components_cycles": {
+            "rmsnorm_vector": 111808,
+            "projection_array": 1622016,
+            "attention_sfu_exp": 139264
+          },
+          "actual_to_floor_ratio": 1.506,
+          "projection_full_width_compute_cycles": 66,
+          "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+          "attention_rope_table_first_load_by_worker": {
+            "5": {
+              "bytes": 131072,
+              "elapsed_cycles": 1286,
+              "dma_cycles": 742,
+              "local_read_cycles": 544,
+              "start_cycle": 2660420,
+              "end_cycle": 2661706
+            },
+            "6": {
+              "bytes": 131072,
+              "elapsed_cycles": 1717,
+              "dma_cycles": 1173,
+              "local_read_cycles": 544,
+              "start_cycle": 2660420,
+              "end_cycle": 2662137
+            },
+            "9": {
+              "bytes": 131072,
+              "elapsed_cycles": 2250,
+              "dma_cycles": 1706,
+              "local_read_cycles": 544,
+              "start_cycle": 2660425,
+              "end_cycle": 2662675
+            },
+            "4": {
+              "bytes": 131072,
+              "elapsed_cycles": 2745,
+              "dma_cycles": 2201,
+              "local_read_cycles": 544,
+              "start_cycle": 2660434,
+              "end_cycle": 2663179
+            },
+            "10": {
+              "bytes": 131072,
+              "elapsed_cycles": 3710,
+              "dma_cycles": 3166,
+              "local_read_cycles": 544,
+              "start_cycle": 2660425,
+              "end_cycle": 2664135
+            },
+            "7": {
+              "bytes": 131072,
+              "elapsed_cycles": 4082,
+              "dma_cycles": 3538,
+              "local_read_cycles": 544,
+              "start_cycle": 2660432,
+              "end_cycle": 2664514
+            },
+            "8": {
+              "bytes": 131072,
+              "elapsed_cycles": 4120,
+              "dma_cycles": 3576,
+              "local_read_cycles": 544,
+              "start_cycle": 2660439,
+              "end_cycle": 2664559
+            },
+            "11": {
+              "bytes": 131072,
+              "elapsed_cycles": 4254,
+              "dma_cycles": 3710,
+              "local_read_cycles": 544,
+              "start_cycle": 2660437,
+              "end_cycle": 2664691
+            }
+          }
+        },
+        "max_abs_errors": {
+          "RMSNorm": 0.001953125,
+          "Q": 0.000244140625,
+          "K": 0.0003662109375,
+          "V": 0.000244140625,
+          "O": 0.0001220703125
+        },
+        "output_verification": {
+          "status": "PASS",
+          "dtype": "fp16",
+          "causal": true,
+          "rope": true,
+          "atol": 0.0002,
+          "rtol": 0.002,
+          "output_nonzero": true,
+          "checked": 2097152,
+          "mismatches": 0,
+          "max_abs_error": 0.0001220703125,
+          "first_mismatch": null,
+          "shape": {
+            "num_query_heads": 32,
+            "num_kv_heads": 8,
+            "gqa_group_size": 4,
+            "query_length": 1024,
+            "kv_length": 1024,
+            "head_dim": 64
+          },
+          "hbm_output_nodes": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
+          "score_probability_hbm_bytes": 0
+        },
+        "attention": {
+          "status": "PASS",
+          "measurement": "sst_attention_worker_cluster_critical_path",
+          "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+          "qk_workers_per_manager": 2,
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 1024,
+            "kv_length": 1024,
+            "head_dim": 64,
+            "causal": true
+          },
+          "qk_worker_count": 8,
+          "pv_worker_count": 8,
+          "qk_jobs": 64,
+          "sfu_jobs": 64,
+          "pv_windows": 1280,
+          "completed_jobs": 64,
+          "qk_fusion_complete": true,
+          "qk_tiles": {
+            "expected": 4352,
+            "observed": 4352,
+            "skipped": 3840
+          },
+          "pv_windows_skipped": 768,
+          "stage_spans": {
+            "qk": {
+              "start_cycle": 2661707,
+              "end_cycle": 2870150,
+              "elapsed_cycles": 208443,
+              "count": 64
+            },
+            "sfu": {
+              "start_cycle": 2664497,
+              "end_cycle": 2910769,
+              "elapsed_cycles": 246272,
+              "count": 64
+            },
+            "pv": {
+              "start_cycle": 2665756,
+              "end_cycle": 2911237,
+              "elapsed_cycles": 245481,
+              "count": 1280
+            }
+          },
+          "pv_transport_waits": {
+            "p_ready_to_dispatch": {
+              "average_cycles": 0.3046875,
+              "max_cycles": 129,
+              "count": 1280
+            },
+            "dispatch_to_receive": {
+              "average_cycles": 14.7078125,
+              "max_cycles": 123,
+              "count": 1280
+            },
+            "receive_to_start": {
+              "average_cycles": 1007.29765625,
+              "max_cycles": 12904,
+              "count": 1280
+            }
+          },
+          "pv_service": {
+            "average_window_cycles": 302.0203125,
+            "max_window_cycles": 319,
+            "core_busy_cycles": {
+              "12": 19328,
+              "13": 38656,
+              "14": 57984,
+              "15": 77321,
+              "16": 19328,
+              "17": 38656,
+              "18": 57984,
+              "19": 77329
+            }
+          },
+          "v_cache": {
+            "hits": 1280,
+            "misses": 0
+          },
+          "qk_wcp_cycles_by_core": {
+            "4": {
+              "compute": 10560,
+              "dma_wait": 26393,
+              "total": 36969,
+              "wait_2d_activate": 2617,
+              "wait_2d_active_not_ready": 23616,
+              "c_buffer_read_wait": 0
+            },
+            "5": {
+              "compute": 27456,
+              "dma_wait": 49934,
+              "total": 77406,
+              "wait_2d_activate": 4046,
+              "wait_2d_active_not_ready": 45472,
+              "c_buffer_read_wait": 0
+            },
+            "6": {
+              "compute": 44352,
+              "dma_wait": 71048,
+              "total": 115416,
+              "wait_2d_activate": 3048,
+              "wait_2d_active_not_ready": 67328,
+              "c_buffer_read_wait": 0
+            },
+            "7": {
+              "compute": 61248,
+              "dma_wait": 91428,
+              "total": 152692,
+              "wait_2d_activate": 1316,
+              "wait_2d_active_not_ready": 89184,
+              "c_buffer_read_wait": 0
+            },
+            "8": {
+              "compute": 10560,
+              "dma_wait": 26508,
+              "total": 37084,
+              "wait_2d_activate": 2732,
+              "wait_2d_active_not_ready": 23616,
+              "c_buffer_read_wait": 0
+            },
+            "9": {
+              "compute": 27456,
+              "dma_wait": 49337,
+              "total": 76809,
+              "wait_2d_activate": 3449,
+              "wait_2d_active_not_ready": 45472,
+              "c_buffer_read_wait": 0
+            },
+            "10": {
+              "compute": 44352,
+              "dma_wait": 69973,
+              "total": 114341,
+              "wait_2d_activate": 1973,
+              "wait_2d_active_not_ready": 67328,
+              "c_buffer_read_wait": 0
+            },
+            "11": {
+              "compute": 61248,
+              "dma_wait": 92226,
+              "total": 153490,
+              "wait_2d_activate": 2114,
+              "wait_2d_active_not_ready": 89184,
+              "c_buffer_read_wait": 0
+            }
+          },
+          "sfu_exp_work": {
+            "expected_elements": 17825792,
+            "logically_valid_elements": 16793600,
+            "masked_elements": 1032192,
+            "observed_elements": 17825792,
+            "complete": true,
+            "corroborated_cores": []
+          },
+          "pv_tail_after_sfu_cycles": 823,
+          "start_cycle": 2661706,
+          "end_cycle": 2911592,
+          "end_to_end_cycles": 249886,
+          "slowest_job_cycles": 60707,
+          "qk_cores": [
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "pv_cores": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ]
+        },
+        "layout_checked_bytes": 67108864,
+        "provenance": {
+          "git_revision": "adb912fd00a7bc658879cbc1e982d1215979b91e",
+          "git_status": "M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py",
+          "tracked_diff_sha256": "76918f3d90def08b821c6891ce411c0c04aff24f88b8ff9b711e6e59614b5888",
+          "command": [
+            "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+            "--projection",
+            "--query-length",
+            "1024",
+            "--kv-length",
+            "1024",
+            "--num-query-heads",
+            "32",
+            "--num-kv-heads",
+            "8",
+            "--head-dim",
+            "64",
+            "--artifact-root",
+            "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024"
+          ],
+          "environment_overrides": {
+            "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 0-3",
+            "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+            "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+            "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+            "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+            "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+            "GOLEM_LOCAL_GM_READ_PORTS": "1",
+            "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+            "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+            "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+            "GOLEM_MPI_RANKS": "4",
+            "GOLEM_ARRAY_CLOCK": "1.0GHz",
+            "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+            "GOLEM_ARRAY_PIPELINE_DEPTH": "2"
+          },
+          "sha256": {
+            "src/sst/elements/golem/attention/projectionJob.h": "fd972f87e3bcff00b631185986c3e73c35aed7d7f19e43a252a1adcbcdf905dd",
+            "src/sst/elements/golem/rocc/roccAnalog.h": "cedbbe41e8ea934b3d69852080aae6a3a25b7d625e1a8f90133393cd174330e8",
+            "src/sst/elements/golem/workercmdproc/workercmdproc.h": "bfdbe7a09f5e981182af1e0565053deaea4810b7fa6392b9026ab654a516b6a8",
+            "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "208da771b9b45c2bdd43b66e6c1dbaaabcbab9b39f53610269a932497aa94e0b",
+            "install/lib/sst-elements-library/libgolem.so": "5263ca7f3f09406b657ebba60cd904606d7260c2967c78ce8cc5ee355f4a4b9b",
+            "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "1e19f98139f7251b1acce2099e5875e14f6db3fb7b6528af43936b3560303c77"
+          },
+          "input_seed": 1742,
+          "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+          "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=16\n  GOLEM_GEMM_N_TILES(derived)=16\n  GOLEM_GEMM_TOTAL_TASKS(derived)=256\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=32\n  GOLEM_GEMM_M=1024\n  GOLEM_GEMM_N=1024\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=1024/1024/64\n  PADDED_M/N/K=1024/1024/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=16\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --cpu-set 0-3\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/mvm_dumps/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/q_32x1024x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/k_8x1024x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/stdout/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/work/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s1024/logs/attention-sst_fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8.log\n",
+          "input_sha256": {
+            "k_8x1024x64.bin": "e384610eaf8f67f61060a7d9348fbf50262775223133a0186e0a58b1d26b12b2",
+            "projection_gamma.bin": "1826299cb1532fbf10510d8c5bdea6eeefbd953a3c19b417ff8dea99b8dc7b69",
+            "projection_norm.bin": "f8bac01dbf7d3313e32e2262d8c2450b670417f9d8f3772ac7f3c3efdcc5e46a",
+            "projection_weights.bin": "cf64a2351a06736184051401ea5e4f0853e480b483aa9e9be3a5d2d55d2dea38",
+            "projection_x.bin": "b99ebc1d8e6b858c6e9ec4e836c7b5f4b2e2f2a608a573947f9092d7f3ac09b4",
+            "q_32x1024x64.bin": "8e20103b11a7b3c5f8ccf972385395c7cfdaa762d25275de9a5858fa2daceb82",
+            "rope_64.bin": "13c99aa7997e0cdc99663e6534cc668d53e49762d1bbe25e1bcd3c530cd34603",
+            "v_8x1024x64.bin": "8b3522d796686cdcdc34fec7485fb377e31746b7c62da8a279afdc025b54f999"
+          }
+        },
+        "reference_comparison": {
+          "status": "PASS",
+          "reference_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pair_final/s1024",
+          "byte_exact_regions": [
+            {
+              "node": 1,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 1,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 1,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 1,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 1,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 1,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 1,
+              "region": "V_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 2,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 2,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 2,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "V_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 3,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 3,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 3,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "V_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 4,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 4,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 4,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "V_panels",
+              "bytes": 262144
+            }
+          ],
+          "end_to_end": {
+            "before": 3848933,
+            "after": 2820198,
+            "saved_cycles": 1028735,
+            "reduction_percent": 26.7277970284232
+          },
+          "projection": {
+            "before": 3409481,
+            "after": 2380859,
+            "saved_cycles": 1028622,
+            "reduction_percent": 30.16945980927889
+          }
+        }
+      },
+      {
+        "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048",
+        "pipeline": {
+          "status": "PASS",
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 2048,
+            "kv_length": 2048,
+            "head_dim": 64,
+            "causal": true
+          },
+          "stages": {
+            "rmsnorm": {
+              "start_cycle": 91394,
+              "end_cycle": 466006,
+              "elapsed_cycles": 374612,
+              "jobs": 512
+            },
+            "projection": {
+              "start_cycle": 466441,
+              "end_cycle": 5220543,
+              "elapsed_cycles": 4754102,
+              "jobs": 4,
+              "weight_loads": 12288,
+              "weight_programs": 12288,
+              "weight_reuses": 184320,
+              "input_loads": 8,
+              "local_gm_by_manager": {
+                "3": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 175680,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "0": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 175680,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "1": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 175680,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "2": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 175680,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                }
+              },
+              "pipeline_by_manager": {
+                "3": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 23040,
+                  "partial_prefetches": 21600,
+                  "scatter_prefetches": 46080,
+                  "background_read_cycles": 954720,
+                  "background_write_cycles": 230400,
+                  "staging_bytes": 8192
+                },
+                "0": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 23040,
+                  "partial_prefetches": 21600,
+                  "scatter_prefetches": 46080,
+                  "background_read_cycles": 954720,
+                  "background_write_cycles": 230400,
+                  "staging_bytes": 8192
+                },
+                "1": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 23040,
+                  "partial_prefetches": 21600,
+                  "scatter_prefetches": 46080,
+                  "background_read_cycles": 954720,
+                  "background_write_cycles": 230400,
+                  "staging_bytes": 8192
+                },
+                "2": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 23040,
+                  "partial_prefetches": 21600,
+                  "scatter_prefetches": 46080,
+                  "background_read_cycles": 954720,
+                  "background_write_cycles": 230400,
+                  "staging_bytes": 8192
+                }
+              },
+              "phase_cycles_by_manager": {
+                "3": {
+                  "input_dma": 58206,
+                  "weight_dma": 401826,
+                  "matrix_program": 119808,
+                  "input_scatter": 79872,
+                  "output_restore": 253440,
+                  "compute": 3342336,
+                  "output_read": 270336,
+                  "write_drain": 224
+                },
+                "0": {
+                  "input_dma": 58190,
+                  "weight_dma": 401945,
+                  "matrix_program": 119808,
+                  "input_scatter": 79872,
+                  "output_restore": 253440,
+                  "compute": 3342336,
+                  "output_read": 270336,
+                  "write_drain": 224
+                },
+                "1": {
+                  "input_dma": 58235,
+                  "weight_dma": 401805,
+                  "matrix_program": 119808,
+                  "input_scatter": 79872,
+                  "output_restore": 253440,
+                  "compute": 3342336,
+                  "output_read": 270336,
+                  "write_drain": 224
+                },
+                "2": {
+                  "input_dma": 58207,
+                  "weight_dma": 401829,
+                  "matrix_program": 119808,
+                  "input_scatter": 79872,
+                  "output_restore": 253440,
+                  "compute": 3342336,
+                  "output_read": 270336,
+                  "write_drain": 224
+                }
+              }
+            },
+            "attention": {
+              "start_cycle": 5223629,
+              "end_cycle": 6167007,
+              "elapsed_cycles": 943378
+            }
+          },
+          "stage_handoff_cycles": {
+            "rmsnorm_to_projection": 435,
+            "projection_to_attention": 3086,
+            "projection_to_sync": 233,
+            "sync_to_descriptor": 51,
+            "descriptor_to_attention": 2802,
+            "sync_to_descriptor_by_manager": {
+              "0": 51,
+              "1": 51,
+              "2": 51,
+              "3": 51
+            }
+          },
+          "end_to_end_cycles": 6075613,
+          "optimistic_resource_floor_cycles": 4008320,
+          "floor_components_cycles": {
+            "rmsnorm_vector": 223616,
+            "projection_array": 3244032,
+            "attention_sfu_exp": 540672
+          },
+          "actual_to_floor_ratio": 1.516,
+          "projection_full_width_compute_cycles": 66,
+          "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+          "attention_rope_table_first_load_by_worker": {
+            "5": {
+              "bytes": 262144,
+              "elapsed_cycles": 2801,
+              "dma_cycles": 1713,
+              "local_read_cycles": 1088,
+              "start_cycle": 5220828,
+              "end_cycle": 5223629
+            },
+            "6": {
+              "bytes": 262144,
+              "elapsed_cycles": 7174,
+              "dma_cycles": 6086,
+              "local_read_cycles": 1088,
+              "start_cycle": 5220828,
+              "end_cycle": 5228002
+            },
+            "9": {
+              "bytes": 262144,
+              "elapsed_cycles": 7201,
+              "dma_cycles": 6113,
+              "local_read_cycles": 1088,
+              "start_cycle": 5220833,
+              "end_cycle": 5228034
+            },
+            "4": {
+              "bytes": 262144,
+              "elapsed_cycles": 8003,
+              "dma_cycles": 6915,
+              "local_read_cycles": 1088,
+              "start_cycle": 5220842,
+              "end_cycle": 5228845
+            },
+            "10": {
+              "bytes": 262144,
+              "elapsed_cycles": 8074,
+              "dma_cycles": 6986,
+              "local_read_cycles": 1088,
+              "start_cycle": 5220833,
+              "end_cycle": 5228907
+            },
+            "8": {
+              "bytes": 262144,
+              "elapsed_cycles": 8105,
+              "dma_cycles": 7017,
+              "local_read_cycles": 1088,
+              "start_cycle": 5220847,
+              "end_cycle": 5228952
+            },
+            "7": {
+              "bytes": 262144,
+              "elapsed_cycles": 8181,
+              "dma_cycles": 7093,
+              "local_read_cycles": 1088,
+              "start_cycle": 5220842,
+              "end_cycle": 5229023
+            },
+            "11": {
+              "bytes": 262144,
+              "elapsed_cycles": 8232,
+              "dma_cycles": 7144,
+              "local_read_cycles": 1088,
+              "start_cycle": 5220847,
+              "end_cycle": 5229079
+            }
+          }
+        },
+        "max_abs_errors": {
+          "RMSNorm": 0.001953125,
+          "Q": 0.00048828125,
+          "K": 0.000244140625,
+          "V": 0.000244140625,
+          "O": 0.0001220703125
+        },
+        "output_verification": {
+          "status": "PASS",
+          "dtype": "fp16",
+          "causal": true,
+          "rope": true,
+          "atol": 0.0002,
+          "rtol": 0.002,
+          "output_nonzero": true,
+          "checked": 4194304,
+          "mismatches": 0,
+          "max_abs_error": 0.0001220703125,
+          "first_mismatch": null,
+          "shape": {
+            "num_query_heads": 32,
+            "num_kv_heads": 8,
+            "gqa_group_size": 4,
+            "query_length": 2048,
+            "kv_length": 2048,
+            "head_dim": 64
+          },
+          "hbm_output_nodes": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
+          "score_probability_hbm_bytes": 0
+        },
+        "attention": {
+          "status": "PASS",
+          "measurement": "sst_attention_worker_cluster_critical_path",
+          "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+          "qk_workers_per_manager": 2,
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 2048,
+            "kv_length": 2048,
+            "head_dim": 64,
+            "causal": true
+          },
+          "qk_worker_count": 8,
+          "pv_worker_count": 8,
+          "qk_jobs": 64,
+          "sfu_jobs": 64,
+          "pv_windows": 4608,
+          "completed_jobs": 64,
+          "qk_fusion_complete": true,
+          "qk_tiles": {
+            "expected": 16896,
+            "observed": 16896,
+            "skipped": 15872
+          },
+          "pv_windows_skipped": 3584,
+          "stage_spans": {
+            "qk": {
+              "start_cycle": 5223630,
+              "end_cycle": 6000525,
+              "elapsed_cycles": 776895,
+              "count": 64
+            },
+            "sfu": {
+              "start_cycle": 5228385,
+              "end_cycle": 6165752,
+              "elapsed_cycles": 937367,
+              "count": 64
+            },
+            "pv": {
+              "start_cycle": 5229615,
+              "end_cycle": 6166824,
+              "elapsed_cycles": 937209,
+              "count": 4608
+            }
+          },
+          "pv_transport_waits": {
+            "p_ready_to_dispatch": {
+              "average_cycles": 0.21592881944444445,
+              "max_cycles": 114,
+              "count": 4608
+            },
+            "dispatch_to_receive": {
+              "average_cycles": 32.75086805555556,
+              "max_cycles": 282,
+              "count": 4608
+            },
+            "receive_to_start": {
+              "average_cycles": 571.5164930555555,
+              "max_cycles": 7976,
+              "count": 4608
+            }
+          },
+          "pv_service": {
+            "average_window_cycles": 302.0104166666667,
+            "max_window_cycles": 319,
+            "core_busy_cycles": {
+              "12": 58017,
+              "13": 135296,
+              "14": 212615,
+              "15": 289920,
+              "16": 57984,
+              "17": 135296,
+              "18": 212616,
+              "19": 289920
+            }
+          },
+          "v_cache": {
+            "hits": 4608,
+            "misses": 0
+          },
+          "qk_wcp_cycles_by_core": {
+            "4": {
+              "compute": 38016,
+              "dma_wait": 66761,
+              "total": 104793,
+              "wait_2d_activate": 1289,
+              "wait_2d_active_not_ready": 64896,
+              "c_buffer_read_wait": 0
+            },
+            "5": {
+              "compute": 105600,
+              "dma_wait": 151235,
+              "total": 256851,
+              "wait_2d_activate": 5699,
+              "wait_2d_active_not_ready": 143936,
+              "c_buffer_read_wait": 0
+            },
+            "6": {
+              "compute": 173184,
+              "dma_wait": 226979,
+              "total": 400179,
+              "wait_2d_activate": 1379,
+              "wait_2d_active_not_ready": 222976,
+              "c_buffer_read_wait": 0
+            },
+            "7": {
+              "compute": 240768,
+              "dma_wait": 308516,
+              "total": 549300,
+              "wait_2d_activate": 1804,
+              "wait_2d_active_not_ready": 303064,
+              "c_buffer_read_wait": 0
+            },
+            "8": {
+              "compute": 38016,
+              "dma_wait": 68041,
+              "total": 106073,
+              "wait_2d_activate": 2569,
+              "wait_2d_active_not_ready": 64896,
+              "c_buffer_read_wait": 0
+            },
+            "9": {
+              "compute": 105600,
+              "dma_wait": 147160,
+              "total": 252776,
+              "wait_2d_activate": 1624,
+              "wait_2d_active_not_ready": 143936,
+              "c_buffer_read_wait": 0
+            },
+            "10": {
+              "compute": 173184,
+              "dma_wait": 227105,
+              "total": 400305,
+              "wait_2d_activate": 1505,
+              "wait_2d_active_not_ready": 222976,
+              "c_buffer_read_wait": 0
+            },
+            "11": {
+              "compute": 240768,
+              "dma_wait": 309015,
+              "total": 549799,
+              "wait_2d_activate": 2303,
+              "wait_2d_active_not_ready": 303064,
+              "c_buffer_read_wait": 0
+            }
+          },
+          "sfu_exp_work": {
+            "expected_elements": 69206016,
+            "logically_valid_elements": 67141632,
+            "masked_elements": 2064384,
+            "observed_elements": 69206016,
+            "complete": true,
+            "corroborated_cores": []
+          },
+          "pv_tail_after_sfu_cycles": 1255,
+          "start_cycle": 5223629,
+          "end_cycle": 6167007,
+          "end_to_end_cycles": 943378,
+          "slowest_job_cycles": 235316,
+          "qk_cores": [
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "pv_cores": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ]
+        },
+        "layout_checked_bytes": 83886080,
+        "provenance": {
+          "git_revision": "adb912fd00a7bc658879cbc1e982d1215979b91e",
+          "git_status": "M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py\n?? baseline/attention_cluster_8qk_8pv/test_run_llama_projection.py",
+          "tracked_diff_sha256": "76918f3d90def08b821c6891ce411c0c04aff24f88b8ff9b711e6e59614b5888",
+          "command": [
+            "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+            "--projection",
+            "--query-length",
+            "2048",
+            "--kv-length",
+            "2048",
+            "--num-query-heads",
+            "32",
+            "--num-kv-heads",
+            "8",
+            "--head-dim",
+            "64",
+            "--artifact-root",
+            "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048"
+          ],
+          "environment_overrides": {
+            "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 0-3",
+            "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+            "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+            "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+            "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+            "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+            "GOLEM_LOCAL_GM_READ_PORTS": "1",
+            "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+            "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+            "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+            "GOLEM_MPI_RANKS": "4",
+            "GOLEM_ARRAY_CLOCK": "1.0GHz",
+            "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+            "GOLEM_ARRAY_PIPELINE_DEPTH": "2"
+          },
+          "sha256": {
+            "src/sst/elements/golem/attention/projectionJob.h": "fd972f87e3bcff00b631185986c3e73c35aed7d7f19e43a252a1adcbcdf905dd",
+            "src/sst/elements/golem/rocc/roccAnalog.h": "cedbbe41e8ea934b3d69852080aae6a3a25b7d625e1a8f90133393cd174330e8",
+            "src/sst/elements/golem/workercmdproc/workercmdproc.h": "bfdbe7a09f5e981182af1e0565053deaea4810b7fa6392b9026ab654a516b6a8",
+            "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "208da771b9b45c2bdd43b66e6c1dbaaabcbab9b39f53610269a932497aa94e0b",
+            "install/lib/sst-elements-library/libgolem.so": "5263ca7f3f09406b657ebba60cd904606d7260c2967c78ce8cc5ee355f4a4b9b",
+            "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "1e19f98139f7251b1acce2099e5875e14f6db3fb7b6528af43936b3560303c77"
+          },
+          "input_seed": 1742,
+          "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+          "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=32\n  GOLEM_GEMM_N_TILES(derived)=32\n  GOLEM_GEMM_TOTAL_TASKS(derived)=1024\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=128\n  GOLEM_GEMM_M=2048\n  GOLEM_GEMM_N=2048\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=2048/2048/64\n  PADDED_M/N/K=2048/2048/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=16\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --cpu-set 0-3\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/mvm_dumps/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/q_32x2048x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/k_8x2048x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/stdout/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/work/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline/s2048/logs/attention-sst_fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8.log\n",
+          "input_sha256": {
+            "k_8x2048x64.bin": "0123d0ecfe44f99e01e2a24ef55222e2e28909f6074fc46d005fb6af55b0f6fc",
+            "projection_gamma.bin": "47ce4f7d3bfa3eae345603349e24368ee15a8cadde5ecea70ba2fadd753c9cf8",
+            "projection_norm.bin": "745480e41d1d41b5032da8f11f7fc6d541083a2e55f3616a27fa001d06c441d4",
+            "projection_weights.bin": "de56b7c702ec4a832c20a67749443e606e9f657cba9131d8dce416940653bf41",
+            "projection_x.bin": "3fd1add52b248019c56cbc957a55a0d54f697f74d697d484a8efe693b520afe8",
+            "q_32x2048x64.bin": "64b490792db23bd9a57a6e59abf108d38eaaf0f6736629b6896e57d293296f79",
+            "rope_64.bin": "44303ad847a27fe22afbea2db01ec84b3adae4c8581751e148a1d439b0f53a6c",
+            "v_8x2048x64.bin": "408a33b609b2c5a05fd14204a23ca0d71da2f9cbaa962bed440febbfdb3fcc53"
+          }
+        },
+        "reference_comparison": {
+          "status": "PASS",
+          "reference_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pair_final/s2048",
+          "byte_exact_regions": [
+            {
+              "node": 1,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 1,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 1,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 1,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 1,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 1,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 1,
+              "region": "V_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 2,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 2,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 2,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "V_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 3,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 3,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 3,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "V_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 4,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 4,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 4,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "V_panels",
+              "bytes": 524288
+            }
+          ],
+          "end_to_end": {
+            "before": 7951808,
+            "after": 6075613,
+            "saved_cycles": 1876195,
+            "reduction_percent": 23.594571196890065
+          },
+          "projection": {
+            "before": 6630789,
+            "after": 4754102,
+            "saved_cycles": 1876687,
+            "reduction_percent": 28.302619793813374
+          }
+        }
+      }
+    ]
+  },
+  "pipeline_without_shared_input": {
+    "status": "PASS",
+    "cases": [
+      {
+        "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024",
+        "pipeline": {
+          "status": "PASS",
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 1024,
+            "kv_length": 1024,
+            "head_dim": 64,
+            "causal": true
+          },
+          "stages": {
+            "rmsnorm": {
+              "start_cycle": 91394,
+              "end_cycle": 279228,
+              "elapsed_cycles": 187834,
+              "jobs": 256
+            },
+            "projection": {
+              "start_cycle": 279275,
+              "end_cycle": 2870259,
+              "elapsed_cycles": 2590984,
+              "jobs": 4,
+              "weight_loads": 6144,
+              "weight_programs": 6144,
+              "weight_reuses": 92160,
+              "input_loads": 192,
+              "local_gm_by_manager": {
+                "0": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 87840,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "1": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 87840,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "3": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 87840,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "2": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 87840,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                }
+              },
+              "pipeline_by_manager": {
+                "0": {
+                  "enabled": 1,
+                  "shared_input": 0,
+                  "input_prefetches": 11520,
+                  "partial_prefetches": 10800,
+                  "scatter_prefetches": 23040,
+                  "background_read_cycles": 477360,
+                  "background_write_cycles": 115200,
+                  "staging_bytes": 8192
+                },
+                "1": {
+                  "enabled": 1,
+                  "shared_input": 0,
+                  "input_prefetches": 11520,
+                  "partial_prefetches": 10800,
+                  "scatter_prefetches": 23040,
+                  "background_read_cycles": 477360,
+                  "background_write_cycles": 115200,
+                  "staging_bytes": 8192
+                },
+                "3": {
+                  "enabled": 1,
+                  "shared_input": 0,
+                  "input_prefetches": 11520,
+                  "partial_prefetches": 10800,
+                  "scatter_prefetches": 23040,
+                  "background_read_cycles": 477360,
+                  "background_write_cycles": 115200,
+                  "staging_bytes": 8192
+                },
+                "2": {
+                  "enabled": 1,
+                  "shared_input": 0,
+                  "input_prefetches": 11520,
+                  "partial_prefetches": 10800,
+                  "scatter_prefetches": 23040,
+                  "background_read_cycles": 477360,
+                  "background_write_cycles": 115200,
+                  "staging_bytes": 8192
+                }
+              },
+              "phase_cycles_by_manager": {
+                "0": {
+                  "input_dma": 242087,
+                  "weight_dma": 201110,
+                  "matrix_program": 59904,
+                  "input_scatter": 39936,
+                  "output_restore": 126720,
+                  "compute": 1671168,
+                  "output_read": 135168,
+                  "write_drain": 92
+                },
+                "1": {
+                  "input_dma": 242012,
+                  "weight_dma": 201404,
+                  "matrix_program": 59904,
+                  "input_scatter": 39936,
+                  "output_restore": 126720,
+                  "compute": 1671168,
+                  "output_read": 135168,
+                  "write_drain": 224
+                },
+                "3": {
+                  "input_dma": 241970,
+                  "weight_dma": 201438,
+                  "matrix_program": 59904,
+                  "input_scatter": 39936,
+                  "output_restore": 126720,
+                  "compute": 1671168,
+                  "output_read": 135168,
+                  "write_drain": 224
+                },
+                "2": {
+                  "input_dma": 241968,
+                  "weight_dma": 201444,
+                  "matrix_program": 59904,
+                  "input_scatter": 39936,
+                  "output_restore": 126720,
+                  "compute": 1671168,
+                  "output_read": 135168,
+                  "write_drain": 224
+                }
+              }
+            },
+            "attention": {
+              "start_cycle": 2871723,
+              "end_cycle": 3121724,
+              "elapsed_cycles": 250001
+            }
+          },
+          "stage_handoff_cycles": {
+            "rmsnorm_to_projection": 47,
+            "projection_to_attention": 1464,
+            "projection_to_sync": 233,
+            "sync_to_descriptor": 51,
+            "descriptor_to_attention": 1180,
+            "sync_to_descriptor_by_manager": {
+              "0": 51,
+              "1": 51,
+              "2": 51,
+              "3": 51
+            }
+          },
+          "end_to_end_cycles": 3030330,
+          "optimistic_resource_floor_cycles": 1873088,
+          "floor_components_cycles": {
+            "rmsnorm_vector": 111808,
+            "projection_array": 1622016,
+            "attention_sfu_exp": 139264
+          },
+          "actual_to_floor_ratio": 1.618,
+          "projection_full_width_compute_cycles": 66,
+          "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+          "attention_rope_table_first_load_by_worker": {
+            "4": {
+              "bytes": 131072,
+              "elapsed_cycles": 1258,
+              "dma_cycles": 714,
+              "local_read_cycles": 544,
+              "start_cycle": 2870465,
+              "end_cycle": 2871723
+            },
+            "8": {
+              "bytes": 131072,
+              "elapsed_cycles": 1751,
+              "dma_cycles": 1207,
+              "local_read_cycles": 544,
+              "start_cycle": 2870470,
+              "end_cycle": 2872221
+            },
+            "5": {
+              "bytes": 131072,
+              "elapsed_cycles": 2120,
+              "dma_cycles": 1576,
+              "local_read_cycles": 544,
+              "start_cycle": 2870523,
+              "end_cycle": 2872643
+            },
+            "9": {
+              "bytes": 131072,
+              "elapsed_cycles": 2578,
+              "dma_cycles": 2034,
+              "local_read_cycles": 544,
+              "start_cycle": 2870528,
+              "end_cycle": 2873106
+            },
+            "6": {
+              "bytes": 131072,
+              "elapsed_cycles": 3959,
+              "dma_cycles": 3415,
+              "local_read_cycles": 544,
+              "start_cycle": 2870544,
+              "end_cycle": 2874503
+            },
+            "10": {
+              "bytes": 131072,
+              "elapsed_cycles": 4018,
+              "dma_cycles": 3474,
+              "local_read_cycles": 544,
+              "start_cycle": 2870549,
+              "end_cycle": 2874567
+            },
+            "7": {
+              "bytes": 131072,
+              "elapsed_cycles": 4060,
+              "dma_cycles": 3516,
+              "local_read_cycles": 544,
+              "start_cycle": 2870558,
+              "end_cycle": 2874618
+            },
+            "11": {
+              "bytes": 131072,
+              "elapsed_cycles": 4117,
+              "dma_cycles": 3573,
+              "local_read_cycles": 544,
+              "start_cycle": 2870563,
+              "end_cycle": 2874680
+            }
+          }
+        },
+        "max_abs_errors": {
+          "RMSNorm": 0.001953125,
+          "Q": 0.000244140625,
+          "K": 0.0003662109375,
+          "V": 0.000244140625,
+          "O": 0.0001220703125
+        },
+        "output_verification": {
+          "status": "PASS",
+          "dtype": "fp16",
+          "causal": true,
+          "rope": true,
+          "atol": 0.0002,
+          "rtol": 0.002,
+          "output_nonzero": true,
+          "checked": 2097152,
+          "mismatches": 0,
+          "max_abs_error": 0.0001220703125,
+          "first_mismatch": null,
+          "shape": {
+            "num_query_heads": 32,
+            "num_kv_heads": 8,
+            "gqa_group_size": 4,
+            "query_length": 1024,
+            "kv_length": 1024,
+            "head_dim": 64
+          },
+          "hbm_output_nodes": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
+          "score_probability_hbm_bytes": 0
+        },
+        "attention": {
+          "status": "PASS",
+          "measurement": "sst_attention_worker_cluster_critical_path",
+          "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+          "qk_workers_per_manager": 2,
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 1024,
+            "kv_length": 1024,
+            "head_dim": 64,
+            "causal": true
+          },
+          "qk_worker_count": 8,
+          "pv_worker_count": 8,
+          "qk_jobs": 64,
+          "sfu_jobs": 64,
+          "pv_windows": 1280,
+          "completed_jobs": 64,
+          "qk_fusion_complete": true,
+          "qk_tiles": {
+            "expected": 4352,
+            "observed": 4352,
+            "skipped": 3840
+          },
+          "pv_windows_skipped": 768,
+          "stage_spans": {
+            "qk": {
+              "start_cycle": 2871724,
+              "end_cycle": 3080129,
+              "elapsed_cycles": 208405,
+              "count": 64
+            },
+            "sfu": {
+              "start_cycle": 2874601,
+              "end_cycle": 3120841,
+              "elapsed_cycles": 246240,
+              "count": 64
+            },
+            "pv": {
+              "start_cycle": 2875984,
+              "end_cycle": 3121539,
+              "elapsed_cycles": 245555,
+              "count": 1280
+            }
+          },
+          "pv_transport_waits": {
+            "p_ready_to_dispatch": {
+              "average_cycles": 0.19453125,
+              "max_cycles": 68,
+              "count": 1280
+            },
+            "dispatch_to_receive": {
+              "average_cycles": 30.78671875,
+              "max_cycles": 251,
+              "count": 1280
+            },
+            "receive_to_start": {
+              "average_cycles": 1054.9671875,
+              "max_cycles": 12535,
+              "count": 1280
+            }
+          },
+          "pv_service": {
+            "average_window_cycles": 302.0328125,
+            "max_window_cycles": 317,
+            "core_busy_cycles": {
+              "12": 19343,
+              "13": 38656,
+              "14": 57997,
+              "15": 77312,
+              "16": 19334,
+              "17": 38656,
+              "18": 57992,
+              "19": 77312
+            }
+          },
+          "v_cache": {
+            "hits": 1280,
+            "misses": 0
+          },
+          "qk_wcp_cycles_by_core": {
+            "4": {
+              "compute": 10560,
+              "dma_wait": 27795,
+              "total": 38371,
+              "wait_2d_activate": 4019,
+              "wait_2d_active_not_ready": 23616,
+              "c_buffer_read_wait": 0
+            },
+            "5": {
+              "compute": 27456,
+              "dma_wait": 49638,
+              "total": 77110,
+              "wait_2d_activate": 3750,
+              "wait_2d_active_not_ready": 45472,
+              "c_buffer_read_wait": 0
+            },
+            "6": {
+              "compute": 44352,
+              "dma_wait": 69593,
+              "total": 113961,
+              "wait_2d_activate": 1593,
+              "wait_2d_active_not_ready": 67328,
+              "c_buffer_read_wait": 0
+            },
+            "7": {
+              "compute": 61248,
+              "dma_wait": 91856,
+              "total": 153120,
+              "wait_2d_activate": 1744,
+              "wait_2d_active_not_ready": 89184,
+              "c_buffer_read_wait": 0
+            },
+            "8": {
+              "compute": 10560,
+              "dma_wait": 27944,
+              "total": 38520,
+              "wait_2d_activate": 4168,
+              "wait_2d_active_not_ready": 23616,
+              "c_buffer_read_wait": 0
+            },
+            "9": {
+              "compute": 27456,
+              "dma_wait": 49393,
+              "total": 76865,
+              "wait_2d_activate": 3505,
+              "wait_2d_active_not_ready": 45472,
+              "c_buffer_read_wait": 0
+            },
+            "10": {
+              "compute": 44352,
+              "dma_wait": 70155,
+              "total": 114523,
+              "wait_2d_activate": 2155,
+              "wait_2d_active_not_ready": 67328,
+              "c_buffer_read_wait": 0
+            },
+            "11": {
+              "compute": 61248,
+              "dma_wait": 92304,
+              "total": 153568,
+              "wait_2d_activate": 2192,
+              "wait_2d_active_not_ready": 89184,
+              "c_buffer_read_wait": 0
+            }
+          },
+          "sfu_exp_work": {
+            "expected_elements": 17825792,
+            "logically_valid_elements": 16793600,
+            "masked_elements": 1032192,
+            "observed_elements": 17825792,
+            "complete": true,
+            "corroborated_cores": []
+          },
+          "pv_tail_after_sfu_cycles": 883,
+          "start_cycle": 2871723,
+          "end_cycle": 3121724,
+          "end_to_end_cycles": 250001,
+          "slowest_job_cycles": 60853,
+          "qk_cores": [
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "pv_cores": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ]
+        },
+        "layout_checked_bytes": 67108864,
+        "provenance": {
+          "git_revision": "adb912fd00a7bc658879cbc1e982d1215979b91e",
+          "git_status": "M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py",
+          "tracked_diff_sha256": "76918f3d90def08b821c6891ce411c0c04aff24f88b8ff9b711e6e59614b5888",
+          "command": [
+            "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+            "--projection",
+            "--query-length",
+            "1024",
+            "--kv-length",
+            "1024",
+            "--num-query-heads",
+            "32",
+            "--num-kv-heads",
+            "8",
+            "--head-dim",
+            "64",
+            "--artifact-root",
+            "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024"
+          ],
+          "environment_overrides": {
+            "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 4-7",
+            "GOLEM_PROJECTION_SHARED_INPUT": "0",
+            "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+            "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+            "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+            "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+            "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+            "GOLEM_LOCAL_GM_READ_PORTS": "1",
+            "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+            "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+            "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+            "GOLEM_MPI_RANKS": "4",
+            "GOLEM_ARRAY_CLOCK": "1.0GHz",
+            "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+            "GOLEM_ARRAY_PIPELINE_DEPTH": "2"
+          },
+          "sha256": {
+            "src/sst/elements/golem/attention/projectionJob.h": "fd972f87e3bcff00b631185986c3e73c35aed7d7f19e43a252a1adcbcdf905dd",
+            "src/sst/elements/golem/rocc/roccAnalog.h": "cedbbe41e8ea934b3d69852080aae6a3a25b7d625e1a8f90133393cd174330e8",
+            "src/sst/elements/golem/workercmdproc/workercmdproc.h": "bfdbe7a09f5e981182af1e0565053deaea4810b7fa6392b9026ab654a516b6a8",
+            "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "208da771b9b45c2bdd43b66e6c1dbaaabcbab9b39f53610269a932497aa94e0b",
+            "install/lib/sst-elements-library/libgolem.so": "5263ca7f3f09406b657ebba60cd904606d7260c2967c78ce8cc5ee355f4a4b9b",
+            "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "1e19f98139f7251b1acce2099e5875e14f6db3fb7b6528af43936b3560303c77"
+          },
+          "input_seed": 1742,
+          "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+          "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=16\n  GOLEM_GEMM_N_TILES(derived)=16\n  GOLEM_GEMM_TOTAL_TASKS(derived)=256\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=32\n  GOLEM_GEMM_M=1024\n  GOLEM_GEMM_N=1024\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=1024/1024/64\n  PADDED_M/N/K=1024/1024/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=16\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --cpu-set 4-7\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/mvm_dumps/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/q_32x1024x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/k_8x1024x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/stdout/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/work/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s1024/logs/attention-sst_fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8.log\n",
+          "input_sha256": {
+            "k_8x1024x64.bin": "e384610eaf8f67f61060a7d9348fbf50262775223133a0186e0a58b1d26b12b2",
+            "projection_gamma.bin": "1826299cb1532fbf10510d8c5bdea6eeefbd953a3c19b417ff8dea99b8dc7b69",
+            "projection_norm.bin": "f8bac01dbf7d3313e32e2262d8c2450b670417f9d8f3772ac7f3c3efdcc5e46a",
+            "projection_weights.bin": "cf64a2351a06736184051401ea5e4f0853e480b483aa9e9be3a5d2d55d2dea38",
+            "projection_x.bin": "b99ebc1d8e6b858c6e9ec4e836c7b5f4b2e2f2a608a573947f9092d7f3ac09b4",
+            "q_32x1024x64.bin": "8e20103b11a7b3c5f8ccf972385395c7cfdaa762d25275de9a5858fa2daceb82",
+            "rope_64.bin": "13c99aa7997e0cdc99663e6534cc668d53e49762d1bbe25e1bcd3c530cd34603",
+            "v_8x1024x64.bin": "8b3522d796686cdcdc34fec7485fb377e31746b7c62da8a279afdc025b54f999"
+          }
+        },
+        "reference_comparison": {
+          "status": "PASS",
+          "reference_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pair_final/s1024",
+          "byte_exact_regions": [
+            {
+              "node": 1,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 1,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 1,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 1,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 1,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 1,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 1,
+              "region": "V_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 2,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 2,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 2,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "V_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 3,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 3,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 3,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "V_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 4,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 4,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 4,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "V_panels",
+              "bytes": 262144
+            }
+          ],
+          "end_to_end": {
+            "before": 3848933,
+            "after": 3030330,
+            "saved_cycles": 818603,
+            "reduction_percent": 21.26830994460023
+          },
+          "projection": {
+            "before": 3409481,
+            "after": 2590984,
+            "saved_cycles": 818497,
+            "reduction_percent": 24.00649834974883
+          }
+        }
+      },
+      {
+        "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048",
+        "pipeline": {
+          "status": "PASS",
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 2048,
+            "kv_length": 2048,
+            "head_dim": 64,
+            "causal": true
+          },
+          "stages": {
+            "rmsnorm": {
+              "start_cycle": 91394,
+              "end_cycle": 466006,
+              "elapsed_cycles": 374612,
+              "jobs": 512
+            },
+            "projection": {
+              "start_cycle": 466441,
+              "end_cycle": 5448271,
+              "elapsed_cycles": 4981830,
+              "jobs": 4,
+              "weight_loads": 6144,
+              "weight_programs": 12288,
+              "weight_reuses": 184320,
+              "input_loads": 384,
+              "local_gm_by_manager": {
+                "0": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 175680,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "2": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 175680,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "3": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 175680,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "1": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 175680,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                }
+              },
+              "pipeline_by_manager": {
+                "0": {
+                  "enabled": 1,
+                  "shared_input": 0,
+                  "input_prefetches": 23040,
+                  "partial_prefetches": 21600,
+                  "scatter_prefetches": 46080,
+                  "background_read_cycles": 954720,
+                  "background_write_cycles": 230400,
+                  "staging_bytes": 8192
+                },
+                "2": {
+                  "enabled": 1,
+                  "shared_input": 0,
+                  "input_prefetches": 23040,
+                  "partial_prefetches": 21600,
+                  "scatter_prefetches": 46080,
+                  "background_read_cycles": 954720,
+                  "background_write_cycles": 230400,
+                  "staging_bytes": 8192
+                },
+                "3": {
+                  "enabled": 1,
+                  "shared_input": 0,
+                  "input_prefetches": 23040,
+                  "partial_prefetches": 21600,
+                  "scatter_prefetches": 46080,
+                  "background_read_cycles": 954720,
+                  "background_write_cycles": 230400,
+                  "staging_bytes": 8192
+                },
+                "1": {
+                  "enabled": 1,
+                  "shared_input": 0,
+                  "input_prefetches": 23040,
+                  "partial_prefetches": 21600,
+                  "scatter_prefetches": 46080,
+                  "background_read_cycles": 954720,
+                  "background_write_cycles": 230400,
+                  "staging_bytes": 8192
+                }
+              },
+              "phase_cycles_by_manager": {
+                "0": {
+                  "input_dma": 484577,
+                  "weight_dma": 203035,
+                  "matrix_program": 119808,
+                  "input_scatter": 79872,
+                  "output_restore": 253440,
+                  "compute": 3342336,
+                  "output_read": 270336,
+                  "write_drain": 91
+                },
+                "2": {
+                  "input_dma": 484371,
+                  "weight_dma": 203142,
+                  "matrix_program": 119808,
+                  "input_scatter": 79872,
+                  "output_restore": 253440,
+                  "compute": 3342336,
+                  "output_read": 270336,
+                  "write_drain": 91
+                },
+                "3": {
+                  "input_dma": 484436,
+                  "weight_dma": 203433,
+                  "matrix_program": 119808,
+                  "input_scatter": 79872,
+                  "output_restore": 253440,
+                  "compute": 3342336,
+                  "output_read": 270336,
+                  "write_drain": 107
+                },
+                "1": {
+                  "input_dma": 484540,
+                  "weight_dma": 203337,
+                  "matrix_program": 119808,
+                  "input_scatter": 79872,
+                  "output_restore": 253440,
+                  "compute": 3342336,
+                  "output_read": 270336,
+                  "write_drain": 125
+                }
+              }
+            },
+            "attention": {
+              "start_cycle": 5450798,
+              "end_cycle": 6394714,
+              "elapsed_cycles": 943916
+            }
+          },
+          "stage_handoff_cycles": {
+            "rmsnorm_to_projection": 435,
+            "projection_to_attention": 2527,
+            "projection_to_sync": 233,
+            "sync_to_descriptor": 51,
+            "descriptor_to_attention": 2243,
+            "sync_to_descriptor_by_manager": {
+              "0": 51,
+              "1": 51,
+              "2": 51,
+              "3": 51
+            }
+          },
+          "end_to_end_cycles": 6303320,
+          "optimistic_resource_floor_cycles": 4008320,
+          "floor_components_cycles": {
+            "rmsnorm_vector": 223616,
+            "projection_array": 3244032,
+            "attention_sfu_exp": 540672
+          },
+          "actual_to_floor_ratio": 1.573,
+          "projection_full_width_compute_cycles": 66,
+          "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+          "attention_rope_table_first_load_by_worker": {
+            "6": {
+              "bytes": 262144,
+              "elapsed_cycles": 2321,
+              "dma_cycles": 1233,
+              "local_read_cycles": 1088,
+              "start_cycle": 5448477,
+              "end_cycle": 5450798
+            },
+            "10": {
+              "bytes": 262144,
+              "elapsed_cycles": 3238,
+              "dma_cycles": 2150,
+              "local_read_cycles": 1088,
+              "start_cycle": 5448482,
+              "end_cycle": 5451720
+            },
+            "4": {
+              "bytes": 262144,
+              "elapsed_cycles": 7908,
+              "dma_cycles": 6820,
+              "local_read_cycles": 1088,
+              "start_cycle": 5448529,
+              "end_cycle": 5456437
+            },
+            "8": {
+              "bytes": 262144,
+              "elapsed_cycles": 7958,
+              "dma_cycles": 6870,
+              "local_read_cycles": 1088,
+              "start_cycle": 5448534,
+              "end_cycle": 5456492
+            },
+            "5": {
+              "bytes": 262144,
+              "elapsed_cycles": 7986,
+              "dma_cycles": 6898,
+              "local_read_cycles": 1088,
+              "start_cycle": 5448557,
+              "end_cycle": 5456543
+            },
+            "9": {
+              "bytes": 262144,
+              "elapsed_cycles": 8035,
+              "dma_cycles": 6947,
+              "local_read_cycles": 1088,
+              "start_cycle": 5448562,
+              "end_cycle": 5456597
+            },
+            "7": {
+              "bytes": 262144,
+              "elapsed_cycles": 8081,
+              "dma_cycles": 6993,
+              "local_read_cycles": 1088,
+              "start_cycle": 5448570,
+              "end_cycle": 5456651
+            },
+            "11": {
+              "bytes": 262144,
+              "elapsed_cycles": 8147,
+              "dma_cycles": 7059,
+              "local_read_cycles": 1088,
+              "start_cycle": 5448575,
+              "end_cycle": 5456722
+            }
+          }
+        },
+        "max_abs_errors": {
+          "RMSNorm": 0.001953125,
+          "Q": 0.00048828125,
+          "K": 0.000244140625,
+          "V": 0.000244140625,
+          "O": 0.0001220703125
+        },
+        "output_verification": {
+          "status": "PASS",
+          "dtype": "fp16",
+          "causal": true,
+          "rope": true,
+          "atol": 0.0002,
+          "rtol": 0.002,
+          "output_nonzero": true,
+          "checked": 4194304,
+          "mismatches": 0,
+          "max_abs_error": 0.0001220703125,
+          "first_mismatch": null,
+          "shape": {
+            "num_query_heads": 32,
+            "num_kv_heads": 8,
+            "gqa_group_size": 4,
+            "query_length": 2048,
+            "kv_length": 2048,
+            "head_dim": 64
+          },
+          "hbm_output_nodes": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
+          "score_probability_hbm_bytes": 0
+        },
+        "attention": {
+          "status": "PASS",
+          "measurement": "sst_attention_worker_cluster_critical_path",
+          "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+          "qk_workers_per_manager": 2,
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 2048,
+            "kv_length": 2048,
+            "head_dim": 64,
+            "causal": true
+          },
+          "qk_worker_count": 8,
+          "pv_worker_count": 8,
+          "qk_jobs": 64,
+          "sfu_jobs": 64,
+          "pv_windows": 4608,
+          "completed_jobs": 64,
+          "qk_fusion_complete": true,
+          "qk_tiles": {
+            "expected": 16896,
+            "observed": 16896,
+            "skipped": 15872
+          },
+          "pv_windows_skipped": 3584,
+          "stage_spans": {
+            "qk": {
+              "start_cycle": 5450799,
+              "end_cycle": 6228277,
+              "elapsed_cycles": 777478,
+              "count": 64
+            },
+            "sfu": {
+              "start_cycle": 5456028,
+              "end_cycle": 6393450,
+              "elapsed_cycles": 937422,
+              "count": 64
+            },
+            "pv": {
+              "start_cycle": 5457258,
+              "end_cycle": 6394525,
+              "elapsed_cycles": 937267,
+              "count": 4608
+            }
+          },
+          "pv_transport_waits": {
+            "p_ready_to_dispatch": {
+              "average_cycles": 0.2819010416666667,
+              "max_cycles": 114,
+              "count": 4608
+            },
+            "dispatch_to_receive": {
+              "average_cycles": 38.978515625,
+              "max_cycles": 288,
+              "count": 4608
+            },
+            "receive_to_start": {
+              "average_cycles": 641.6497395833334,
+              "max_cycles": 9757,
+              "count": 4608
+            }
+          },
+          "pv_service": {
+            "average_window_cycles": 302.00933159722223,
+            "max_window_cycles": 312,
+            "core_busy_cycles": {
+              "12": 58003,
+              "13": 135298,
+              "14": 212621,
+              "15": 289920,
+              "16": 57984,
+              "17": 135296,
+              "18": 212615,
+              "19": 289922
+            }
+          },
+          "v_cache": {
+            "hits": 4608,
+            "misses": 0
+          },
+          "qk_wcp_cycles_by_core": {
+            "4": {
+              "compute": 38016,
+              "dma_wait": 67030,
+              "total": 105062,
+              "wait_2d_activate": 1558,
+              "wait_2d_active_not_ready": 64896,
+              "c_buffer_read_wait": 0
+            },
+            "5": {
+              "compute": 105600,
+              "dma_wait": 147842,
+              "total": 253458,
+              "wait_2d_activate": 2306,
+              "wait_2d_active_not_ready": 143936,
+              "c_buffer_read_wait": 0
+            },
+            "6": {
+              "compute": 173184,
+              "dma_wait": 231591,
+              "total": 404791,
+              "wait_2d_activate": 5991,
+              "wait_2d_active_not_ready": 222976,
+              "c_buffer_read_wait": 0
+            },
+            "7": {
+              "compute": 240768,
+              "dma_wait": 308478,
+              "total": 549262,
+              "wait_2d_activate": 1766,
+              "wait_2d_active_not_ready": 303064,
+              "c_buffer_read_wait": 0
+            },
+            "8": {
+              "compute": 38016,
+              "dma_wait": 68097,
+              "total": 106129,
+              "wait_2d_activate": 2625,
+              "wait_2d_active_not_ready": 64896,
+              "c_buffer_read_wait": 0
+            },
+            "9": {
+              "compute": 105600,
+              "dma_wait": 147848,
+              "total": 253464,
+              "wait_2d_activate": 2259,
+              "wait_2d_active_not_ready": 143989,
+              "c_buffer_read_wait": 0
+            },
+            "10": {
+              "compute": 173184,
+              "dma_wait": 231461,
+              "total": 404661,
+              "wait_2d_activate": 5861,
+              "wait_2d_active_not_ready": 222976,
+              "c_buffer_read_wait": 0
+            },
+            "11": {
+              "compute": 240768,
+              "dma_wait": 308929,
+              "total": 549713,
+              "wait_2d_activate": 2217,
+              "wait_2d_active_not_ready": 303064,
+              "c_buffer_read_wait": 0
+            }
+          },
+          "sfu_exp_work": {
+            "expected_elements": 69206016,
+            "logically_valid_elements": 67141632,
+            "masked_elements": 2064384,
+            "observed_elements": 69206016,
+            "complete": true,
+            "corroborated_cores": []
+          },
+          "pv_tail_after_sfu_cycles": 1264,
+          "start_cycle": 5450798,
+          "end_cycle": 6394714,
+          "end_to_end_cycles": 943916,
+          "slowest_job_cycles": 235276,
+          "qk_cores": [
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "pv_cores": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ]
+        },
+        "layout_checked_bytes": 83886080,
+        "provenance": {
+          "git_revision": "adb912fd00a7bc658879cbc1e982d1215979b91e",
+          "git_status": "M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py\n?? baseline/attention_cluster_8qk_8pv/test_run_llama_projection.py",
+          "tracked_diff_sha256": "76918f3d90def08b821c6891ce411c0c04aff24f88b8ff9b711e6e59614b5888",
+          "command": [
+            "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+            "--projection",
+            "--query-length",
+            "2048",
+            "--kv-length",
+            "2048",
+            "--num-query-heads",
+            "32",
+            "--num-kv-heads",
+            "8",
+            "--head-dim",
+            "64",
+            "--artifact-root",
+            "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048"
+          ],
+          "environment_overrides": {
+            "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 4-7",
+            "GOLEM_PROJECTION_SHARED_INPUT": "0",
+            "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+            "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+            "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+            "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+            "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+            "GOLEM_LOCAL_GM_READ_PORTS": "1",
+            "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+            "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+            "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+            "GOLEM_MPI_RANKS": "4",
+            "GOLEM_ARRAY_CLOCK": "1.0GHz",
+            "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+            "GOLEM_ARRAY_PIPELINE_DEPTH": "2"
+          },
+          "sha256": {
+            "src/sst/elements/golem/attention/projectionJob.h": "fd972f87e3bcff00b631185986c3e73c35aed7d7f19e43a252a1adcbcdf905dd",
+            "src/sst/elements/golem/rocc/roccAnalog.h": "cedbbe41e8ea934b3d69852080aae6a3a25b7d625e1a8f90133393cd174330e8",
+            "src/sst/elements/golem/workercmdproc/workercmdproc.h": "bfdbe7a09f5e981182af1e0565053deaea4810b7fa6392b9026ab654a516b6a8",
+            "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "208da771b9b45c2bdd43b66e6c1dbaaabcbab9b39f53610269a932497aa94e0b",
+            "install/lib/sst-elements-library/libgolem.so": "5263ca7f3f09406b657ebba60cd904606d7260c2967c78ce8cc5ee355f4a4b9b",
+            "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "1e19f98139f7251b1acce2099e5875e14f6db3fb7b6528af43936b3560303c77"
+          },
+          "input_seed": 1742,
+          "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+          "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=32\n  GOLEM_GEMM_N_TILES(derived)=32\n  GOLEM_GEMM_TOTAL_TASKS(derived)=1024\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=128\n  GOLEM_GEMM_M=2048\n  GOLEM_GEMM_N=2048\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=2048/2048/64\n  PADDED_M/N/K=2048/2048/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=16\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --cpu-set 4-7\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/mvm_dumps/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/q_32x2048x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/k_8x2048x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/stdout/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/work/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_only/s2048/logs/attention-sst_fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8.log\n",
+          "input_sha256": {
+            "k_8x2048x64.bin": "0123d0ecfe44f99e01e2a24ef55222e2e28909f6074fc46d005fb6af55b0f6fc",
+            "projection_gamma.bin": "47ce4f7d3bfa3eae345603349e24368ee15a8cadde5ecea70ba2fadd753c9cf8",
+            "projection_norm.bin": "745480e41d1d41b5032da8f11f7fc6d541083a2e55f3616a27fa001d06c441d4",
+            "projection_weights.bin": "de56b7c702ec4a832c20a67749443e606e9f657cba9131d8dce416940653bf41",
+            "projection_x.bin": "3fd1add52b248019c56cbc957a55a0d54f697f74d697d484a8efe693b520afe8",
+            "q_32x2048x64.bin": "64b490792db23bd9a57a6e59abf108d38eaaf0f6736629b6896e57d293296f79",
+            "rope_64.bin": "44303ad847a27fe22afbea2db01ec84b3adae4c8581751e148a1d439b0f53a6c",
+            "v_8x2048x64.bin": "408a33b609b2c5a05fd14204a23ca0d71da2f9cbaa962bed440febbfdb3fcc53"
+          }
+        },
+        "reference_comparison": {
+          "status": "PASS",
+          "reference_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pair_final/s2048",
+          "byte_exact_regions": [
+            {
+              "node": 1,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 1,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 1,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 1,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 1,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 1,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 1,
+              "region": "V_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 2,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 2,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 2,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "V_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 3,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 3,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 3,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "V_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 4,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 4,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 4,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "V_panels",
+              "bytes": 524288
+            }
+          ],
+          "end_to_end": {
+            "before": 7951808,
+            "after": 6303320,
+            "saved_cycles": 1648488,
+            "reduction_percent": 20.730983444268272
+          },
+          "projection": {
+            "before": 6630789,
+            "after": 4981830,
+            "saved_cycles": 1648959,
+            "reduction_percent": 24.86821704023458
+          }
+        }
+      }
+    ]
+  },
+  "repeat": {
+    "sequence": 1024,
+    "end_to_end_cycles": 2820198,
+    "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024",
+    "identical_reports": [
+      "projection_e2e_result",
+      "fused_attention_result",
+      "attention_hbm_layout",
+      "sst_qk_bridge_result"
+    ],
+    "mpi_partition_equal_after_artifact_path_normalization": true,
+    "identical_source_binary_and_input_hashes": true,
+    "provenance": {
+      "git_revision": "adb912fd00a7bc658879cbc1e982d1215979b91e",
+      "git_status": "M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py\n?? baseline/attention_cluster_8qk_8pv/test_run_llama_projection.py",
+      "tracked_diff_sha256": "76918f3d90def08b821c6891ce411c0c04aff24f88b8ff9b711e6e59614b5888",
+      "command": [
+        "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+        "--projection",
+        "--query-length",
+        "1024",
+        "--kv-length",
+        "1024",
+        "--num-query-heads",
+        "32",
+        "--num-kv-heads",
+        "8",
+        "--head-dim",
+        "64",
+        "--artifact-root",
+        "/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024"
+      ],
+      "environment_overrides": {
+        "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 8-11",
+        "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+        "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+        "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+        "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+        "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+        "GOLEM_LOCAL_GM_READ_PORTS": "1",
+        "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+        "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+        "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+        "GOLEM_MPI_RANKS": "4",
+        "GOLEM_ARRAY_CLOCK": "1.0GHz",
+        "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+        "GOLEM_ARRAY_PIPELINE_DEPTH": "2"
+      },
+      "sha256": {
+        "src/sst/elements/golem/attention/projectionJob.h": "fd972f87e3bcff00b631185986c3e73c35aed7d7f19e43a252a1adcbcdf905dd",
+        "src/sst/elements/golem/rocc/roccAnalog.h": "cedbbe41e8ea934b3d69852080aae6a3a25b7d625e1a8f90133393cd174330e8",
+        "src/sst/elements/golem/workercmdproc/workercmdproc.h": "bfdbe7a09f5e981182af1e0565053deaea4810b7fa6392b9026ab654a516b6a8",
+        "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "208da771b9b45c2bdd43b66e6c1dbaaabcbab9b39f53610269a932497aa94e0b",
+        "install/lib/sst-elements-library/libgolem.so": "5263ca7f3f09406b657ebba60cd904606d7260c2967c78ce8cc5ee355f4a4b9b",
+        "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "1e19f98139f7251b1acce2099e5875e14f6db3fb7b6528af43936b3560303c77"
+      },
+      "input_seed": 1742,
+      "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+      "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=16\n  GOLEM_GEMM_N_TILES(derived)=16\n  GOLEM_GEMM_TOTAL_TASKS(derived)=256\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=32\n  GOLEM_GEMM_M=1024\n  GOLEM_GEMM_N=1024\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=1024/1024/64\n  PADDED_M/N/K=1024/1024/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=16\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --cpu-set 8-11\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/mvm_dumps/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/q_32x1024x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/k_8x1024x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/stdout/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/work/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/llama_projection_pipeline_repeat/s1024/logs/attention-sst_fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8.log\n",
+      "input_sha256": {
+        "k_8x1024x64.bin": "e384610eaf8f67f61060a7d9348fbf50262775223133a0186e0a58b1d26b12b2",
+        "projection_gamma.bin": "1826299cb1532fbf10510d8c5bdea6eeefbd953a3c19b417ff8dea99b8dc7b69",
+        "projection_norm.bin": "f8bac01dbf7d3313e32e2262d8c2450b670417f9d8f3772ac7f3c3efdcc5e46a",
+        "projection_weights.bin": "cf64a2351a06736184051401ea5e4f0853e480b483aa9e9be3a5d2d55d2dea38",
+        "projection_x.bin": "b99ebc1d8e6b858c6e9ec4e836c7b5f4b2e2f2a608a573947f9092d7f3ac09b4",
+        "q_32x1024x64.bin": "8e20103b11a7b3c5f8ccf972385395c7cfdaa762d25275de9a5858fa2daceb82",
+        "rope_64.bin": "13c99aa7997e0cdc99663e6534cc668d53e49762d1bbe25e1bcd3c530cd34603",
+        "v_8x1024x64.bin": "8b3522d796686cdcdc34fec7485fb377e31746b7c62da8a279afdc025b54f999"
+      }
+    }
+  },
+  "validation": {
+    "unit_tests": 102,
+    "small_d64_optimized_cycles": 119708,
+    "small_d64_disabled_cycles": 140252,
+    "d128_regression_cycles": 161566,
+    "projection_backpressure": {
+      "shape": "S2048/Hq4/Hkv2/D64/hidden256",
+      "queue_depth": 2,
+      "bytes_per_cycle": 16,
+      "max_request_bytes": [
+        128,
+        1024,
+        4096
+      ],
+      "projection_status": "PASS",
+      "all_four_nodes_projection_bytes_equal_disabled_control": true,
+      "whole_attention_status": "FAIL in both optimized and disabled queue-depth-2 control",
+      "limitation": "existing readAttentionRopeTableLocal treats queue rejection as failed read instead of retrying; not a passing end-to-end stress profile",
+      "artifact_roots": [
+        "/data/jjgong/LLM/Muticore-Attention/results/projection_pipeline_backpressure",
+        "/data/jjgong/LLM/Muticore-Attention/results/projection_pipeline_backpressure_1024",
+        "/data/jjgong/LLM/Muticore-Attention/results/projection_pipeline_queue2",
+        "/data/jjgong/LLM/Muticore-Attention/results/projection_pipeline_queue2_control"
+      ]
+    }
+  }
+}
