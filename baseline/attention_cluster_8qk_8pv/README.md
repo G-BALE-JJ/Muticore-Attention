@@ -91,6 +91,12 @@ The subsequent D64/hidden2048 optimization is documented in
 [LLAMA_PROJECTION_PAIR_REUSE.md](LLAMA_PROJECTION_PAIR_REUSE.md): two resident
 weight tiles process a bounded row block with timed FP16 partial staging.
 
+The verified 16/32/64-array comparison, address mapping repair, and reproduction
+commands are in [LLAMA_PROJECTION_ARRAYS.md](LLAMA_PROJECTION_ARRAYS.md).
+The dedicated baseline defaults to 64 projection arrays and bounded weight
+prefetch; see [LLAMA_PROJECTION_WEIGHT_PREFETCH.md](LLAMA_PROJECTION_WEIGHT_PREFETCH.md)
+for the measured results and the output-context design study.
+
 The `--projection` path starts from FP16 X, gamma, and projection weights in
 HBM. The four manager cores run RMSNorm, Q/K/V projection and the causal RoPE
 attention kernel. It verifies the projected raw and panel layouts, final O,
@@ -108,7 +114,7 @@ baseline/attention_cluster_8qk_8pv/run_sst.sh --projection \
 `projection_e2e_result.json` records RMSNorm, projection, and attention stage
 spans, handoff gaps, weight reuse, total cycles, and an optimistic resource
 floor. A negative RMSNorm-to-projection gap means different managers overlap
-those stages. The floor uses RMSNorm vector work, 16 modeled 64x64 arrays per
+those stages. The floor uses RMSNorm vector work, the configured 64x64 arrays per
 manager, and 16 exp lanes per QK worker; it omits data movement, control, and
 handoff costs. The stages can overlap across managers and should not be added
 as elapsed times.

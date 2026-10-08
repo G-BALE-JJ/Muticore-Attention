@@ -1,0 +1,2698 @@
+{
+  "status": "PASS",
+  "reference": "llama_projection_arrays.json, variants.64",
+  "optimized": {
+    "status": "PASS",
+    "cases": [
+      {
+        "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024",
+        "pipeline": {
+          "status": "PASS",
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 1024,
+            "kv_length": 1024,
+            "head_dim": 64,
+            "causal": true
+          },
+          "stages": {
+            "rmsnorm": {
+              "start_cycle": 91394,
+              "end_cycle": 279228,
+              "elapsed_cycles": 187834,
+              "jobs": 256
+            },
+            "projection": {
+              "start_cycle": 279275,
+              "end_cycle": 1342970,
+              "elapsed_cycles": 1063695,
+              "jobs": 4,
+              "array_count": 64,
+              "weight_loads": 6144,
+              "weight_programs": 6144,
+              "weight_reuses": 18432,
+              "input_loads": 4,
+              "local_gm_by_manager": {
+                "0": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 249312,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "1": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 249312,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "3": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 249312,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "2": {
+                  "read_bytes": 86507520,
+                  "write_bytes": 23592960,
+                  "read_cycles": 249312,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                }
+              },
+              "pipeline_by_manager": {
+                "0": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 2304,
+                  "partial_prefetches": 2160,
+                  "scatter_prefetches": 4608,
+                  "background_read_cycles": 370656,
+                  "background_write_cycles": 103982,
+                  "staging_bytes": 32768,
+                  "array_count": 64
+                },
+                "1": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 2304,
+                  "partial_prefetches": 2160,
+                  "scatter_prefetches": 4608,
+                  "background_read_cycles": 370656,
+                  "background_write_cycles": 103975,
+                  "staging_bytes": 32768,
+                  "array_count": 64
+                },
+                "3": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 2304,
+                  "partial_prefetches": 2160,
+                  "scatter_prefetches": 4608,
+                  "background_read_cycles": 370656,
+                  "background_write_cycles": 103975,
+                  "staging_bytes": 32768,
+                  "array_count": 64
+                },
+                "2": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 2304,
+                  "partial_prefetches": 2160,
+                  "scatter_prefetches": 4608,
+                  "background_read_cycles": 370656,
+                  "background_write_cycles": 103975,
+                  "staging_bytes": 32768,
+                  "array_count": 64
+                }
+              },
+              "weight_prefetch_by_manager": {
+                "0": {
+                  "enabled": 1,
+                  "requests": 1488,
+                  "hits": 1488,
+                  "wait_cycles": 0,
+                  "inflight": 0
+                },
+                "1": {
+                  "enabled": 1,
+                  "requests": 1488,
+                  "hits": 1488,
+                  "wait_cycles": 0,
+                  "inflight": 0
+                },
+                "3": {
+                  "enabled": 1,
+                  "requests": 1488,
+                  "hits": 1488,
+                  "wait_cycles": 0,
+                  "inflight": 0
+                },
+                "2": {
+                  "enabled": 1,
+                  "requests": 1488,
+                  "hits": 1488,
+                  "wait_cycles": 0,
+                  "inflight": 0
+                }
+              },
+              "phase_cycles_by_manager": {
+                "0": {
+                  "input_dma": 10640,
+                  "weight_dma": 9245,
+                  "matrix_program": 62976,
+                  "input_scatter": 58368,
+                  "output_restore": 100800,
+                  "compute": 417792,
+                  "output_read": 145920,
+                  "write_drain": 137
+                },
+                "1": {
+                  "input_dma": 10611,
+                  "weight_dma": 9448,
+                  "matrix_program": 62976,
+                  "input_scatter": 58368,
+                  "output_restore": 100800,
+                  "compute": 417792,
+                  "output_read": 145920,
+                  "write_drain": 292
+                },
+                "3": {
+                  "input_dma": 10603,
+                  "weight_dma": 9448,
+                  "matrix_program": 62976,
+                  "input_scatter": 58368,
+                  "output_restore": 100800,
+                  "compute": 417792,
+                  "output_read": 145920,
+                  "write_drain": 292
+                },
+                "2": {
+                  "input_dma": 10606,
+                  "weight_dma": 9449,
+                  "matrix_program": 62976,
+                  "input_scatter": 58368,
+                  "output_restore": 100800,
+                  "compute": 417792,
+                  "output_read": 145920,
+                  "write_drain": 292
+                }
+              }
+            },
+            "attention": {
+              "start_cycle": 1344433,
+              "end_cycle": 1594643,
+              "elapsed_cycles": 250210
+            }
+          },
+          "stage_handoff_cycles": {
+            "rmsnorm_to_projection": 47,
+            "projection_to_attention": 1463,
+            "projection_to_sync": 232,
+            "sync_to_descriptor": 51,
+            "descriptor_to_attention": 1180,
+            "sync_to_descriptor_by_manager": {
+              "0": 51,
+              "1": 51,
+              "2": 51,
+              "3": 51
+            }
+          },
+          "end_to_end_cycles": 1503249,
+          "optimistic_resource_floor_cycles": 656576,
+          "floor_components_cycles": {
+            "rmsnorm_vector": 111808,
+            "projection_array": 405504,
+            "attention_sfu_exp": 139264
+          },
+          "actual_to_floor_ratio": 2.29,
+          "projection_full_width_compute_cycles": 66,
+          "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+          "attention_rope_table_first_load_by_worker": {
+            "4": {
+              "bytes": 131072,
+              "elapsed_cycles": 1240,
+              "dma_cycles": 696,
+              "local_read_cycles": 544,
+              "start_cycle": 1343193,
+              "end_cycle": 1344433
+            },
+            "8": {
+              "bytes": 131072,
+              "elapsed_cycles": 1731,
+              "dma_cycles": 1187,
+              "local_read_cycles": 544,
+              "start_cycle": 1343198,
+              "end_cycle": 1344929
+            },
+            "5": {
+              "bytes": 131072,
+              "elapsed_cycles": 2122,
+              "dma_cycles": 1578,
+              "local_read_cycles": 544,
+              "start_cycle": 1343228,
+              "end_cycle": 1345350
+            },
+            "9": {
+              "bytes": 131072,
+              "elapsed_cycles": 2558,
+              "dma_cycles": 2014,
+              "local_read_cycles": 544,
+              "start_cycle": 1343233,
+              "end_cycle": 1345791
+            },
+            "6": {
+              "bytes": 131072,
+              "elapsed_cycles": 3963,
+              "dma_cycles": 3419,
+              "local_read_cycles": 544,
+              "start_cycle": 1343255,
+              "end_cycle": 1347218
+            },
+            "10": {
+              "bytes": 131072,
+              "elapsed_cycles": 4022,
+              "dma_cycles": 3478,
+              "local_read_cycles": 544,
+              "start_cycle": 1343260,
+              "end_cycle": 1347282
+            },
+            "7": {
+              "bytes": 131072,
+              "elapsed_cycles": 4065,
+              "dma_cycles": 3521,
+              "local_read_cycles": 544,
+              "start_cycle": 1343268,
+              "end_cycle": 1347333
+            },
+            "11": {
+              "bytes": 131072,
+              "elapsed_cycles": 4123,
+              "dma_cycles": 3579,
+              "local_read_cycles": 544,
+              "start_cycle": 1343273,
+              "end_cycle": 1347396
+            }
+          }
+        },
+        "max_abs_errors": {
+          "RMSNorm": 0.001953125,
+          "Q": 0.000244140625,
+          "K": 0.0003662109375,
+          "V": 0.000244140625,
+          "O": 0.0001220703125
+        },
+        "output_verification": {
+          "status": "PASS",
+          "dtype": "fp16",
+          "causal": true,
+          "rope": true,
+          "atol": 0.0002,
+          "rtol": 0.002,
+          "output_nonzero": true,
+          "checked": 2097152,
+          "mismatches": 0,
+          "max_abs_error": 0.0001220703125,
+          "first_mismatch": null,
+          "shape": {
+            "num_query_heads": 32,
+            "num_kv_heads": 8,
+            "gqa_group_size": 4,
+            "query_length": 1024,
+            "kv_length": 1024,
+            "head_dim": 64
+          },
+          "hbm_output_nodes": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
+          "score_probability_hbm_bytes": 0
+        },
+        "attention": {
+          "status": "PASS",
+          "measurement": "sst_attention_worker_cluster_critical_path",
+          "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+          "qk_workers_per_manager": 2,
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 1024,
+            "kv_length": 1024,
+            "head_dim": 64,
+            "causal": true
+          },
+          "qk_worker_count": 8,
+          "pv_worker_count": 8,
+          "qk_jobs": 64,
+          "sfu_jobs": 64,
+          "pv_windows": 1280,
+          "completed_jobs": 64,
+          "qk_fusion_complete": true,
+          "qk_tiles": {
+            "expected": 4352,
+            "observed": 4352,
+            "skipped": 3840
+          },
+          "pv_windows_skipped": 768,
+          "stage_spans": {
+            "qk": {
+              "start_cycle": 1344434,
+              "end_cycle": 1552844,
+              "elapsed_cycles": 208410,
+              "count": 64
+            },
+            "sfu": {
+              "start_cycle": 1347305,
+              "end_cycle": 1593540,
+              "elapsed_cycles": 246235,
+              "count": 64
+            },
+            "pv": {
+              "start_cycle": 1348688,
+              "end_cycle": 1594459,
+              "elapsed_cycles": 245771,
+              "count": 1280
+            }
+          },
+          "pv_transport_waits": {
+            "p_ready_to_dispatch": {
+              "average_cycles": 0.2171875,
+              "max_cycles": 97,
+              "count": 1280
+            },
+            "dispatch_to_receive": {
+              "average_cycles": 34.60703125,
+              "max_cycles": 250,
+              "count": 1280
+            },
+            "receive_to_start": {
+              "average_cycles": 1027.35703125,
+              "max_cycles": 12943,
+              "count": 1280
+            }
+          },
+          "pv_service": {
+            "average_window_cycles": 302.028125,
+            "max_window_cycles": 319,
+            "core_busy_cycles": {
+              "12": 19343,
+              "13": 38656,
+              "14": 57985,
+              "15": 77312,
+              "16": 19328,
+              "17": 38659,
+              "18": 58001,
+              "19": 77312
+            }
+          },
+          "v_cache": {
+            "hits": 1280,
+            "misses": 0
+          },
+          "qk_wcp_cycles_by_core": {
+            "4": {
+              "compute": 10560,
+              "dma_wait": 27529,
+              "total": 38105,
+              "wait_2d_activate": 3753,
+              "wait_2d_active_not_ready": 23616,
+              "c_buffer_read_wait": 0
+            },
+            "5": {
+              "compute": 27456,
+              "dma_wait": 49344,
+              "total": 76816,
+              "wait_2d_activate": 3456,
+              "wait_2d_active_not_ready": 45472,
+              "c_buffer_read_wait": 0
+            },
+            "6": {
+              "compute": 44352,
+              "dma_wait": 69840,
+              "total": 114208,
+              "wait_2d_activate": 1840,
+              "wait_2d_active_not_ready": 67328,
+              "c_buffer_read_wait": 0
+            },
+            "7": {
+              "compute": 61248,
+              "dma_wait": 91746,
+              "total": 153010,
+              "wait_2d_activate": 1634,
+              "wait_2d_active_not_ready": 89184,
+              "c_buffer_read_wait": 0
+            },
+            "8": {
+              "compute": 10560,
+              "dma_wait": 28201,
+              "total": 38777,
+              "wait_2d_activate": 4425,
+              "wait_2d_active_not_ready": 23616,
+              "c_buffer_read_wait": 0
+            },
+            "9": {
+              "compute": 27456,
+              "dma_wait": 49948,
+              "total": 77420,
+              "wait_2d_activate": 4060,
+              "wait_2d_active_not_ready": 45472,
+              "c_buffer_read_wait": 0
+            },
+            "10": {
+              "compute": 44352,
+              "dma_wait": 70110,
+              "total": 114478,
+              "wait_2d_activate": 2110,
+              "wait_2d_active_not_ready": 67328,
+              "c_buffer_read_wait": 0
+            },
+            "11": {
+              "compute": 61248,
+              "dma_wait": 92073,
+              "total": 153337,
+              "wait_2d_activate": 1961,
+              "wait_2d_active_not_ready": 89184,
+              "c_buffer_read_wait": 0
+            }
+          },
+          "sfu_exp_work": {
+            "expected_elements": 17825792,
+            "logically_valid_elements": 16793600,
+            "masked_elements": 1032192,
+            "observed_elements": 17825792,
+            "complete": true,
+            "corroborated_cores": []
+          },
+          "pv_tail_after_sfu_cycles": 1103,
+          "start_cycle": 1344433,
+          "end_cycle": 1594643,
+          "end_to_end_cycles": 250210,
+          "slowest_job_cycles": 60889,
+          "qk_cores": [
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "pv_cores": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ]
+        },
+        "layout_checked_bytes": 67108864,
+        "provenance": {
+          "git_revision": "62cfba1ff33223c610f5277ff20147e3cc82bada",
+          "git_status": "M baseline/attention_cluster_8qk_8pv/README.md\n M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M baseline/attention_cluster_8qk_8pv/run_sst.sh\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py\n?? baseline/attention_cluster_8qk_8pv/LLAMA_PROJECTION_ARRAYS.md\n?? baseline/attention_cluster_8qk_8pv/llama_projection_arrays.json",
+          "tracked_diff_sha256": "30278ccfc9ebf9c74b7cf9b19039cb01d5a5dc5299ee7a9f08257328aad68494",
+          "command": [
+            "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+            "--projection",
+            "--query-length",
+            "1024",
+            "--kv-length",
+            "1024",
+            "--num-query-heads",
+            "32",
+            "--num-kv-heads",
+            "8",
+            "--head-dim",
+            "64",
+            "--artifact-root",
+            "/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024"
+          ],
+          "environment_overrides": {
+            "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+            "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+            "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+            "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+            "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+            "GOLEM_LOCAL_GM_READ_PORTS": "1",
+            "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+            "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+            "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+            "GOLEM_MPI_RANKS": "4",
+            "GOLEM_ARRAY_CLOCK": "1.0GHz",
+            "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+            "GOLEM_ARRAY_PIPELINE_DEPTH": "2",
+            "GOLEM_PROJECTION_ARRAYS": "64",
+            "GOLEM_PROJECTION_WEIGHT_PREFETCH": "1"
+          },
+          "sha256": {
+            "src/sst/elements/golem/attention/projectionJob.h": "bfdcfe7e263bde2bc50cf5f2252b2a8a3b2c44a670f0116dd87c2c4535a60e7e",
+            "src/sst/elements/golem/rocc/roccAnalog.h": "cedbbe41e8ea934b3d69852080aae6a3a25b7d625e1a8f90133393cd174330e8",
+            "src/sst/elements/golem/workercmdproc/workercmdproc.h": "bfdbe7a09f5e981182af1e0565053deaea4810b7fa6392b9026ab654a516b6a8",
+            "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "208da771b9b45c2bdd43b66e6c1dbaaabcbab9b39f53610269a932497aa94e0b",
+            "install/lib/sst-elements-library/libgolem.so": "2fb92bef49eb5fc24edbc26f5a5db5fef7dbe971804df3268da1b61230701dc9",
+            "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "1e19f98139f7251b1acce2099e5875e14f6db3fb7b6528af43936b3560303c77"
+          },
+          "input_seed": 1742,
+          "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+          "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=16\n  GOLEM_GEMM_N_TILES(derived)=16\n  GOLEM_GEMM_TOTAL_TASKS(derived)=256\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=32\n  GOLEM_GEMM_M=1024\n  GOLEM_GEMM_N=1024\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=1024/1024/64\n  PADDED_M/N/K=1024/1024/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=64\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --map-by core\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/mvm_dumps/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/q_32x1024x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/k_8x1024x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/stdout/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/work/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s1024/logs/attention-sst_fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8.log\n",
+          "input_sha256": {
+            "k_8x1024x64.bin": "e384610eaf8f67f61060a7d9348fbf50262775223133a0186e0a58b1d26b12b2",
+            "projection_gamma.bin": "1826299cb1532fbf10510d8c5bdea6eeefbd953a3c19b417ff8dea99b8dc7b69",
+            "projection_norm.bin": "f8bac01dbf7d3313e32e2262d8c2450b670417f9d8f3772ac7f3c3efdcc5e46a",
+            "projection_weights.bin": "cf64a2351a06736184051401ea5e4f0853e480b483aa9e9be3a5d2d55d2dea38",
+            "projection_x.bin": "b99ebc1d8e6b858c6e9ec4e836c7b5f4b2e2f2a608a573947f9092d7f3ac09b4",
+            "q_32x1024x64.bin": "8e20103b11a7b3c5f8ccf972385395c7cfdaa762d25275de9a5858fa2daceb82",
+            "rope_64.bin": "13c99aa7997e0cdc99663e6534cc668d53e49762d1bbe25e1bcd3c530cd34603",
+            "v_8x1024x64.bin": "8b3522d796686cdcdc34fec7485fb377e31746b7c62da8a279afdc025b54f999"
+          }
+        },
+        "reference_comparison": {
+          "status": "PASS",
+          "reference_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_arrays64_verified/s1024",
+          "byte_exact_regions": [
+            {
+              "node": 1,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 1,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 1,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 1,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 1,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 1,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 1,
+              "region": "V_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 2,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 2,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 2,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 2,
+              "region": "V_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 3,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 3,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 3,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 3,
+              "region": "V_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "RMSNorm",
+              "bytes": 1048576
+            },
+            {
+              "node": 4,
+              "region": "Q",
+              "bytes": 1048576
+            },
+            {
+              "node": 4,
+              "region": "K",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "V",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "Q_panels",
+              "bytes": 1048576
+            },
+            {
+              "node": 4,
+              "region": "K_panels",
+              "bytes": 262144
+            },
+            {
+              "node": 4,
+              "region": "V_panels",
+              "bytes": 262144
+            }
+          ],
+          "end_to_end": {
+            "before": 1611982,
+            "after": 1503249,
+            "saved_cycles": 108733,
+            "reduction_percent": 6.745298644773949
+          },
+          "projection": {
+            "before": 1172732,
+            "after": 1063695,
+            "saved_cycles": 109037,
+            "reduction_percent": 9.297691203105227
+          }
+        }
+      },
+      {
+        "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048",
+        "pipeline": {
+          "status": "PASS",
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 2048,
+            "kv_length": 2048,
+            "head_dim": 64,
+            "causal": true
+          },
+          "stages": {
+            "rmsnorm": {
+              "start_cycle": 91394,
+              "end_cycle": 466006,
+              "elapsed_cycles": 374612,
+              "jobs": 512
+            },
+            "projection": {
+              "start_cycle": 466441,
+              "end_cycle": 2592709,
+              "elapsed_cycles": 2126268,
+              "jobs": 4,
+              "array_count": 64,
+              "weight_loads": 12288,
+              "weight_programs": 12288,
+              "weight_reuses": 36864,
+              "input_loads": 8,
+              "local_gm_by_manager": {
+                "3": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 498624,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "0": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 498624,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "1": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 498624,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                },
+                "2": {
+                  "read_bytes": 173015040,
+                  "write_bytes": 47185920,
+                  "read_cycles": 498624,
+                  "write_cycles": 0,
+                  "timed": 1,
+                  "reuse_block": 1,
+                  "paired_weights": 1
+                }
+              },
+              "pipeline_by_manager": {
+                "3": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 4608,
+                  "partial_prefetches": 4320,
+                  "scatter_prefetches": 9216,
+                  "background_read_cycles": 741312,
+                  "background_write_cycles": 208069,
+                  "staging_bytes": 32768,
+                  "array_count": 64
+                },
+                "0": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 4608,
+                  "partial_prefetches": 4320,
+                  "scatter_prefetches": 9216,
+                  "background_read_cycles": 741312,
+                  "background_write_cycles": 208069,
+                  "staging_bytes": 32768,
+                  "array_count": 64
+                },
+                "1": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 4608,
+                  "partial_prefetches": 4320,
+                  "scatter_prefetches": 9216,
+                  "background_read_cycles": 741312,
+                  "background_write_cycles": 208093,
+                  "staging_bytes": 32768,
+                  "array_count": 64
+                },
+                "2": {
+                  "enabled": 1,
+                  "shared_input": 1,
+                  "input_prefetches": 4608,
+                  "partial_prefetches": 4320,
+                  "scatter_prefetches": 9216,
+                  "background_read_cycles": 741312,
+                  "background_write_cycles": 208074,
+                  "staging_bytes": 32768,
+                  "array_count": 64
+                }
+              },
+              "weight_prefetch_by_manager": {
+                "3": {
+                  "enabled": 1,
+                  "requests": 2976,
+                  "hits": 2976,
+                  "wait_cycles": 0,
+                  "inflight": 0
+                },
+                "0": {
+                  "enabled": 1,
+                  "requests": 2976,
+                  "hits": 2976,
+                  "wait_cycles": 0,
+                  "inflight": 0
+                },
+                "1": {
+                  "enabled": 1,
+                  "requests": 2976,
+                  "hits": 2976,
+                  "wait_cycles": 0,
+                  "inflight": 0
+                },
+                "2": {
+                  "enabled": 1,
+                  "requests": 2976,
+                  "hits": 2976,
+                  "wait_cycles": 0,
+                  "inflight": 0
+                }
+              },
+              "phase_cycles_by_manager": {
+                "3": {
+                  "input_dma": 21399,
+                  "weight_dma": 18757,
+                  "matrix_program": 125952,
+                  "input_scatter": 116736,
+                  "output_restore": 201600,
+                  "compute": 835584,
+                  "output_read": 291840,
+                  "write_drain": 148
+                },
+                "0": {
+                  "input_dma": 21383,
+                  "weight_dma": 18876,
+                  "matrix_program": 125952,
+                  "input_scatter": 116736,
+                  "output_restore": 201600,
+                  "compute": 835584,
+                  "output_read": 291840,
+                  "write_drain": 148
+                },
+                "1": {
+                  "input_dma": 21371,
+                  "weight_dma": 18793,
+                  "matrix_program": 125952,
+                  "input_scatter": 116736,
+                  "output_restore": 201600,
+                  "compute": 835584,
+                  "output_read": 291840,
+                  "write_drain": 148
+                },
+                "2": {
+                  "input_dma": 21400,
+                  "weight_dma": 18760,
+                  "matrix_program": 125952,
+                  "input_scatter": 116736,
+                  "output_restore": 201600,
+                  "compute": 835584,
+                  "output_read": 291840,
+                  "write_drain": 148
+                }
+              }
+            },
+            "attention": {
+              "start_cycle": 2595845,
+              "end_cycle": 3539227,
+              "elapsed_cycles": 943382
+            }
+          },
+          "stage_handoff_cycles": {
+            "rmsnorm_to_projection": 435,
+            "projection_to_attention": 3136,
+            "projection_to_sync": 232,
+            "sync_to_descriptor": 51,
+            "descriptor_to_attention": 2853,
+            "sync_to_descriptor_by_manager": {
+              "0": 51,
+              "1": 51,
+              "2": 51,
+              "3": 51
+            }
+          },
+          "end_to_end_cycles": 3447833,
+          "optimistic_resource_floor_cycles": 1575296,
+          "floor_components_cycles": {
+            "rmsnorm_vector": 223616,
+            "projection_array": 811008,
+            "attention_sfu_exp": 540672
+          },
+          "actual_to_floor_ratio": 2.189,
+          "projection_full_width_compute_cycles": 66,
+          "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+          "attention_rope_table_first_load_by_worker": {
+            "5": {
+              "bytes": 262144,
+              "elapsed_cycles": 2851,
+              "dma_cycles": 1763,
+              "local_read_cycles": 1088,
+              "start_cycle": 2592994,
+              "end_cycle": 2595845
+            },
+            "6": {
+              "bytes": 262144,
+              "elapsed_cycles": 7092,
+              "dma_cycles": 6004,
+              "local_read_cycles": 1088,
+              "start_cycle": 2592994,
+              "end_cycle": 2600086
+            },
+            "9": {
+              "bytes": 262144,
+              "elapsed_cycles": 7138,
+              "dma_cycles": 6050,
+              "local_read_cycles": 1088,
+              "start_cycle": 2592999,
+              "end_cycle": 2600137
+            },
+            "4": {
+              "bytes": 262144,
+              "elapsed_cycles": 8003,
+              "dma_cycles": 6915,
+              "local_read_cycles": 1088,
+              "start_cycle": 2593007,
+              "end_cycle": 2601010
+            },
+            "10": {
+              "bytes": 262144,
+              "elapsed_cycles": 8202,
+              "dma_cycles": 7114,
+              "local_read_cycles": 1088,
+              "start_cycle": 2592999,
+              "end_cycle": 2601201
+            },
+            "8": {
+              "bytes": 262144,
+              "elapsed_cycles": 8215,
+              "dma_cycles": 7127,
+              "local_read_cycles": 1088,
+              "start_cycle": 2593012,
+              "end_cycle": 2601227
+            },
+            "7": {
+              "bytes": 262144,
+              "elapsed_cycles": 8260,
+              "dma_cycles": 7172,
+              "local_read_cycles": 1088,
+              "start_cycle": 2593006,
+              "end_cycle": 2601266
+            },
+            "11": {
+              "bytes": 262144,
+              "elapsed_cycles": 8290,
+              "dma_cycles": 7202,
+              "local_read_cycles": 1088,
+              "start_cycle": 2593011,
+              "end_cycle": 2601301
+            }
+          }
+        },
+        "max_abs_errors": {
+          "RMSNorm": 0.001953125,
+          "Q": 0.00048828125,
+          "K": 0.000244140625,
+          "V": 0.000244140625,
+          "O": 0.0001220703125
+        },
+        "output_verification": {
+          "status": "PASS",
+          "dtype": "fp16",
+          "causal": true,
+          "rope": true,
+          "atol": 0.0002,
+          "rtol": 0.002,
+          "output_nonzero": true,
+          "checked": 4194304,
+          "mismatches": 0,
+          "max_abs_error": 0.0001220703125,
+          "first_mismatch": null,
+          "shape": {
+            "num_query_heads": 32,
+            "num_kv_heads": 8,
+            "gqa_group_size": 4,
+            "query_length": 2048,
+            "kv_length": 2048,
+            "head_dim": 64
+          },
+          "hbm_output_nodes": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
+          "score_probability_hbm_bytes": 0
+        },
+        "attention": {
+          "status": "PASS",
+          "measurement": "sst_attention_worker_cluster_critical_path",
+          "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+          "qk_workers_per_manager": 2,
+          "shape": {
+            "Hq": 32,
+            "Hkv": 8,
+            "query_length": 2048,
+            "kv_length": 2048,
+            "head_dim": 64,
+            "causal": true
+          },
+          "qk_worker_count": 8,
+          "pv_worker_count": 8,
+          "qk_jobs": 64,
+          "sfu_jobs": 64,
+          "pv_windows": 4608,
+          "completed_jobs": 64,
+          "qk_fusion_complete": true,
+          "qk_tiles": {
+            "expected": 16896,
+            "observed": 16896,
+            "skipped": 15872
+          },
+          "pv_windows_skipped": 3584,
+          "stage_spans": {
+            "qk": {
+              "start_cycle": 2595846,
+              "end_cycle": 3372749,
+              "elapsed_cycles": 776903,
+              "count": 64
+            },
+            "sfu": {
+              "start_cycle": 2600584,
+              "end_cycle": 3537937,
+              "elapsed_cycles": 937353,
+              "count": 64
+            },
+            "pv": {
+              "start_cycle": 2601814,
+              "end_cycle": 3539031,
+              "elapsed_cycles": 937217,
+              "count": 4608
+            }
+          },
+          "pv_transport_waits": {
+            "p_ready_to_dispatch": {
+              "average_cycles": 0.3250868055555556,
+              "max_cycles": 114,
+              "count": 4608
+            },
+            "dispatch_to_receive": {
+              "average_cycles": 24.634114583333332,
+              "max_cycles": 305,
+              "count": 4608
+            },
+            "receive_to_start": {
+              "average_cycles": 546.0902777777778,
+              "max_cycles": 8560,
+              "count": 4608
+            }
+          },
+          "pv_service": {
+            "average_window_cycles": 302.0188802083333,
+            "max_window_cycles": 319,
+            "core_busy_cycles": {
+              "12": 58009,
+              "13": 135306,
+              "14": 212608,
+              "15": 289927,
+              "16": 57984,
+              "17": 135313,
+              "18": 212624,
+              "19": 289932
+            }
+          },
+          "v_cache": {
+            "hits": 4608,
+            "misses": 0
+          },
+          "qk_wcp_cycles_by_core": {
+            "4": {
+              "compute": 38016,
+              "dma_wait": 67412,
+              "total": 105444,
+              "wait_2d_activate": 1940,
+              "wait_2d_active_not_ready": 64896,
+              "c_buffer_read_wait": 0
+            },
+            "5": {
+              "compute": 105600,
+              "dma_wait": 151246,
+              "total": 256862,
+              "wait_2d_activate": 5710,
+              "wait_2d_active_not_ready": 143936,
+              "c_buffer_read_wait": 0
+            },
+            "6": {
+              "compute": 173184,
+              "dma_wait": 227078,
+              "total": 400278,
+              "wait_2d_activate": 1478,
+              "wait_2d_active_not_ready": 222976,
+              "c_buffer_read_wait": 0
+            },
+            "7": {
+              "compute": 240768,
+              "dma_wait": 308379,
+              "total": 549163,
+              "wait_2d_activate": 1667,
+              "wait_2d_active_not_ready": 303064,
+              "c_buffer_read_wait": 0
+            },
+            "8": {
+              "compute": 38016,
+              "dma_wait": 68864,
+              "total": 106896,
+              "wait_2d_activate": 3392,
+              "wait_2d_active_not_ready": 64896,
+              "c_buffer_read_wait": 0
+            },
+            "9": {
+              "compute": 105600,
+              "dma_wait": 147801,
+              "total": 253417,
+              "wait_2d_activate": 2265,
+              "wait_2d_active_not_ready": 143936,
+              "c_buffer_read_wait": 0
+            },
+            "10": {
+              "compute": 173184,
+              "dma_wait": 227141,
+              "total": 400341,
+              "wait_2d_activate": 1541,
+              "wait_2d_active_not_ready": 222976,
+              "c_buffer_read_wait": 0
+            },
+            "11": {
+              "compute": 240768,
+              "dma_wait": 309106,
+              "total": 549890,
+              "wait_2d_activate": 2394,
+              "wait_2d_active_not_ready": 303064,
+              "c_buffer_read_wait": 0
+            }
+          },
+          "sfu_exp_work": {
+            "expected_elements": 69206016,
+            "logically_valid_elements": 67141632,
+            "masked_elements": 2064384,
+            "observed_elements": 69206016,
+            "complete": true,
+            "corroborated_cores": []
+          },
+          "pv_tail_after_sfu_cycles": 1290,
+          "start_cycle": 2595845,
+          "end_cycle": 3539227,
+          "end_to_end_cycles": 943382,
+          "slowest_job_cycles": 235312,
+          "qk_cores": [
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "pv_cores": [
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ]
+        },
+        "layout_checked_bytes": 83886080,
+        "provenance": {
+          "git_revision": "62cfba1ff33223c610f5277ff20147e3cc82bada",
+          "git_status": "M baseline/attention_cluster_8qk_8pv/README.md\n M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M baseline/attention_cluster_8qk_8pv/run_sst.sh\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py\n?? baseline/attention_cluster_8qk_8pv/LLAMA_PROJECTION_ARRAYS.md\n?? baseline/attention_cluster_8qk_8pv/llama_projection_arrays.json",
+          "tracked_diff_sha256": "41da6aae2445d9b1aab37c0f4d4450704f6d034e80570c40dfdafa083ec226e5",
+          "command": [
+            "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+            "--projection",
+            "--query-length",
+            "2048",
+            "--kv-length",
+            "2048",
+            "--num-query-heads",
+            "32",
+            "--num-kv-heads",
+            "8",
+            "--head-dim",
+            "64",
+            "--artifact-root",
+            "/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048"
+          ],
+          "environment_overrides": {
+            "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+            "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+            "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+            "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+            "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+            "GOLEM_LOCAL_GM_READ_PORTS": "1",
+            "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+            "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+            "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+            "GOLEM_MPI_RANKS": "4",
+            "GOLEM_ARRAY_CLOCK": "1.0GHz",
+            "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+            "GOLEM_ARRAY_PIPELINE_DEPTH": "2",
+            "GOLEM_PROJECTION_ARRAYS": "64",
+            "GOLEM_PROJECTION_WEIGHT_PREFETCH": "1"
+          },
+          "sha256": {
+            "src/sst/elements/golem/attention/projectionJob.h": "bfdcfe7e263bde2bc50cf5f2252b2a8a3b2c44a670f0116dd87c2c4535a60e7e",
+            "src/sst/elements/golem/rocc/roccAnalog.h": "cedbbe41e8ea934b3d69852080aae6a3a25b7d625e1a8f90133393cd174330e8",
+            "src/sst/elements/golem/workercmdproc/workercmdproc.h": "bfdbe7a09f5e981182af1e0565053deaea4810b7fa6392b9026ab654a516b6a8",
+            "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "208da771b9b45c2bdd43b66e6c1dbaaabcbab9b39f53610269a932497aa94e0b",
+            "install/lib/sst-elements-library/libgolem.so": "2fb92bef49eb5fc24edbc26f5a5db5fef7dbe971804df3268da1b61230701dc9",
+            "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "1e19f98139f7251b1acce2099e5875e14f6db3fb7b6528af43936b3560303c77"
+          },
+          "input_seed": 1742,
+          "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+          "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=32\n  GOLEM_GEMM_N_TILES(derived)=32\n  GOLEM_GEMM_TOTAL_TASKS(derived)=1024\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=128\n  GOLEM_GEMM_M=2048\n  GOLEM_GEMM_N=2048\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=2048/2048/64\n  PADDED_M/N/K=2048/2048/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=64\n  GOLEM_PROJECTION_ARRAYS=64\n  GOLEM_PROJECTION_PIPELINE=1\n  GOLEM_PROJECTION_SHARED_INPUT=1\n  GOLEM_PROJECTION_WEIGHT_PREFETCH=1\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --map-by core\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/mvm_dumps/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/q_32x2048x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/k_8x2048x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/stdout/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/work/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/llama_weight_prefetch/s2048/logs/attention-sst_fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8.log\n",
+          "input_sha256": {
+            "k_8x2048x64.bin": "0123d0ecfe44f99e01e2a24ef55222e2e28909f6074fc46d005fb6af55b0f6fc",
+            "projection_gamma.bin": "47ce4f7d3bfa3eae345603349e24368ee15a8cadde5ecea70ba2fadd753c9cf8",
+            "projection_norm.bin": "745480e41d1d41b5032da8f11f7fc6d541083a2e55f3616a27fa001d06c441d4",
+            "projection_weights.bin": "de56b7c702ec4a832c20a67749443e606e9f657cba9131d8dce416940653bf41",
+            "projection_x.bin": "3fd1add52b248019c56cbc957a55a0d54f697f74d697d484a8efe693b520afe8",
+            "q_32x2048x64.bin": "64b490792db23bd9a57a6e59abf108d38eaaf0f6736629b6896e57d293296f79",
+            "rope_64.bin": "44303ad847a27fe22afbea2db01ec84b3adae4c8581751e148a1d439b0f53a6c",
+            "v_8x2048x64.bin": "408a33b609b2c5a05fd14204a23ca0d71da2f9cbaa962bed440febbfdb3fcc53"
+          }
+        },
+        "reference_comparison": {
+          "status": "PASS",
+          "reference_root": "/data/jjgong/LLM/Muticore-Attention/results/llama_arrays64_verified/s2048",
+          "byte_exact_regions": [
+            {
+              "node": 1,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 1,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 1,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 1,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 1,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 1,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 1,
+              "region": "V_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 2,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 2,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 2,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 2,
+              "region": "V_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 3,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 3,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 3,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 3,
+              "region": "V_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "RMSNorm",
+              "bytes": 2097152
+            },
+            {
+              "node": 4,
+              "region": "Q",
+              "bytes": 2097152
+            },
+            {
+              "node": 4,
+              "region": "K",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "V",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "Q_panels",
+              "bytes": 2097152
+            },
+            {
+              "node": 4,
+              "region": "K_panels",
+              "bytes": 524288
+            },
+            {
+              "node": 4,
+              "region": "V_panels",
+              "bytes": 524288
+            }
+          ],
+          "end_to_end": {
+            "before": 3664580,
+            "after": 3447833,
+            "saved_cycles": 216747,
+            "reduction_percent": 5.914647790469849
+          },
+          "projection": {
+            "before": 2343594,
+            "after": 2126268,
+            "saved_cycles": 217326,
+            "reduction_percent": 9.273193223740972
+          }
+        }
+      }
+    ]
+  },
+  "controls": {
+    "weight_prefetch_small": {
+      "artifact_root": "results/weight_prefetch_small",
+      "pipeline": {
+        "status": "PASS",
+        "shape": {
+          "Hq": 4,
+          "Hkv": 2,
+          "query_length": 1024,
+          "kv_length": 1024,
+          "head_dim": 64,
+          "causal": true
+        },
+        "stages": {
+          "rmsnorm": {
+            "start_cycle": 91371,
+            "end_cycle": 122685,
+            "elapsed_cycles": 31314,
+            "jobs": 32
+          },
+          "projection": {
+            "start_cycle": 123121,
+            "end_cycle": 145891,
+            "elapsed_cycles": 22770,
+            "jobs": 4,
+            "array_count": 64,
+            "weight_loads": 128,
+            "weight_programs": 128,
+            "weight_reuses": 384,
+            "input_loads": 4,
+            "local_gm_by_manager": {
+              "0": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 4704,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              },
+              "1": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 4704,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              },
+              "3": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 4704,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              },
+              "2": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 4704,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              }
+            },
+            "pipeline_by_manager": {
+              "0": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 48,
+                "partial_prefetches": 24,
+                "scatter_prefetches": 96,
+                "background_read_cycles": 7008,
+                "background_write_cycles": 1152,
+                "staging_bytes": 32768,
+                "array_count": 64
+              },
+              "1": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 48,
+                "partial_prefetches": 24,
+                "scatter_prefetches": 96,
+                "background_read_cycles": 7008,
+                "background_write_cycles": 1152,
+                "staging_bytes": 32768,
+                "array_count": 64
+              },
+              "3": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 48,
+                "partial_prefetches": 24,
+                "scatter_prefetches": 96,
+                "background_read_cycles": 7008,
+                "background_write_cycles": 1152,
+                "staging_bytes": 32768,
+                "array_count": 64
+              },
+              "2": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 48,
+                "partial_prefetches": 24,
+                "scatter_prefetches": 96,
+                "background_read_cycles": 7008,
+                "background_write_cycles": 1152,
+                "staging_bytes": 32768,
+                "array_count": 64
+              }
+            },
+            "weight_prefetch_by_manager": {
+              "0": {
+                "enabled": 1,
+                "requests": 24,
+                "hits": 24,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "1": {
+                "enabled": 1,
+                "requests": 24,
+                "hits": 24,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "3": {
+                "enabled": 1,
+                "requests": 24,
+                "hits": 24,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "2": {
+                "enabled": 1,
+                "requests": 24,
+                "hits": 24,
+                "wait_cycles": 0,
+                "inflight": 0
+              }
+            },
+            "phase_cycles_by_manager": {
+              "0": {
+                "input_dma": 847,
+                "weight_dma": 1469,
+                "matrix_program": 1312,
+                "input_scatter": 1216,
+                "output_restore": 1120,
+                "compute": 8704,
+                "output_read": 3040,
+                "write_drain": 135
+              },
+              "1": {
+                "input_dma": 843,
+                "weight_dma": 1393,
+                "matrix_program": 1312,
+                "input_scatter": 1216,
+                "output_restore": 1120,
+                "compute": 8704,
+                "output_read": 3040,
+                "write_drain": 136
+              },
+              "3": {
+                "input_dma": 840,
+                "weight_dma": 1388,
+                "matrix_program": 1312,
+                "input_scatter": 1216,
+                "output_restore": 1120,
+                "compute": 8704,
+                "output_read": 3040,
+                "write_drain": 136
+              },
+              "2": {
+                "input_dma": 843,
+                "weight_dma": 1389,
+                "matrix_program": 1312,
+                "input_scatter": 1216,
+                "output_restore": 1120,
+                "compute": 8704,
+                "output_read": 3040,
+                "write_drain": 136
+              }
+            }
+          },
+          "attention": {
+            "start_cycle": 147437,
+            "end_cycle": 185056,
+            "elapsed_cycles": 37619
+          }
+        },
+        "stage_handoff_cycles": {
+          "rmsnorm_to_projection": 436,
+          "projection_to_attention": 1546,
+          "projection_to_sync": 248,
+          "sync_to_descriptor": 51,
+          "descriptor_to_attention": 1247,
+          "sync_to_descriptor_by_manager": {
+            "0": 51,
+            "1": 51,
+            "2": 51,
+            "3": 51
+          }
+        },
+        "end_to_end_cycles": 93685,
+        "optimistic_resource_floor_cycles": 48408,
+        "floor_components_cycles": {
+          "rmsnorm_vector": 22552,
+          "projection_array": 8448,
+          "attention_sfu_exp": 17408
+        },
+        "actual_to_floor_ratio": 1.935,
+        "projection_full_width_compute_cycles": 66,
+        "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+        "attention_rope_table_first_load_by_worker": {
+          "4": {
+            "bytes": 131072,
+            "elapsed_cycles": 1264,
+            "dma_cycles": 720,
+            "local_read_cycles": 544,
+            "start_cycle": 146173,
+            "end_cycle": 147437
+          },
+          "5": {
+            "bytes": 131072,
+            "elapsed_cycles": 1805,
+            "dma_cycles": 1261,
+            "local_read_cycles": 544,
+            "start_cycle": 146175,
+            "end_cycle": 147980
+          },
+          "8": {
+            "bytes": 131072,
+            "elapsed_cycles": 2291,
+            "dma_cycles": 1747,
+            "local_read_cycles": 544,
+            "start_cycle": 146178,
+            "end_cycle": 148469
+          },
+          "6": {
+            "bytes": 131072,
+            "elapsed_cycles": 2536,
+            "dma_cycles": 1992,
+            "local_read_cycles": 544,
+            "start_cycle": 146176,
+            "end_cycle": 148712
+          },
+          "9": {
+            "bytes": 131072,
+            "elapsed_cycles": 4088,
+            "dma_cycles": 3544,
+            "local_read_cycles": 544,
+            "start_cycle": 146180,
+            "end_cycle": 150268
+          },
+          "10": {
+            "bytes": 131072,
+            "elapsed_cycles": 4239,
+            "dma_cycles": 3695,
+            "local_read_cycles": 544,
+            "start_cycle": 146181,
+            "end_cycle": 150420
+          },
+          "7": {
+            "bytes": 131072,
+            "elapsed_cycles": 4248,
+            "dma_cycles": 3704,
+            "local_read_cycles": 544,
+            "start_cycle": 146205,
+            "end_cycle": 150453
+          },
+          "11": {
+            "bytes": 131072,
+            "elapsed_cycles": 4294,
+            "dma_cycles": 3750,
+            "local_read_cycles": 544,
+            "start_cycle": 146210,
+            "end_cycle": 150504
+          }
+        }
+      },
+      "output": {
+        "status": "PASS",
+        "dtype": "fp16",
+        "causal": true,
+        "rope": true,
+        "atol": 0.0002,
+        "rtol": 0.002,
+        "output_nonzero": true,
+        "checked": 262144,
+        "mismatches": 0,
+        "max_abs_error": 5.430391072286378e-05,
+        "first_mismatch": null,
+        "shape": {
+          "num_query_heads": 4,
+          "num_kv_heads": 2,
+          "gqa_group_size": 2,
+          "query_length": 1024,
+          "kv_length": 1024,
+          "head_dim": 64
+        },
+        "hbm_output_nodes": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
+        "score_probability_hbm_bytes": 0
+      },
+      "byte_exact_control_bytes": 2621440
+    },
+    "weight_prefetch_small_control": {
+      "artifact_root": "results/weight_prefetch_small_control",
+      "pipeline": {
+        "status": "PASS",
+        "shape": {
+          "Hq": 4,
+          "Hkv": 2,
+          "query_length": 1024,
+          "kv_length": 1024,
+          "head_dim": 64,
+          "causal": true
+        },
+        "stages": {
+          "rmsnorm": {
+            "start_cycle": 91371,
+            "end_cycle": 122685,
+            "elapsed_cycles": 31314,
+            "jobs": 32
+          },
+          "projection": {
+            "start_cycle": 123121,
+            "end_cycle": 148190,
+            "elapsed_cycles": 25069,
+            "jobs": 4,
+            "array_count": 64,
+            "weight_loads": 128,
+            "weight_programs": 128,
+            "weight_reuses": 384,
+            "input_loads": 4,
+            "local_gm_by_manager": {
+              "3": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 3504,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              },
+              "0": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 3504,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              },
+              "2": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 3504,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              },
+              "1": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 3504,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              }
+            },
+            "pipeline_by_manager": {
+              "3": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 48,
+                "partial_prefetches": 24,
+                "scatter_prefetches": 96,
+                "background_read_cycles": 7008,
+                "background_write_cycles": 1152,
+                "staging_bytes": 32768,
+                "array_count": 64
+              },
+              "0": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 48,
+                "partial_prefetches": 24,
+                "scatter_prefetches": 96,
+                "background_read_cycles": 7008,
+                "background_write_cycles": 1152,
+                "staging_bytes": 32768,
+                "array_count": 64
+              },
+              "2": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 48,
+                "partial_prefetches": 24,
+                "scatter_prefetches": 96,
+                "background_read_cycles": 7008,
+                "background_write_cycles": 1152,
+                "staging_bytes": 32768,
+                "array_count": 64
+              },
+              "1": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 48,
+                "partial_prefetches": 24,
+                "scatter_prefetches": 96,
+                "background_read_cycles": 7008,
+                "background_write_cycles": 1152,
+                "staging_bytes": 32768,
+                "array_count": 64
+              }
+            },
+            "weight_prefetch_by_manager": {
+              "3": {
+                "enabled": 0,
+                "requests": 0,
+                "hits": 0,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "0": {
+                "enabled": 0,
+                "requests": 0,
+                "hits": 0,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "2": {
+                "enabled": 0,
+                "requests": 0,
+                "hits": 0,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "1": {
+                "enabled": 0,
+                "requests": 0,
+                "hits": 0,
+                "wait_cycles": 0,
+                "inflight": 0
+              }
+            },
+            "phase_cycles_by_manager": {
+              "3": {
+                "input_dma": 840,
+                "weight_dma": 4840,
+                "matrix_program": 1312,
+                "input_scatter": 1216,
+                "output_restore": 1120,
+                "compute": 8704,
+                "output_read": 3040,
+                "write_drain": 182
+              },
+              "0": {
+                "input_dma": 847,
+                "weight_dma": 4936,
+                "matrix_program": 1312,
+                "input_scatter": 1216,
+                "output_restore": 1120,
+                "compute": 8704,
+                "output_read": 3040,
+                "write_drain": 182
+              },
+              "2": {
+                "input_dma": 843,
+                "weight_dma": 4841,
+                "matrix_program": 1312,
+                "input_scatter": 1216,
+                "output_restore": 1120,
+                "compute": 8704,
+                "output_read": 3040,
+                "write_drain": 182
+              },
+              "1": {
+                "input_dma": 843,
+                "weight_dma": 4845,
+                "matrix_program": 1312,
+                "input_scatter": 1216,
+                "output_restore": 1120,
+                "compute": 8704,
+                "output_read": 3040,
+                "write_drain": 182
+              }
+            }
+          },
+          "attention": {
+            "start_cycle": 149776,
+            "end_cycle": 187002,
+            "elapsed_cycles": 37226
+          }
+        },
+        "stage_handoff_cycles": {
+          "rmsnorm_to_projection": 436,
+          "projection_to_attention": 1586,
+          "projection_to_sync": 234,
+          "sync_to_descriptor": 51,
+          "descriptor_to_attention": 1301,
+          "sync_to_descriptor_by_manager": {
+            "0": 51,
+            "1": 51,
+            "2": 51,
+            "3": 51
+          }
+        },
+        "end_to_end_cycles": 95631,
+        "optimistic_resource_floor_cycles": 48408,
+        "floor_components_cycles": {
+          "rmsnorm_vector": 22552,
+          "projection_array": 8448,
+          "attention_sfu_exp": 17408
+        },
+        "actual_to_floor_ratio": 1.976,
+        "projection_full_width_compute_cycles": 66,
+        "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+        "attention_rope_table_first_load_by_worker": {
+          "5": {
+            "bytes": 131072,
+            "elapsed_cycles": 1300,
+            "dma_cycles": 756,
+            "local_read_cycles": 544,
+            "start_cycle": 148476,
+            "end_cycle": 149776
+          },
+          "6": {
+            "bytes": 131072,
+            "elapsed_cycles": 1764,
+            "dma_cycles": 1220,
+            "local_read_cycles": 544,
+            "start_cycle": 148476,
+            "end_cycle": 150240
+          },
+          "9": {
+            "bytes": 131072,
+            "elapsed_cycles": 2163,
+            "dma_cycles": 1619,
+            "local_read_cycles": 544,
+            "start_cycle": 148481,
+            "end_cycle": 150644
+          },
+          "4": {
+            "bytes": 131072,
+            "elapsed_cycles": 2892,
+            "dma_cycles": 2348,
+            "local_read_cycles": 544,
+            "start_cycle": 148490,
+            "end_cycle": 151382
+          },
+          "10": {
+            "bytes": 131072,
+            "elapsed_cycles": 3882,
+            "dma_cycles": 3338,
+            "local_read_cycles": 544,
+            "start_cycle": 148481,
+            "end_cycle": 152363
+          },
+          "7": {
+            "bytes": 131072,
+            "elapsed_cycles": 4119,
+            "dma_cycles": 3575,
+            "local_read_cycles": 544,
+            "start_cycle": 148488,
+            "end_cycle": 152607
+          },
+          "8": {
+            "bytes": 131072,
+            "elapsed_cycles": 4138,
+            "dma_cycles": 3594,
+            "local_read_cycles": 544,
+            "start_cycle": 148495,
+            "end_cycle": 152633
+          },
+          "11": {
+            "bytes": 131072,
+            "elapsed_cycles": 4215,
+            "dma_cycles": 3671,
+            "local_read_cycles": 544,
+            "start_cycle": 148493,
+            "end_cycle": 152708
+          }
+        }
+      },
+      "output": {
+        "status": "PASS",
+        "dtype": "fp16",
+        "causal": true,
+        "rope": true,
+        "atol": 0.0002,
+        "rtol": 0.002,
+        "output_nonzero": true,
+        "checked": 262144,
+        "mismatches": 0,
+        "max_abs_error": 5.430391072286378e-05,
+        "first_mismatch": null,
+        "shape": {
+          "num_query_heads": 4,
+          "num_kv_heads": 2,
+          "gqa_group_size": 2,
+          "query_length": 1024,
+          "kv_length": 1024,
+          "head_dim": 64
+        },
+        "hbm_output_nodes": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
+        "score_probability_hbm_bytes": 0
+      }
+    },
+    "weight_prefetch_small32": {
+      "artifact_root": "results/weight_prefetch_small32",
+      "pipeline": {
+        "status": "PASS",
+        "shape": {
+          "Hq": 4,
+          "Hkv": 2,
+          "query_length": 1024,
+          "kv_length": 1024,
+          "head_dim": 64,
+          "causal": true
+        },
+        "stages": {
+          "rmsnorm": {
+            "start_cycle": 91371,
+            "end_cycle": 122685,
+            "elapsed_cycles": 31314,
+            "jobs": 32
+          },
+          "projection": {
+            "start_cycle": 123121,
+            "end_cycle": 152107,
+            "elapsed_cycles": 28986,
+            "jobs": 4,
+            "array_count": 32,
+            "weight_loads": 128,
+            "weight_programs": 128,
+            "weight_reuses": 896,
+            "input_loads": 4,
+            "local_gm_by_manager": {
+              "0": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 2424,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              },
+              "3": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 2424,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              },
+              "2": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 2424,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              },
+              "1": {
+                "read_bytes": 1572864,
+                "write_bytes": 262144,
+                "read_cycles": 2424,
+                "write_cycles": 0,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 1
+              }
+            },
+            "pipeline_by_manager": {
+              "0": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 112,
+                "partial_prefetches": 56,
+                "scatter_prefetches": 224,
+                "background_read_cycles": 8232,
+                "background_write_cycles": 1152,
+                "staging_bytes": 16384,
+                "array_count": 32
+              },
+              "3": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 112,
+                "partial_prefetches": 56,
+                "scatter_prefetches": 224,
+                "background_read_cycles": 8232,
+                "background_write_cycles": 1152,
+                "staging_bytes": 16384,
+                "array_count": 32
+              },
+              "2": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 112,
+                "partial_prefetches": 56,
+                "scatter_prefetches": 224,
+                "background_read_cycles": 8232,
+                "background_write_cycles": 1152,
+                "staging_bytes": 16384,
+                "array_count": 32
+              },
+              "1": {
+                "enabled": 1,
+                "shared_input": 1,
+                "input_prefetches": 112,
+                "partial_prefetches": 56,
+                "scatter_prefetches": 224,
+                "background_read_cycles": 8232,
+                "background_write_cycles": 1152,
+                "staging_bytes": 16384,
+                "array_count": 32
+              }
+            },
+            "weight_prefetch_by_manager": {
+              "0": {
+                "enabled": 1,
+                "requests": 24,
+                "hits": 24,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "3": {
+                "enabled": 1,
+                "requests": 24,
+                "hits": 24,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "2": {
+                "enabled": 1,
+                "requests": 24,
+                "hits": 24,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "1": {
+                "enabled": 1,
+                "requests": 24,
+                "hits": 24,
+                "wait_cycles": 0,
+                "inflight": 0
+              }
+            },
+            "phase_cycles_by_manager": {
+              "0": {
+                "input_dma": 975,
+                "weight_dma": 1909,
+                "matrix_program": 1280,
+                "input_scatter": 832,
+                "output_restore": 1216,
+                "compute": 17408,
+                "output_read": 2432,
+                "write_drain": 123
+              },
+              "3": {
+                "input_dma": 968,
+                "weight_dma": 1849,
+                "matrix_program": 1280,
+                "input_scatter": 832,
+                "output_restore": 1216,
+                "compute": 17408,
+                "output_read": 2432,
+                "write_drain": 139
+              },
+              "2": {
+                "input_dma": 971,
+                "weight_dma": 1850,
+                "matrix_program": 1280,
+                "input_scatter": 832,
+                "output_restore": 1216,
+                "compute": 17408,
+                "output_read": 2432,
+                "write_drain": 139
+              },
+              "1": {
+                "input_dma": 971,
+                "weight_dma": 1854,
+                "matrix_program": 1280,
+                "input_scatter": 832,
+                "output_restore": 1216,
+                "compute": 17408,
+                "output_read": 2432,
+                "write_drain": 139
+              }
+            }
+          },
+          "attention": {
+            "start_cycle": 153657,
+            "end_cycle": 191207,
+            "elapsed_cycles": 37550
+          }
+        },
+        "stage_handoff_cycles": {
+          "rmsnorm_to_projection": 436,
+          "projection_to_attention": 1550,
+          "projection_to_sync": 233,
+          "sync_to_descriptor": 51,
+          "descriptor_to_attention": 1266,
+          "sync_to_descriptor_by_manager": {
+            "0": 51,
+            "1": 51,
+            "2": 51,
+            "3": 51
+          }
+        },
+        "end_to_end_cycles": 99836,
+        "optimistic_resource_floor_cycles": 56856,
+        "floor_components_cycles": {
+          "rmsnorm_vector": 22552,
+          "projection_array": 16896,
+          "attention_sfu_exp": 17408
+        },
+        "actual_to_floor_ratio": 1.756,
+        "projection_full_width_compute_cycles": 66,
+        "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+        "attention_rope_table_first_load_by_worker": {
+          "4": {
+            "bytes": 131072,
+            "elapsed_cycles": 1294,
+            "dma_cycles": 750,
+            "local_read_cycles": 544,
+            "start_cycle": 152363,
+            "end_cycle": 153657
+          },
+          "8": {
+            "bytes": 131072,
+            "elapsed_cycles": 1722,
+            "dma_cycles": 1178,
+            "local_read_cycles": 544,
+            "start_cycle": 152368,
+            "end_cycle": 154090
+          },
+          "5": {
+            "bytes": 131072,
+            "elapsed_cycles": 2145,
+            "dma_cycles": 1601,
+            "local_read_cycles": 544,
+            "start_cycle": 152392,
+            "end_cycle": 154537
+          },
+          "6": {
+            "bytes": 131072,
+            "elapsed_cycles": 2572,
+            "dma_cycles": 2028,
+            "local_read_cycles": 544,
+            "start_cycle": 152392,
+            "end_cycle": 154964
+          },
+          "9": {
+            "bytes": 131072,
+            "elapsed_cycles": 4097,
+            "dma_cycles": 3553,
+            "local_read_cycles": 544,
+            "start_cycle": 152397,
+            "end_cycle": 156494
+          },
+          "10": {
+            "bytes": 131072,
+            "elapsed_cycles": 4133,
+            "dma_cycles": 3589,
+            "local_read_cycles": 544,
+            "start_cycle": 152397,
+            "end_cycle": 156530
+          },
+          "7": {
+            "bytes": 131072,
+            "elapsed_cycles": 4156,
+            "dma_cycles": 3612,
+            "local_read_cycles": 544,
+            "start_cycle": 152406,
+            "end_cycle": 156562
+          },
+          "11": {
+            "bytes": 131072,
+            "elapsed_cycles": 4192,
+            "dma_cycles": 3648,
+            "local_read_cycles": 544,
+            "start_cycle": 152411,
+            "end_cycle": 156603
+          }
+        }
+      },
+      "output": {
+        "status": "PASS",
+        "dtype": "fp16",
+        "causal": true,
+        "rope": true,
+        "atol": 0.0002,
+        "rtol": 0.002,
+        "output_nonzero": true,
+        "checked": 262144,
+        "mismatches": 0,
+        "max_abs_error": 5.430391072286378e-05,
+        "first_mismatch": null,
+        "shape": {
+          "num_query_heads": 4,
+          "num_kv_heads": 2,
+          "gqa_group_size": 2,
+          "query_length": 1024,
+          "kv_length": 1024,
+          "head_dim": 64
+        },
+        "hbm_output_nodes": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
+        "score_probability_hbm_bytes": 0
+      },
+      "byte_exact_control_bytes": 2621440
+    },
+    "weight_prefetch_d128": {
+      "artifact_root": "results/weight_prefetch_d128",
+      "pipeline": {
+        "status": "PASS",
+        "shape": {
+          "Hq": 2,
+          "Hkv": 1,
+          "query_length": 1024,
+          "kv_length": 1024,
+          "head_dim": 128,
+          "causal": true
+        },
+        "stages": {
+          "rmsnorm": {
+            "start_cycle": 91671,
+            "end_cycle": 123171,
+            "elapsed_cycles": 31500,
+            "jobs": 32
+          },
+          "projection": {
+            "start_cycle": 123121,
+            "end_cycle": 213670,
+            "elapsed_cycles": 90549,
+            "jobs": 4,
+            "array_count": 16,
+            "weight_loads": 128,
+            "weight_programs": 128,
+            "weight_reuses": 1920,
+            "input_loads": 16,
+            "local_gm_by_manager": {
+              "0": {
+                "read_bytes": 5505024,
+                "write_bytes": 1048576,
+                "read_cycles": 24576,
+                "write_cycles": 4992,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 0
+              },
+              "3": {
+                "read_bytes": 5505024,
+                "write_bytes": 1048576,
+                "read_cycles": 24576,
+                "write_cycles": 4992,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 0
+              },
+              "2": {
+                "read_bytes": 5505024,
+                "write_bytes": 1048576,
+                "read_cycles": 24576,
+                "write_cycles": 4992,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 0
+              },
+              "1": {
+                "read_bytes": 5505024,
+                "write_bytes": 1048576,
+                "read_cycles": 24576,
+                "write_cycles": 4992,
+                "timed": 1,
+                "reuse_block": 1,
+                "paired_weights": 0
+              }
+            },
+            "pipeline_by_manager": {
+              "0": {
+                "enabled": 0,
+                "shared_input": 0,
+                "input_prefetches": 0,
+                "partial_prefetches": 0,
+                "scatter_prefetches": 0,
+                "background_read_cycles": 0,
+                "background_write_cycles": 0,
+                "staging_bytes": 0,
+                "array_count": 16
+              },
+              "3": {
+                "enabled": 0,
+                "shared_input": 0,
+                "input_prefetches": 0,
+                "partial_prefetches": 0,
+                "scatter_prefetches": 0,
+                "background_read_cycles": 0,
+                "background_write_cycles": 0,
+                "staging_bytes": 0,
+                "array_count": 16
+              },
+              "2": {
+                "enabled": 0,
+                "shared_input": 0,
+                "input_prefetches": 0,
+                "partial_prefetches": 0,
+                "scatter_prefetches": 0,
+                "background_read_cycles": 0,
+                "background_write_cycles": 0,
+                "staging_bytes": 0,
+                "array_count": 16
+              },
+              "1": {
+                "enabled": 0,
+                "shared_input": 0,
+                "input_prefetches": 0,
+                "partial_prefetches": 0,
+                "scatter_prefetches": 0,
+                "background_read_cycles": 0,
+                "background_write_cycles": 0,
+                "staging_bytes": 0,
+                "array_count": 16
+              }
+            },
+            "weight_prefetch_by_manager": {
+              "0": {
+                "enabled": 0,
+                "requests": 0,
+                "hits": 0,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "3": {
+                "enabled": 0,
+                "requests": 0,
+                "hits": 0,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "2": {
+                "enabled": 0,
+                "requests": 0,
+                "hits": 0,
+                "wait_cycles": 0,
+                "inflight": 0
+              },
+              "1": {
+                "enabled": 0,
+                "requests": 0,
+                "hits": 0,
+                "wait_cycles": 0,
+                "inflight": 0
+              }
+            },
+            "phase_cycles_by_manager": {
+              "0": {
+                "input_dma": 3381,
+                "weight_dma": 5210,
+                "matrix_program": 1248,
+                "input_scatter": 5632,
+                "output_restore": 4224,
+                "compute": 34816,
+                "output_read": 5632,
+                "write_drain": 118
+              },
+              "3": {
+                "input_dma": 3496,
+                "weight_dma": 4542,
+                "matrix_program": 1248,
+                "input_scatter": 5632,
+                "output_restore": 4224,
+                "compute": 34816,
+                "output_read": 5632,
+                "write_drain": 118
+              },
+              "2": {
+                "input_dma": 3409,
+                "weight_dma": 4633,
+                "matrix_program": 1248,
+                "input_scatter": 5632,
+                "output_restore": 4224,
+                "compute": 34816,
+                "output_read": 5632,
+                "write_drain": 118
+              },
+              "1": {
+                "input_dma": 3418,
+                "weight_dma": 4628,
+                "matrix_program": 1248,
+                "input_scatter": 5632,
+                "output_restore": 4224,
+                "compute": 34816,
+                "output_read": 5632,
+                "write_drain": 118
+              }
+            }
+          },
+          "attention": {
+            "start_cycle": 216719,
+            "end_cycle": 253237,
+            "elapsed_cycles": 36518
+          }
+        },
+        "stage_handoff_cycles": {
+          "rmsnorm_to_projection": -50,
+          "projection_to_attention": 3049,
+          "projection_to_sync": 234,
+          "sync_to_descriptor": 51,
+          "descriptor_to_attention": 2764,
+          "sync_to_descriptor_by_manager": {
+            "0": 51,
+            "1": 51,
+            "2": 51,
+            "3": 51
+          }
+        },
+        "end_to_end_cycles": 161566,
+        "optimistic_resource_floor_cycles": 65048,
+        "floor_components_cycles": {
+          "rmsnorm_vector": 22552,
+          "projection_array": 33792,
+          "attention_sfu_exp": 8704
+        },
+        "actual_to_floor_ratio": 2.484,
+        "projection_full_width_compute_cycles": 66,
+        "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+        "attention_rope_table_first_load_by_worker": {
+          "5": {
+            "bytes": 262144,
+            "elapsed_cycles": 2763,
+            "dma_cycles": 1675,
+            "local_read_cycles": 1088,
+            "start_cycle": 213956,
+            "end_cycle": 216719
+          },
+          "6": {
+            "bytes": 262144,
+            "elapsed_cycles": 7087,
+            "dma_cycles": 5999,
+            "local_read_cycles": 1088,
+            "start_cycle": 213956,
+            "end_cycle": 221043
+          },
+          "9": {
+            "bytes": 262144,
+            "elapsed_cycles": 7283,
+            "dma_cycles": 6195,
+            "local_read_cycles": 1088,
+            "start_cycle": 213961,
+            "end_cycle": 221244
+          },
+          "4": {
+            "bytes": 262144,
+            "elapsed_cycles": 7997,
+            "dma_cycles": 6909,
+            "local_read_cycles": 1088,
+            "start_cycle": 213970,
+            "end_cycle": 221967
+          },
+          "10": {
+            "bytes": 262144,
+            "elapsed_cycles": 8145,
+            "dma_cycles": 7057,
+            "local_read_cycles": 1088,
+            "start_cycle": 213961,
+            "end_cycle": 222106
+          },
+          "7": {
+            "bytes": 262144,
+            "elapsed_cycles": 8171,
+            "dma_cycles": 7083,
+            "local_read_cycles": 1088,
+            "start_cycle": 213968,
+            "end_cycle": 222139
+          },
+          "8": {
+            "bytes": 262144,
+            "elapsed_cycles": 8189,
+            "dma_cycles": 7101,
+            "local_read_cycles": 1088,
+            "start_cycle": 213975,
+            "end_cycle": 222164
+          },
+          "11": {
+            "bytes": 262144,
+            "elapsed_cycles": 8233,
+            "dma_cycles": 7145,
+            "local_read_cycles": 1088,
+            "start_cycle": 213973,
+            "end_cycle": 222206
+          }
+        }
+      },
+      "output": {
+        "status": "PASS",
+        "dtype": "fp16",
+        "causal": true,
+        "rope": true,
+        "atol": 0.0002,
+        "rtol": 0.002,
+        "output_nonzero": true,
+        "checked": 262144,
+        "mismatches": 0,
+        "max_abs_error": 4.887457748434243e-05,
+        "first_mismatch": null,
+        "shape": {
+          "num_query_heads": 2,
+          "num_kv_heads": 1,
+          "gqa_group_size": 2,
+          "query_length": 1024,
+          "kv_length": 1024,
+          "head_dim": 128
+        },
+        "hbm_output_nodes": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "output_layout": "query_major_[query_length,num_query_heads,head_dim]",
+        "score_probability_hbm_bytes": 0
+      }
+    }
+  },
+  "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP"
+}

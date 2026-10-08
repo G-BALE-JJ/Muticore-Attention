@@ -119,6 +119,8 @@ def main():
                         help="prior artifact root containing s1024/s2048; check exact projection bytes and cycle savings")
     args = parser.parse_args()
     env = {**os.environ, **GM_PROFILE}
+    env.setdefault("GOLEM_PROJECTION_ARRAYS", "64")
+    env.setdefault("GOLEM_PROJECTION_WEIGHT_PREFETCH", "1")
     cases = []
     for sequence in args.sequences:
         if sequence not in (1024, 2048):

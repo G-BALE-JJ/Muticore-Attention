@@ -19,13 +19,16 @@
 namespace SST { namespace Golem {
 
 // A bounded, descriptor-driven producer of the raw and panel Q/K/V layouts.
-// The row-major path holds one 16-token group; the reuse path holds one
+// The row-major path holds one array-width token group; the reuse path holds one
 // 256-token input block in bounded local GM. Both retain one V tile.
 class ProjectionJob {
 public:
     ProjectionJob(GlobalMemoryAPI* memory, WorkerCommandProcessorAPI* processor)
         : memory_(memory), processor_(processor) {
-        for (uint32_t id = 0; id < 16; ++id) arrays_.push_back(id);
+        const char* width = std::getenv("GOLEM_PROJECTION_ARRAYS");
+        uint32_t count = width ? static_cast<uint32_t>(std::strtoul(width, nullptr, 10)) : 16;
+        if (count != 16 && count != 32 && count != 64) count = 16;
+        for (uint32_t id = 0; id < count; ++id) arrays_.push_back(id);
     }
 
     bool start(const ProjectionJobDesc& desc) {
@@ -70,12 +73,18 @@ public:
             desc.scratch_addr - gmBase <= gmSize - 64 &&
             reuseBytes <= gmSize - 64 - (desc.scratch_addr - gmBase);
         pairedWeights_ = pairedWeights_ && reuseBlock_;
-        // Budget the additional 8 KiB of transfer snapshots against the same
+        if (!pairedWeights_ && rowGroup() != 16) arrays_.resize(16);
+        // Budget width-dependent transfer snapshots against the same
         // local-GM capacity, including the reserved DMA tail. This is not an
         // additional array bank or an unbounded software cache.
         pipeline_ = pairedWeights_ && enabled("GOLEM_PROJECTION_PIPELINE") &&
-            reuseBytes + 8192 <= gmSize - 64 - (desc.scratch_addr - gmBase);
+            reuseBytes + stagingBytes() <= gmSize - 64 - (desc.scratch_addr - gmBase);
         sharedInput_ = pairedWeights_ && enabled("GOLEM_PROJECTION_SHARED_INPUT");
+        weightPrefetchEnabled_ = pairedWeights_ && enabled("GOLEM_PROJECTION_WEIGHT_PREFETCH");
+        weightPrefetchBusy_ = false;
+        weightPrefetchTile_ = ~uint64_t{0};
+        prefetchedTiles_.fill(~uint64_t{0});
+        weightPrefetchRequests_ = weightPrefetchHits_ = weightPrefetchWaitCycles_ = 0;
         prefetchInput_ = AsyncRead{};
         prefetchPartial_ = AsyncRead{};
         partialStore_ = AsyncStore{};
@@ -94,7 +103,7 @@ public:
         startCycle_ = 0;
         phase_ = reuseBlock_ ? Phase::LoadBlock : Phase::LoadInput;
         vTile_.assign(64 * desc.head_dim, 0);
-        rawTile_.assign(16 * desc.head_dim * 2, 0);
+        rawTile_.assign(rowGroup() * desc.head_dim * 2, 0);
         return true;
     }
 
@@ -107,6 +116,7 @@ public:
         if (!active()) return;
         if (startCycle_ == 0) startCycle_ = cycle;
         ++phaseCycles_[static_cast<size_t>(phase_)];
+        pumpWeightPrefetch();
         if (pipeline_) pumpBackground(cycle);
         pumpLocalAccess();
         if (pending_) return;
@@ -134,7 +144,7 @@ public:
             }
             const uint64_t addr = desc_.input_addr +
                 static_cast<uint64_t>(row_) * desc_.hidden_dim * 2;
-            const size_t bytes = static_cast<size_t>(16) * desc_.hidden_dim * 2;
+            const size_t bytes = static_cast<size_t>(rowGroup()) * desc_.hidden_dim * 2;
             pending_ = true;
             memory_->dma_read_from_host_to_globalmem(addr, bytes, desc_.scratch_addr,
                 [this](bool ok) {
@@ -153,7 +163,17 @@ public:
                 break;
             }
             if (cachedTiles_[cacheSlot()] == tile) {
+                if (prefetchedTiles_[cacheSlot()] == tile) {
+                    ++weightPrefetchHits_;
+                    prefetchedTiles_[cacheSlot()] = ~uint64_t{0};
+                }
                 phase_ = Phase::ProgramWeight;
+                break;
+            }
+            // The background DMA owns this cache slot until completion.
+            // Wait for it instead of submitting a duplicate demand read.
+            if (weightPrefetchBusy_ && weightPrefetchTile_ == tile) {
+                ++weightPrefetchWaitCycles_;
                 break;
             }
             const uint64_t addr = desc_.weights_addr + tile * 8192;
@@ -258,7 +278,7 @@ public:
                 issueNextInputPrefetch(cycle);
             }
             pending_ = true;
-            remaining_ = 16;
+            remaining_ = rowGroup();
             if (!processor_->launchGemmArrayGroupActiveBank(arrays_, activeOperandBank_,
                     inputTile_ == 0 ? 0 : 1, 64, cycle,
                     [this](uint32_t, uint64_t) {
@@ -278,17 +298,17 @@ public:
             if (pipeline_) {
                 computing_ = true;
                 computeBank_ = activeOperandBank_;
-                if (inputTile_ % 2 == 0 && row_ + 16 < blockStart_ + 256) {
-                    prefetchRow_ = row_ + 16;
+                if (inputTile_ % 2 == 0 && row_ + rowGroup() < blockStart_ + 256) {
+                    prefetchRow_ = row_ + rowGroup();
                     prefetchTile_ = inputTile_;
                     armRead(prefetchInput_, inputBlockAddr() +
                         static_cast<uint64_t>(prefetchRow_ - blockStart_) * desc_.hidden_dim * 2 +
-                        static_cast<uint64_t>(inputTile_) * 128, 4096, 256);
+                        static_cast<uint64_t>(inputTile_) * 128, rowGroup() * 256, 256);
                     ++inputPrefetches_;
                     if (inputTile_ != 0) {
                         armRead(prefetchPartial_, desc_.scratch_addr + 0xE0000 +
                             static_cast<uint64_t>(prefetchRow_ - blockStart_) * 128,
-                            2048, 2048);
+                            rowGroup() * 64 * 2, rowGroup() * 64 * 2);
                         ++partialPrefetches_;
                     }
                 }
@@ -300,7 +320,7 @@ public:
                     AttentionClusterTrafficClass::ProjectionOutput, ++tag_, cycle,
                     [this](bool ok, uint64_t, const std::vector<double>& values) {
                         pending_ = false;
-                        if (!ok || values.size() != 1024) { fail(); return; }
+                        if (!ok || values.size() != this->rowGroup() * 64) { fail(); return; }
                         if (reuseBlock_ && inputTile_ + 1 < desc_.hidden_dim / 64) {
                             if (pipeline_) {
                                 outputValues_ = values;
@@ -315,7 +335,7 @@ public:
         case Phase::StagePartial:
             if (!partialStore_.active) {
                 partialStore_.addr = partialAddr();
-                partialStore_.data.resize(2048);
+                partialStore_.data.resize(rowGroup() * 64 * 2);
                 for (size_t i = 0; i < outputValues_.size(); ++i)
                     encode(partialStore_.data, i, outputValues_[i]);
                 partialStore_.offset = 0;
@@ -336,7 +356,7 @@ public:
             // A store owns its snapshot until timed SRAM completion. Do not
             // read a matching address, even under slow-write/backpressure profiles.
             if (pipeline_ && partialStore_.active && partialStore_.addr == partialAddr()) break;
-            beginLocalRead(partialAddr(), 2048,
+            beginLocalRead(partialAddr(), rowGroup() * 64 * 2,
                 [this](const std::vector<uint8_t>& raw) {
                     partialRaw_ = raw;
                     phase_ = Phase::RestoreOutputReady;
@@ -344,7 +364,7 @@ public:
             break;
         }
         case Phase::RestoreOutputReady: {
-            std::vector<double> values(1024);
+            std::vector<double> values(rowGroup() * 64);
             for (size_t i = 0; i < values.size(); ++i) values[i] = decode(partialRaw_, i);
             pending_ = true;
             if (!processor_->writeGemmOutputGroupClassAsync(arrays_, values, 2,
@@ -409,16 +429,22 @@ public:
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LocalRead)]),
                         static_cast<unsigned long long>(phaseCycles_[static_cast<size_t>(Phase::LocalWrite)]),
                         reuseBlock_ ? 1u : 0u, pairedWeights_ ? 1u : 0u);
-                    std::printf("[PROJECTION_PIPELINE] manager=%u enabled=%u shared_input=%u input_prefetches=%llu partial_prefetches=%llu scatter_prefetches=%llu background_read_cycles=%llu background_write_cycles=%llu staging_bytes=%u read_retries=%llu write_retries=%llu\n",
+                    std::printf("[PROJECTION_PIPELINE] manager=%u enabled=%u shared_input=%u input_prefetches=%llu partial_prefetches=%llu scatter_prefetches=%llu background_read_cycles=%llu background_write_cycles=%llu staging_bytes=%u array_count=%u read_retries=%llu write_retries=%llu\n",
                         desc_.manager_slot, pipeline_ ? 1u : 0u, sharedInput_ ? 1u : 0u,
                         static_cast<unsigned long long>(inputPrefetches_),
                         static_cast<unsigned long long>(partialPrefetches_),
                         static_cast<unsigned long long>(scatterPrefetches_),
                         static_cast<unsigned long long>(backgroundReadCycles_),
                         static_cast<unsigned long long>(backgroundWriteCycles_),
-                        pipeline_ ? 8192u : 0u,
+                        pipeline_ ? stagingBytes() : 0u, rowGroup(),
                         static_cast<unsigned long long>(backgroundReadRejects_),
                         static_cast<unsigned long long>(backgroundWriteRejects_));
+                    std::printf("[PROJECTION_WEIGHT_PREFETCH] manager=%u enabled=%u requests=%llu hits=%llu wait_cycles=%llu inflight=%u\n",
+                        desc_.manager_slot, weightPrefetchEnabled_ ? 1u : 0u,
+                        static_cast<unsigned long long>(weightPrefetchRequests_),
+                        static_cast<unsigned long long>(weightPrefetchHits_),
+                        static_cast<unsigned long long>(weightPrefetchWaitCycles_),
+                        weightPrefetchBusy_ ? 1u : 0u);
                 });
             break;
         case Phase::Failed: phase_ = Phase::Complete; break;
@@ -427,8 +453,37 @@ public:
     }
 
 private:
+    void pumpWeightPrefetch() {
+        if (!weightPrefetchEnabled_ || weightPrefetchBusy_ || !blockLoaded_ ||
+            kind_ >= 3 || phase_ == Phase::Failed || phase_ == Phase::WriteDrain ||
+            phase_ == Phase::WriteCompletion) return;
+        // Use existing cache slots for the same head only. A single future
+        // DMA may look up to three tiles ahead (the other bank and next pair).
+        // It never programs array operands or overwrites the current slot.
+        const uint32_t end = std::min(desc_.hidden_dim / 64, inputTile_ + 4);
+        for (uint32_t next = inputTile_ + 1; next < end; ++next) {
+            const uint64_t tile = weightTileForInputTile(next);
+            const size_t slot = static_cast<size_t>(dimTile_) * (desc_.hidden_dim / 64) + next;
+            if (cachedTiles_[slot] == tile) continue;
+            weightPrefetchBusy_ = true;
+            weightPrefetchTile_ = tile;
+            ++weightPrefetchRequests_;
+            memory_->dma_read_from_host_to_globalmem(desc_.weights_addr + tile * 8192,
+                8192, desc_.scratch_addr + 0x60000 + slot * 8192,
+                [this, tile, slot](bool ok) {
+                    weightPrefetchBusy_ = false;
+                    if (!ok) { fail(); return; }
+                    cachedTiles_[slot] = tile;
+                    prefetchedTiles_[slot] = tile;
+                    ++weightLoads_;
+                });
+            return;
+        }
+    }
+    uint32_t rowGroup() const { return static_cast<uint32_t>(arrays_.size()); }
     // One future input pair, one future partial, and one output snapshot.
-    // These bounded transfer buffers add 8 KiB of staging, not array contexts.
+    // Each lane requires 256 + 128 + 128 bytes; no extra array contexts.
+    uint32_t stagingBytes() const { return rowGroup() * 512; }
     struct AsyncRead {
         uint64_t addr = 0;
         size_t laneBytes = 0, submitted = 0, completed = 0;
@@ -479,8 +534,8 @@ private:
     void prefetchScatter(uint32_t row, uint32_t tile,
                          const std::vector<uint8_t>& raw, uint64_t cycle) {
         if (scatterIssued_) return;
-        std::vector<double> values(1024);
-        for (uint32_t lane = 0; lane < 16; ++lane)
+        std::vector<double> values(rowGroup() * 64);
+        for (uint32_t lane = 0; lane < rowGroup(); ++lane)
             for (uint32_t col = 0; col < 64; ++col)
                 values[lane * 64 + col] = decode(raw, lane * 128 + (tile % 2) * 64 + col);
         if (processor_->programGemmInputScatterBankAsync(arrays_, tile & 1u, values, 2,
@@ -563,7 +618,7 @@ private:
         // Gather exactly two adjacent 64-element tiles from each input row.
         // Each lane is a separate timed SRAM request, with shared-port
         // contention and queue backpressure. No full-hidden row reread.
-        beginLocalRead(addr, 16 * 256, std::move(done));
+        beginLocalRead(addr, rowGroup() * 256, std::move(done));
         localGather_ = true;
         gatherSubmitted_ = gatherCompleted_ = 0;
     }
@@ -670,7 +725,7 @@ private:
                 });
             return;
         }
-        const size_t bytes = static_cast<size_t>(16) * desc_.hidden_dim * 2;
+        const size_t bytes = static_cast<size_t>(rowGroup()) * desc_.hidden_dim * 2;
         if (reuseBlock_ || localInputRow_ != row_) {
             beginLocalRead(reuseBlock_ ? inputBlockAddr() +
                 static_cast<uint64_t>(row_ - blockStart_) * desc_.hidden_dim * 2 :
@@ -683,8 +738,8 @@ private:
         } else prepareInputReady();
     }
     void prepareInputReady() {
-        input_.resize(1024);
-        for (uint32_t lane = 0; lane < 16; ++lane)
+        input_.resize(rowGroup() * 64);
+        for (uint32_t lane = 0; lane < rowGroup(); ++lane)
             for (uint32_t col = 0; col < 64; ++col)
                 input_[lane * 64 + col] = decode(inputRaw_,
                     pairedWeights_ ? lane * 128 + (inputTile_ % 2) * 64 + col :
@@ -752,8 +807,8 @@ private:
     void fail() { status_ = 1; pending_ = false; phase_ = Phase::Failed; }
     void issueNextInputPrefetch(uint64_t cycle) {
         // The current row group was already fetched through the timed GM port.
-        std::vector<double> values(1024, 0.0);
-        for (uint32_t lane = 0; lane < 16; ++lane)
+        std::vector<double> values(rowGroup() * 64, 0.0);
+        for (uint32_t lane = 0; lane < rowGroup(); ++lane)
             for (uint32_t col = 0; col < 64; ++col)
                 values[lane * 64 + col] = decode(inputRaw_,
                     lane * desc_.hidden_dim + 64 + col);
@@ -783,7 +838,7 @@ private:
         }
     }
     void stagePartial(const std::vector<double>& values) {
-        std::vector<uint8_t> raw(2048);
+        std::vector<uint8_t> raw(rowGroup() * 64 * 2);
         for (size_t i = 0; i < values.size(); ++i) encode(raw, i, values[i]);
         beginLocalWrite(partialAddr(), std::move(raw), [this]() { advance(); });
     }
@@ -801,8 +856,8 @@ private:
         const uint64_t panelBase = kind_ == 0 ? desc_.q_panel_addr :
             kind_ == 1 ? desc_.k_panel_addr : desc_.v_panel_addr;
         const uint32_t dimTiles = desc_.head_dim / 64;
-        std::vector<uint8_t> grouped(16 * 128);
-        for (uint32_t lane = 0; lane < 16; ++lane) {
+        std::vector<uint8_t> grouped(rowGroup() * 128);
+        for (uint32_t lane = 0; lane < rowGroup(); ++lane) {
             std::vector<uint8_t> packed(128);
             for (uint32_t dim = 0; dim < 64; ++dim) {
                 const double value = values[lane * 64 + dim];
@@ -827,7 +882,7 @@ private:
                 (row_ % 64) * 128;
             writes_.emplace_back(panel, std::move(grouped));
         }
-        if (kind_ == 2 && row_ % 64 == 48 &&
+        if (kind_ == 2 && row_ % 64 + rowGroup() == 64 &&
             (reuseBlock_ || dimTile_ + 1 == dimTiles)) {
             for (uint32_t tile = reuseBlock_ ? dimTile_ : 0;
                  tile < (reuseBlock_ ? dimTile_ + 1 : dimTiles); ++tile) {
@@ -850,7 +905,7 @@ private:
             // ReadOutput leaves a paired traversal on its odd input tile.
             // Keep the same two weights while moving to the next row group.
             if (pairedWeights_) --inputTile_;
-            if ((row_ += 16) == blockStart_ + 256) {
+            if ((row_ += rowGroup()) == blockStart_ + 256) {
                 row_ = blockStart_;
                 inputTile_ += pairedWeights_ ? 2 : 1;
                 if (inputTile_ == desc_.hidden_dim / 64) {
@@ -896,7 +951,7 @@ private:
         inputTile_ = 0;
         if (++dimTile_ == desc_.head_dim / 64) {
             dimTile_ = 0;
-            if ((row_ += 16) == desc_.rows_per_node) {
+            if ((row_ += rowGroup()) == desc_.rows_per_node) {
                 row_ = 0;
                 localInputRow_ = ~uint32_t{0};
                 if (++head_ == headCount()) {
@@ -931,6 +986,10 @@ private:
     uint32_t activeOperandBank_ = 0;
     uint32_t loadedInputRow_ = ~uint32_t{0};
     std::array<uint64_t, 64> cachedTiles_{};
+    std::array<uint64_t, 64> prefetchedTiles_{};
+    bool weightPrefetchEnabled_ = false, weightPrefetchBusy_ = false;
+    uint64_t weightPrefetchTile_ = ~uint64_t{0};
+    uint64_t weightPrefetchRequests_ = 0, weightPrefetchHits_ = 0, weightPrefetchWaitCycles_ = 0;
     uint64_t weightLoads_ = 0, weightPrograms_ = 0, weightReuses_ = 0;
     uint64_t inputLoads_ = 0;
     uint64_t localReadBytes_ = 0, localWriteBytes_ = 0, localAddr_ = 0;

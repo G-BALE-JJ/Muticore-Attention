@@ -96,6 +96,44 @@ class ProjectionReportTest(unittest.TestCase):
         shared_report = summarize(overlap, attention, 66)
         self.assertEqual(shared_report["stages"]["projection"]["input_loads"], 4)
         self.assertEqual(shared_report["stages"]["projection"]["pipeline_by_manager"]["0"]["enabled"], 1)
+        for enabled in (0, 1):
+            count = 24 if enabled else 0
+            evidence = "\n".join(
+                f"[PROJECTION_WEIGHT_PREFETCH] manager={core} enabled={enabled} "
+                f"requests={count} hits={count} wait_cycles=0 inflight=0"
+                for core in range(4))
+            with_prefetch = overlap + "\n" + evidence
+            report = summarize(with_prefetch, attention, 66)
+            self.assertEqual(report["stages"]["projection"]["weight_prefetch_by_manager"]["0"]["requests"], count)
+            for invalid in (with_prefetch.replace("inflight=0", "inflight=1", 1),
+                            with_prefetch.replace(f"hits={count}", f"hits={count + 1}", 1),
+                            with_prefetch.replace("requests=24 hits=24", "requests=33 hits=33", 1)):
+                if invalid == with_prefetch:
+                    continue
+                with self.assertRaisesRegex(ValueError, "prefetch accounting"):
+                    summarize(invalid, attention, 66)
+            with self.assertRaisesRegex(ValueError, "incomplete.*prefetch"):
+                summarize(with_prefetch.rsplit("\n", 1)[0], attention, 66)
+        for width in (32, 64):
+            with self.subTest(array_count=width):
+                groups = (256 // width) * 8
+                prefetch = 8 * 2 * (256 // width - 1)
+                partial_prefetch = 8 * (256 // width - 1)
+                wide = (overlap.replace("weight_reuses=480", f"weight_reuses={groups * 4 - 32}")
+                        .replace("input_prefetches=240", f"input_prefetches={prefetch}")
+                        .replace("partial_prefetches=120", f"partial_prefetches={partial_prefetch}")
+                        .replace("staging_bytes=8192", f"staging_bytes={width * 512} array_count={width}"))
+                report = summarize(wide, attention, 66)
+                self.assertEqual(report["stages"]["projection"]["array_count"], width)
+                self.assertEqual(report["floor_components_cycles"]["projection_array"], 540672 // width)
+                for invalid in (wide.replace(f"array_count={width}", "array_count=48"),
+                                wide.replace(f"array_count={width}", "array_count=16", 1)):
+                    with self.assertRaisesRegex(ValueError, "array count"):
+                        summarize(invalid, attention, 66)
+                # Total bytes remain constant when rows are grouped differently.
+                self.assertEqual(report["stages"]["projection"]["local_gm_by_manager"]["0"]["read_bytes"], 1572864)
+                with self.assertRaisesRegex(ValueError, "overlap work"):
+                    summarize(wide.replace(f"staging_bytes={width * 512}", "staging_bytes=8192"), attention, 66)
         for wrong in (overlap.replace("input_prefetches=240", "input_prefetches=241"),
                       overlap.replace("partial_prefetches=120", "partial_prefetches=119"),
                       overlap.replace("staging_bytes=8192", "staging_bytes=0")):

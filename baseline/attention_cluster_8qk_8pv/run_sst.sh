@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNNER="$ROOT/src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh"
 
+# Projection owns the manager arrays until the attention handoff.
+export GOLEM_PROJECTION_ARRAYS="${GOLEM_PROJECTION_ARRAYS:-64}"
+export GOLEM_PROJECTION_WEIGHT_PREFETCH="${GOLEM_PROJECTION_WEIGHT_PREFETCH:-1}"
+
 export GOLEM_ATTENTION_REUSE_WINDOW_QK_BRIDGE=1
 export GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE=0
 export GOLEM_ATTENTION_WORKER_CLUSTER_BRIDGE=1
