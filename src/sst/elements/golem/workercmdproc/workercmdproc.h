@@ -344,6 +344,12 @@ public:
     virtual bool endAttentionTileStorage(uint64_t generation) = 0;
     virtual bool endAttentionStorageSession(uint64_t generation) = 0;
     virtual bool cancelAttentionTileStorage(uint64_t generation) = 0;
+    virtual bool beginProjectionPartialBuffer(size_t bytes) = 0;
+    virtual bool writeProjectionPartial(uint64_t offset, const std::vector<uint8_t>& data,
+                                        uint64_t cycle, uint64_t& readyCycle) = 0;
+    virtual bool readProjectionPartial(uint64_t offset, size_t length, uint64_t cycle,
+                                       std::vector<uint8_t>& data, uint64_t& readyCycle) = 0;
+    virtual void endProjectionPartialBuffer() = 0;
     virtual bool isBusy() const = 0;
     virtual bool tick(uint64_t cycle) = 0;
     virtual bool handleArrayDone(uint32_t arrayId, uint64_t cycle) = 0;
@@ -1237,6 +1243,37 @@ public:
         return true;
     }
 
+    bool beginProjectionPartialBuffer(size_t bytes) override {
+        if (isBusy() || cBufferMode_ != CBufferMode::FREE ||
+            bytes == 0 || bytes > cBufferBytes_) return false;
+        projectionPartialBytes_ = bytes;
+        cBufferMode_ = CBufferMode::PROJECTION_PARTIAL_C;
+        return true;
+    }
+
+    bool writeProjectionPartial(uint64_t offset, const std::vector<uint8_t>& data,
+                                uint64_t cycle, uint64_t& readyCycle) override {
+        return cBufferMode_ == CBufferMode::PROJECTION_PARTIAL_C &&
+            offset <= projectionPartialBytes_ &&
+            data.size() <= projectionPartialBytes_ - offset &&
+            cBufferWrite(offset, data, cycle, readyCycle);
+    }
+
+    bool readProjectionPartial(uint64_t offset, size_t length, uint64_t cycle,
+                               std::vector<uint8_t>& data, uint64_t& readyCycle) override {
+        return cBufferMode_ == CBufferMode::PROJECTION_PARTIAL_C &&
+            offset <= projectionPartialBytes_ &&
+            length <= projectionPartialBytes_ - offset &&
+            cBufferRead(offset, length, cycle, data, readyCycle);
+    }
+
+    void endProjectionPartialBuffer() override {
+        if (cBufferMode_ == CBufferMode::PROJECTION_PARTIAL_C) {
+            cBufferMode_ = CBufferMode::FREE;
+            projectionPartialBytes_ = 0;
+        }
+    }
+
     bool startWindow(const WorkerTaskListHeader& header) override {
         if (isBusy() || cBufferMode_ != CBufferMode::FREE) {
             return false;
@@ -1825,6 +1862,7 @@ private:
         FREE,
         GEMM_PARTIAL_C,
         ATTENTION_TILE_STORAGE,
+        PROJECTION_PARTIAL_C,
     };
 
     enum class GemmProxyCommandKind : uint8_t {
@@ -5032,6 +5070,7 @@ private:
     uint64_t cBufferNextReadCycle_ = 0;
     uint64_t cBufferNextWriteCycle_ = 0;
     std::vector<uint8_t> cBufferStorage_;
+    size_t projectionPartialBytes_ = 0;
     std::unordered_map<uint64_t, uint64_t> cBufferWriteReadyCycles_;
     CBufferMode cBufferMode_ = CBufferMode::FREE;
     bool attentionStorageSessionActive_ = false;

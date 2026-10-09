@@ -15,6 +15,7 @@ LOCAL_GM = re.compile(r"\[PROJECTION_LOCAL_GM\] manager=(\d+) read_bytes=(\d+) w
 PIPELINE = re.compile(r"\[PROJECTION_PIPELINE\] manager=(\d+) enabled=(\d+) shared_input=(\d+) input_prefetches=(\d+) partial_prefetches=(\d+) scatter_prefetches=(\d+) background_read_cycles=(\d+) background_write_cycles=(\d+) staging_bytes=(\d+)(?: array_count=(\d+))?")
 ARRAY_LATENCY = re.compile(r"MVM compute latency cycles=(\d+)")
 WEIGHT_PREFETCH = re.compile(r"\[PROJECTION_WEIGHT_PREFETCH\] manager=(\d+) enabled=(\d+) requests=(\d+) hits=(\d+) wait_cycles=(\d+) inflight=(\d+)")
+SCHEDULE = re.compile(r"\[PROJECTION_SCHEDULE\] manager=(\d+) row_first=(\d+) cbuffer_partial=(\d+) cbuffer_bytes=(\d+) cbuffer_read_bytes=(\d+) cbuffer_write_bytes=(\d+)")
 ROPE_TABLE = re.compile(r"\[ATTENTION_ROPE_TABLE\] core=(\d+) bytes=(\d+) cycles=(\d+) dma_cycles=(\d+) local_read_cycles=(\d+) start=(\d+) end=(\d+)")
 SYNC = re.compile(r"\[PROJECTION_SYNC\] core=(\d+) stage=flag_wait cycle=(\d+) flag=(\d+) status=(\d+)")
 LOCAL_WAIT = re.compile(r"\[PROJECTION_SYNC\] core=(\d+) stage=local_wait cycle=(\d+) status=(\d+)")
@@ -33,6 +34,12 @@ def summarize(log_text, attention, array_compute_cycles=None):
     if pipelines and sorted(event[0] for event in pipelines) != list(range(4)):
         raise ValueError("incomplete projection overlap evidence")
     pipeline_by_core = {event[0]: event for event in pipelines}
+    schedules = [tuple(map(int, match)) for match in SCHEDULE.findall(log_text)]
+    if schedules and sorted(event[0] for event in schedules) != list(range(4)):
+        raise ValueError("incomplete projection schedule evidence")
+    schedule_by_core = {event[0]: event for event in schedules}
+    if schedules and len({event[1:] for event in schedules}) != 1:
+        raise ValueError("inconsistent projection schedule")
     widths = {event[9] for event in pipelines} or {16}
     if len(widths) != 1 or not widths <= {16, 32, 64}:
         raise ValueError("invalid projection array count")
@@ -125,29 +132,38 @@ def summarize(log_text, attention, array_compute_cycles=None):
             raise ValueError("incomplete projection Local-GM timing")
         for core, read_bytes, write_bytes, _, _, _, reuse, paired in local_gm:
             job = next(event for event in projection if event[0] == core)
+            row_first = schedule_by_core.get(core, (0, 0, 0, 0))[1]
+            cbuffer = schedule_by_core.get(core, (0, 0, 0, 0))[2]
             if paired:
                 groups = (sequence // 4 // array_count) * (hq + 2 * hkv)
                 blocks = (sequence // 4 // 256) * (hq + 2 * hkv)
-                programs = blocks * (hidden // 64)
-                partials = groups * (hidden // 128 - 1) * array_count * 128
-                expected_reads = groups * array_count * hidden * 2 + programs * 8192 + partials
+                programs = (groups if row_first else blocks) * (hidden // 64)
+                partials = 0 if row_first else groups * (hidden // 128 - 1) * array_count * 128
+                expected_reads = groups * array_count * hidden * 2 + programs * 8192 + (0 if cbuffer else partials)
                 overlap = pipeline_by_core.get(core)
                 shared = overlap[2] if overlap else 0
-                expected_inputs = sequence // 4 // 256 if shared else blocks
-                expected_weights = programs if shared else (hq + 2 * hkv) * (hidden // 64)
+                expected_inputs = blocks if row_first else sequence // 4 // 256 if shared else blocks
+                expected_weights = ((hq + 2 * hkv) * (hidden // 64) if row_first else
+                                    programs if shared else (hq + 2 * hkv) * (hidden // 64))
                 if overlap and overlap[1]:
                     expected_prefetches = blocks * (hidden // 128) * (256 // array_count - 1)
                     expected_partial_prefetches = blocks * (hidden // 128 - 1) * (256 // array_count - 1)
                     if (overlap[3] != expected_prefetches or
-                            overlap[4] != expected_partial_prefetches or
+                            overlap[4] not in ((0, expected_partial_prefetches) if cbuffer else
+                                               (expected_partial_prefetches,)) or
                             overlap[5] <= 0 or overlap[6] <= 0 or
-                            overlap[7] <= 0 or overlap[8] != array_count * 512):
+                            (not cbuffer and overlap[7] <= 0) or
+                            overlap[8] != array_count * 512):
                         raise ValueError("projection overlap work mismatch")
                 if (dim != 64 or not reuse or hidden % 128 or
-                        read_bytes != expected_reads or write_bytes != partials or
+                        read_bytes != expected_reads or write_bytes != (0 if cbuffer else partials) or
                         job[5] != programs or job[6] != groups * (hidden // 64) - programs or
                         job[7] != expected_inputs or job[4] != expected_weights):
                     raise ValueError("paired projection work or byte accounting mismatch")
+                if cbuffer:
+                    schedule = schedule_by_core[core]
+                    if schedule[3] != 256 * 128 or schedule[4] != partials or schedule[5] != partials:
+                        raise ValueError("projection C-buffer byte accounting mismatch")
             if not reuse and job[7] is not None:
                 expected = job[7] * array_count * hidden * 2 + job[5] * 8192
                 if read_bytes != expected or write_bytes != 0:
@@ -163,6 +179,11 @@ def summarize(log_text, attention, array_compute_cycles=None):
                  "staging_bytes", "array_count")
         result["stages"]["projection"]["pipeline_by_manager"] = {
             str(event[0]): dict(zip(names, event[1:])) for event in pipelines}
+    if schedules:
+        names = ("row_first", "cbuffer_partial", "cbuffer_bytes",
+                 "cbuffer_read_bytes", "cbuffer_write_bytes")
+        result["stages"]["projection"]["schedule_by_manager"] = {
+            str(event[0]): dict(zip(names, event[1:])) for event in schedules}
     weight_prefetch = [tuple(map(int, match)) for match in WEIGHT_PREFETCH.findall(log_text)]
     if weight_prefetch:
         if sorted(event[0] for event in weight_prefetch) != list(range(4)):

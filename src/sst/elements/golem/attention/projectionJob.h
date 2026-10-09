@@ -74,12 +74,21 @@ public:
             reuseBytes <= gmSize - 64 - (desc.scratch_addr - gmBase);
         pairedWeights_ = pairedWeights_ && reuseBlock_;
         if (!pairedWeights_ && rowGroup() != 16) arrays_.resize(16);
+        rowFirst_ = pairedWeights_ && enabledOptIn("GOLEM_PROJECTION_ROW_FIRST");
+        cBufferPartial_ = pairedWeights_ && !rowFirst_ &&
+            enabledOptIn("GOLEM_PROJECTION_CBUFFER_PARTIAL");
+        if (cBufferPartial_ && !processor_->beginProjectionPartialBuffer(256 * 128))
+            return false;
+        cBufferReadyCycle_ = cBufferReadReadyCycle_ = 0;
+        cBufferReadBytes_ = cBufferWriteBytes_ = 0;
+        cBufferPrefetchRow_ = cBufferPrefetchTile_ = ~uint32_t{0};
         // Budget width-dependent transfer snapshots against the same
         // local-GM capacity, including the reserved DMA tail. This is not an
         // additional array bank or an unbounded software cache.
         pipeline_ = pairedWeights_ && enabled("GOLEM_PROJECTION_PIPELINE") &&
+            !rowFirst_ &&
             reuseBytes + stagingBytes() <= gmSize - 64 - (desc.scratch_addr - gmBase);
-        sharedInput_ = pairedWeights_ && enabled("GOLEM_PROJECTION_SHARED_INPUT");
+        sharedInput_ = pairedWeights_ && !rowFirst_ && enabled("GOLEM_PROJECTION_SHARED_INPUT");
         weightPrefetchEnabled_ = pairedWeights_ && enabled("GOLEM_PROJECTION_WEIGHT_PREFETCH");
         weightPrefetchBusy_ = false;
         weightPrefetchTile_ = ~uint64_t{0};
@@ -110,7 +119,11 @@ public:
     bool complete() const { return phase_ == Phase::Complete; }
     bool active() const { return phase_ != Phase::Idle && phase_ != Phase::Complete; }
     uint64_t status() const { return status_; }
-    void retire() { phase_ = Phase::Idle; }
+    void retire() {
+        if (cBufferPartial_) processor_->endProjectionPartialBuffer();
+        cBufferPartial_ = false;
+        phase_ = Phase::Idle;
+    }
 
     void tick(uint64_t cycle) {
         if (!active()) return;
@@ -254,7 +267,7 @@ public:
                             nextInputIssued_ = false;
                             nextInputReady_ = false;
                         }
-                        phase_ = ok ? (reuseBlock_ && inputTile_ != 0 &&
+                        phase_ = ok ? (reuseBlock_ && !rowFirst_ && inputTile_ != 0 &&
                             (!pairedWeights_ || inputTile_ % 2 == 0) ?
                             Phase::RestoreOutput : Phase::Launch) : Phase::Failed;
                         if (!ok) status_ = 1;
@@ -290,6 +303,10 @@ public:
                                 phase_ = Phase::LoadInput;
                                 return;
                             }
+                            if (rowFirst_ && ++inputTile_ < desc_.hidden_dim / 64) {
+                                phase_ = Phase::LoadInput;
+                                return;
+                            }
                             phase_ = reuseBlock_ ? Phase::ReadOutput :
                                 (++inputTile_ < desc_.hidden_dim / 64 ?
                                     Phase::LoadInput : Phase::ReadOutput);
@@ -305,10 +322,24 @@ public:
                         static_cast<uint64_t>(prefetchRow_ - blockStart_) * desc_.hidden_dim * 2 +
                         static_cast<uint64_t>(inputTile_) * 128, rowGroup() * 256, 256);
                     ++inputPrefetches_;
-                    if (inputTile_ != 0) {
+                    if (inputTile_ != 0 && !cBufferPartial_) {
                         armRead(prefetchPartial_, desc_.scratch_addr + 0xE0000 +
                             static_cast<uint64_t>(prefetchRow_ - blockStart_) * 128,
                             rowGroup() * 64 * 2, rowGroup() * 64 * 2);
+                        ++partialPrefetches_;
+                    }
+                    if (inputTile_ != 0 && cBufferPartial_) {
+                        uint64_t ready = 0;
+                        if (!processor_->readProjectionPartial(
+                                static_cast<uint64_t>(prefetchRow_ - blockStart_) * 128,
+                                rowGroup() * 128, cycle, cBufferPrefetchRaw_, ready)) {
+                            fail();
+                            break;
+                        }
+                        cBufferPrefetchReadyCycle_ = ready;
+                        cBufferPrefetchRow_ = prefetchRow_;
+                        cBufferPrefetchTile_ = prefetchTile_;
+                        cBufferReadBytes_ += cBufferPrefetchRaw_.size();
                         ++partialPrefetches_;
                     }
                 }
@@ -318,14 +349,14 @@ public:
             pending_ = true;
             if (!processor_->readGemmOutputGroupClassAsync(arrays_, 2,
                     AttentionClusterTrafficClass::ProjectionOutput, ++tag_, cycle,
-                    [this](bool ok, uint64_t, const std::vector<double>& values) {
+                    [this](bool ok, uint64_t completedCycle, const std::vector<double>& values) {
                         pending_ = false;
                         if (!ok || values.size() != this->rowGroup() * 64) { fail(); return; }
                         if (reuseBlock_ && inputTile_ + 1 < desc_.hidden_dim / 64) {
                             if (pipeline_) {
                                 outputValues_ = values;
                                 phase_ = Phase::StagePartial;
-                            } else stagePartial(values);
+                            } else stagePartial(values, completedCycle);
                         } else {
                             outputValues_ = values;
                             phase_ = Phase::PrepareOutput;
@@ -333,6 +364,10 @@ public:
                     })) { pending_ = false; break; }
             break;
         case Phase::StagePartial:
+            if (cBufferPartial_) {
+                stagePartial(outputValues_, cycle);
+                break;
+            }
             if (!partialStore_.active) {
                 partialStore_.addr = partialAddr();
                 partialStore_.data.resize(rowGroup() * 64 * 2);
@@ -345,6 +380,20 @@ public:
             }
             break;
         case Phase::RestoreOutput: {
+            if (cBufferPartial_) {
+                if (cBufferPrefetchRow_ == row_ && cBufferPrefetchTile_ == inputTile_) {
+                    partialRaw_ = std::move(cBufferPrefetchRaw_);
+                    cBufferReadReadyCycle_ = cBufferPrefetchReadyCycle_;
+                    cBufferPrefetchRow_ = cBufferPrefetchTile_ = ~uint32_t{0};
+                    phase_ = Phase::RestoreOutputReady;
+                    break;
+                }
+                if (!processor_->readProjectionPartial(partialOffset(), rowGroup() * 128,
+                        cycle, partialRaw_, cBufferReadReadyCycle_)) { fail(); break; }
+                cBufferReadBytes_ += partialRaw_.size();
+                phase_ = Phase::RestoreOutputReady;
+                break;
+            }
             if (pipeline_ && prefetchRow_ == row_ && prefetchTile_ == inputTile_ &&
                 (prefetchPartial_.active || prefetchPartial_.ready)) {
                 if (!prefetchPartial_.ready) break;
@@ -364,6 +413,7 @@ public:
             break;
         }
         case Phase::RestoreOutputReady: {
+            if (cBufferPartial_ && cycle < cBufferReadReadyCycle_) break;
             std::vector<double> values(rowGroup() * 64);
             for (size_t i = 0; i < values.size(); ++i) values[i] = decode(partialRaw_, i);
             pending_ = true;
@@ -395,6 +445,7 @@ public:
             if (writeOutstanding_ == 0 && !partialStore_.active) phase_ = Phase::WriteCompletion;
             break;
         case Phase::WriteCompletion:
+            if (cBufferPartial_ && cycle < cBufferReadyCycle_) break;
             pending_ = true;
             memory_->dma_write_to_host(desc_.completion_addr, 8,
                 std::vector<uint8_t>{1, 0, 0, 0, 0, 0, 0, 0},
@@ -445,6 +496,11 @@ public:
                         static_cast<unsigned long long>(weightPrefetchHits_),
                         static_cast<unsigned long long>(weightPrefetchWaitCycles_),
                         weightPrefetchBusy_ ? 1u : 0u);
+                    std::printf("[PROJECTION_SCHEDULE] manager=%u row_first=%u cbuffer_partial=%u cbuffer_bytes=%u cbuffer_read_bytes=%llu cbuffer_write_bytes=%llu\n",
+                        desc_.manager_slot, rowFirst_ ? 1u : 0u,
+                        cBufferPartial_ ? 1u : 0u, cBufferPartial_ ? 256u * 128u : 0u,
+                        static_cast<unsigned long long>(cBufferReadBytes_),
+                        static_cast<unsigned long long>(cBufferWriteBytes_));
                 });
             break;
         case Phase::Failed: phase_ = Phase::Complete; break;
@@ -499,6 +555,10 @@ private:
     static bool enabled(const char* name) {
         const char* value = std::getenv(name);
         return value == nullptr || std::strcmp(value, "0") != 0;
+    }
+    static bool enabledOptIn(const char* name) {
+        const char* value = std::getenv(name);
+        return value != nullptr && std::strcmp(value, "0") != 0;
     }
     void armRead(AsyncRead& transfer, uint64_t addr, size_t bytes, size_t laneBytes) {
         transfer = AsyncRead{};
@@ -837,9 +897,23 @@ private:
                 });
         }
     }
-    void stagePartial(const std::vector<double>& values) {
+    uint64_t partialOffset() const {
+        return static_cast<uint64_t>(row_ - blockStart_) * 128;
+    }
+    void stagePartial(const std::vector<double>& values, uint64_t cycle) {
         std::vector<uint8_t> raw(rowGroup() * 64 * 2);
         for (size_t i = 0; i < values.size(); ++i) encode(raw, i, values[i]);
+        if (cBufferPartial_) {
+            uint64_t ready = 0;
+            if (!processor_->writeProjectionPartial(partialOffset(), raw, cycle, ready)) {
+                fail();
+                return;
+            }
+            cBufferWriteBytes_ += raw.size();
+            cBufferReadyCycle_ = std::max(cBufferReadyCycle_, ready);
+            advance();
+            return;
+        }
         beginLocalWrite(partialAddr(), std::move(raw), [this]() { advance(); });
     }
     void finishOutput() {
@@ -902,6 +976,28 @@ private:
     }
     void advance() {
         if (reuseBlock_) {
+            if (rowFirst_) {
+                inputTile_ = 0;
+                if ((row_ += rowGroup()) == blockStart_ + 256) {
+                    blockStart_ += 256;
+                    row_ = blockStart_;
+                    blockLoaded_ = false;
+                    localInputRow_ = ~uint32_t{0};
+                    if (blockStart_ == desc_.rows_per_node) {
+                        blockStart_ = row_ = 0;
+                        if (++head_ == headCount()) {
+                            head_ = 0;
+                            if (++kind_ == 3) {
+                                phase_ = (writeOutstanding_ == 0 && !partialStore_.active) ?
+                                    Phase::WriteCompletion : Phase::WriteDrain;
+                                return;
+                            }
+                        }
+                    }
+                }
+                phase_ = blockLoaded_ ? Phase::LoadInput : Phase::LoadBlock;
+                return;
+            }
             // ReadOutput leaves a paired traversal on its odd input tile.
             // Keep the same two weights while moving to the next row group.
             if (pairedWeights_) --inputTile_;
@@ -1014,6 +1110,13 @@ private:
     uint64_t backgroundReadRejects_ = 0, backgroundWriteRejects_ = 0;
     bool reuseBlock_ = false;
     bool pairedWeights_ = false;
+    bool rowFirst_ = false;
+    bool cBufferPartial_ = false;
+    uint64_t cBufferReadyCycle_ = 0, cBufferReadReadyCycle_ = 0;
+    uint64_t cBufferPrefetchReadyCycle_ = 0;
+    uint32_t cBufferPrefetchRow_ = ~uint32_t{0}, cBufferPrefetchTile_ = ~uint32_t{0};
+    std::vector<uint8_t> cBufferPrefetchRaw_;
+    uint64_t cBufferReadBytes_ = 0, cBufferWriteBytes_ = 0;
     bool blockLoaded_ = false;
     uint32_t blockStart_ = 0;
     uint32_t writeOutstanding_ = 0;

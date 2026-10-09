@@ -147,6 +147,33 @@ class ProjectionReportTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "paired projection"):
                 summarize(corruption, attention, 66)
 
+        row_first = (log.replace("weight_programs=32", "weight_programs=512")
+                     .replace("weight_reuses=480", "weight_reuses=0")
+                     .replace("read_bytes=1572864", "read_bytes=5242880")
+                     .replace("write_bytes=262144", "write_bytes=0"))
+        row_first += "\n" + "\n".join(
+            f"[PROJECTION_SCHEDULE] manager={core} row_first=1 "
+            "cbuffer_partial=0 cbuffer_bytes=0 cbuffer_read_bytes=0 cbuffer_write_bytes=0"
+            for core in range(4))
+        self.assertEqual(summarize(row_first, attention, 66)
+                         ["stages"]["projection"]["weight_programs"], 2048)
+        with self.assertRaisesRegex(ValueError, "paired projection"):
+            summarize(row_first.replace("weight_programs=512", "weight_programs=511"), attention, 66)
+
+        cbuffer = (log.replace("read_bytes=1572864", "read_bytes=1310720")
+                   .replace("write_bytes=262144", "write_bytes=0"))
+        cbuffer += "\n" + "\n".join(
+            f"[PROJECTION_SCHEDULE] manager={core} row_first=0 "
+            "cbuffer_partial=1 cbuffer_bytes=32768 "
+            "cbuffer_read_bytes=262144 cbuffer_write_bytes=262144"
+            for core in range(4))
+        self.assertEqual(summarize(cbuffer, attention, 66)
+                         ["stages"]["projection"]["schedule_by_manager"]["0"]["cbuffer_bytes"],
+                         32768)
+        with self.assertRaisesRegex(ValueError, "C-buffer byte accounting"):
+            summarize(cbuffer.replace("cbuffer_read_bytes=262144", "cbuffer_read_bytes=1"),
+                      attention, 66)
+
 
 if __name__ == "__main__":
     unittest.main()
