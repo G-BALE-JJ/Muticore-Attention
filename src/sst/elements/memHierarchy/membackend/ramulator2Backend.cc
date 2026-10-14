@@ -15,6 +15,7 @@
 
 
 #include <sst_config.h>
+#include <sst/elements/golem/attention/resourceTrace.h>
 #include "sst/elements/memHierarchy/util.h"
 #include "membackend/ramulator2Backend.h"
 #include "ramulator/base/config.h"
@@ -35,6 +36,16 @@ using namespace SST;
 using namespace SST::MemHierarchy;
 
 namespace Ramulator {
+
+// A named callback target survives Request copies inside Ramulator. The
+// controller plugin can associate commands with the exact backend request,
+// including concurrent requests to the same address, without changing DRAM.
+struct GolemTraceCallback {
+    std::function<void(Request&)> done;
+    std::function<void()> commandIssued;
+    void operator()(Request& request) const { done(request); }
+};
+
 
 class GolemCommandStats : public IControllerPlugin, public Implementation {
     RAMULATOR_REGISTER_IMPLEMENTATION(
@@ -63,6 +74,10 @@ public:
     }
 
     void on_issue(const Request& req) override {
+        if (SST::Golem::resourceTraceEnabled()) {
+            const auto* trace = req.callback.target<GolemTraceCallback>();
+            if (trace) trace->commandIssued();
+        }
         commandCounts_[req.command]++;
         const bool isRead = req.command == readCommand_ ||
                             req.command == readAutoPrechargeCommand_;
@@ -280,6 +295,8 @@ ramulator2Memory::ramulator2Memory(ComponentId_t id, Params &params) :
 }
 
 bool ramulator2Memory::issueRequest(ReqId reqId, Addr addr, bool isWrite, unsigned numBytes){
+    if (SST::Golem::resourceTraceEnabled())
+        traceFirstAttempt_.emplace(reqId, getCurrentSimCycle());
     if (addr < addressOffset_) {
         output->fatal(CALL_INFO, -1,
             "Ramulator2 node=%u received address 0x%" PRIx64 " below address_offset 0x%" PRIx64 "\n",
@@ -306,13 +323,27 @@ bool ramulator2Memory::issueRequest(ReqId reqId, Addr addr, bool isWrite, unsign
     }
 
     pendingRequests_[reqId] = {currentCycle_, isWrite, numBytes, transactionAddr};
+    if (SST::Golem::resourceTraceEnabled()) {
+        auto& trace = pendingRequests_.at(reqId);
+        trace.traceRequest = nextTraceRequest_++;
+        trace.submitTick = traceFirstAttempt_.at(reqId);
+        trace.acceptedTick = getCurrentSimCycle();
+        trace.depth = pendingRequests_.size();
+    }
     const bool enqueue_success = ramulator2_frontend->receive_external_requests(
         isWrite ? 1 : 0,
         transactionAddr,
         0,
-        [this, reqId](Ramulator::Request&) { ramulatorDone(reqId); },
+        Ramulator::GolemTraceCallback{
+            [this, reqId](Ramulator::Request&) { ramulatorDone(reqId); },
+            [this, reqId]() {
+                const auto it = pendingRequests_.find(reqId);
+                if (it != pendingRequests_.end() && it->second.firstCommandTick == 0)
+                    it->second.firstCommandTick = getCurrentSimCycle();
+            }},
         static_cast<int>(numBytes));
     if (enqueue_success) {
+        if (SST::Golem::resourceTraceEnabled()) traceFirstAttempt_.erase(reqId);
         auto& state = outstandingTransactions_[transactionAddr];
         if (isWrite) {
             state.writer = true;
@@ -416,6 +447,18 @@ void ramulator2Memory::completeReadyRequests() {
                 "Ramulator2 node=%u completed unknown request\n", backendId_);
         }
         const PendingRequest request = it->second;
+        if (SST::Golem::resourceTraceEnabled()) {
+            SST::Golem::traceResourceInterval("hbm", "backend_admission", backendId_, request.traceRequest,
+                reqId, 0, request.submitTick, request.acceptedTick, request.acceptedTick,
+                request.acceptedTick, request.numBytes, request.depth, request.transactionAddr,
+                request.isWrite ? 1 : 0);
+            SST::Golem::traceResourceInterval("hbm",
+                request.firstCommandTick ? (request.isWrite ? "dram_write" : "dram_read") : "no_dram_command",
+                backendId_, request.traceRequest, reqId, 0, request.acceptedTick,
+                request.firstCommandTick ? request.firstCommandTick : getCurrentSimCycle(),
+                getCurrentSimCycle(), getCurrentSimCycle(), request.numBytes, request.depth,
+                request.transactionAddr, request.isWrite ? 1 : 0);
+        }
         const auto transactionIt = outstandingTransactions_.find(request.transactionAddr);
         if (transactionIt == outstandingTransactions_.end() ||
             (request.isWrite ? !transactionIt->second.writer

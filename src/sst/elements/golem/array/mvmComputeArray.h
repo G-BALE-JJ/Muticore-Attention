@@ -17,6 +17,7 @@
 #define _MVMCOMPUTEARRAY_H
 
 #include <sst/elements/golem/array/computeArray.h>
+#include <sst/elements/golem/fp16.h>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -47,13 +48,13 @@ public:
         selfLink->setDefaultTimeBase(*clockTC);
 
         // Initialize vectors   numArrays表示有几个矩阵
-        const size_t operandContexts =
-            static_cast<size_t>(numArrays) * operandContextBanks;
+        const size_t operandContexts = static_cast<size_t>(numArrays);
         inputVectors.resize(operandContexts);
         outputVectors.resize(numArrays);
         matrixData.resize(operandContexts);
         outputModes.resize(numArrays, OutputMode::Overwrite);
         activeInputColumns.resize(operandContexts, inputArraySize);
+        projectionFp16Context.resize(operandContexts, false);
         for (size_t i = 0; i < operandContexts; i++) {
             inputVectors[i].resize(inputArraySize, T());
             matrixData[i].resize(inputArraySize * outputArraySize, T());
@@ -67,6 +68,8 @@ public:
             "attention_cluster_qk_arrays", 16);
         dumpEnabled = params.find<int>("mvm_dump_enable", 0) != 0;
         coreId = params.find<int>("core_id", -1);
+        std::printf("[ARRAY_OPERAND_STORAGE] core=%d arrays=%llu operand_banks=1 matrix_contexts=%zu input_contexts=%zu\n",
+            coreId, (unsigned long long)numArrays, matrixData.size(), inputVectors.size());
         dumpRootDir = params.find<std::string>("mvm_dump_dir", "mvm_dumps");
         const std::string dumpMode = params.find<std::string>("mvm_dump_mode", "overwrite");
         dumpOverwrite = (dumpMode != "append");
@@ -95,6 +98,7 @@ public:
         if (!validOperandContext(arrayID, operandBank)) return;
         activeInputColumns[operandIndex(arrayID, operandBank)] = inputArraySize;
         SimTime_t latency = getArrayLatency(arrayID);   // 得到阵列延迟，比如返回1
+        traceMacBegin(arrayID);
         ArrayEvent* ev = new ArrayEvent(arrayID, operandBank);
         selfLink->send(latency, ev);                    // 延迟latency后将事件ev发送给自己
         //把事件通过selfLink（SST框架的本地自环连接）发送，延迟latency后会回到当前组件。
@@ -116,6 +120,7 @@ public:
         activeInputColumns[operandIndex(arrayID, operandBank)] = activeColumns;
         const SimTime_t latency = getArrayLatencyActive(arrayID, activeColumns);
         recordActiveKLaunch(activeColumns, latency);
+        traceMacBegin(arrayID);
         selfLink->send(latency, new ArrayEvent(arrayID, operandBank));
     }
 
@@ -138,11 +143,13 @@ public:
             clearOutputVector(arrayID);
         }
 
+        traceMacDone(arrayID);
         (*tileHandler)(ev);
     }
     //这个函数的作用是将 value 存入指定阵列 arrayID 中的矩阵 matrixData，位置是 index,
     //可以理解为arrayID是不同的二维矩阵的编号，index是二维矩阵里元素的索引
     virtual void setMatrixItem(int32_t arrayID, int32_t index, double value) override {
+        projectionFp16Context[arrayID] = false;
         matrixData[arrayID][index] = static_cast<T>(value);
     }
     //同理
@@ -172,6 +179,7 @@ public:
         return enqueueBufferTransfer(
             matrix.size() * elemBytes, tag,
             [this, context, matrix, tag, callback = std::move(callback)]() {
+                projectionFp16Context[context] = false;
                 std::transform(matrix.begin(), matrix.end(), matrixData[context].begin(),
                                [](double value) { return static_cast<T>(value); });
                 if (callback) {
@@ -204,6 +212,7 @@ public:
             [this, arrayIDs, operandBank, matrix, tag,
              callback = std::move(callback)]() {
                 for (uint32_t arrayID : arrayIDs) {
+                    projectionFp16Context[operandIndex(arrayID, operandBank)] = false;
                     auto& target = matrixData[operandIndex(arrayID, operandBank)];
                     std::transform(matrix.begin(), matrix.end(), target.begin(),
                                    [](double value) { return static_cast<T>(value); });
@@ -225,9 +234,13 @@ public:
         }
         return enqueueMatrixBroadcastTransfer(
             matrix.size() * elemBytes, arrayIDs.size(), tag,
-            [this, arrayIDs, operandBank, matrix, tag,
+            [this, arrayIDs, operandBank, matrix, tag, trafficClass,
              callback = std::move(callback)]() {
                 for (uint32_t arrayID : arrayIDs) {
+                    // Dtype of the existing projection command, not a new
+                    // operand bank or compute resource. Attention remains FP32.
+                    projectionFp16Context[operandIndex(arrayID, operandBank)] =
+                        trafficClass == AttentionClusterTrafficClass::ProjectionWeights;
                     auto& target = matrixData[operandIndex(arrayID, operandBank)];
                     std::transform(matrix.begin(), matrix.end(), target.begin(),
                                    [](double value) { return static_cast<T>(value); });
@@ -455,6 +468,7 @@ public:
         return enqueueBufferTransfer(
             bytes, tag,
             [this, arrayID, matrix, input, tag, callback = std::move(callback)]() {
+                projectionFp16Context[arrayID] = false;
                 std::transform(matrix.begin(), matrix.end(), matrixData[arrayID].begin(),
                                [](double value) { return static_cast<T>(value); });
                 std::transform(input.begin(), input.end(), inputVectors[arrayID].begin(),
@@ -573,7 +587,11 @@ public:
     bool validateOutputGroupRequest(
             const std::vector<uint32_t>& arrayIDs, size_t elemBytes,
             AttentionClusterTrafficClass trafficClass) const override {
-        const bool correctElementWidth = elemBytes == sizeof(T);
+        // Projection transports FP16 results even when the worker's functional
+        // storage type is float. Other traffic classes retain their width check.
+        const bool correctElementWidth = elemBytes == sizeof(T) ||
+            (trafficClass == AttentionClusterTrafficClass::ProjectionOutput &&
+             elemBytes == 2 && std::is_same<T, float>::value);
         if (numArrays != 64 || inputArraySize != 64 ||
             outputArraySize != 64 || !correctElementWidth) {
             return false;
@@ -680,6 +698,16 @@ public:
 
         // Perform matrix-vector multiplication
         for (uint32_t row = 0; row < outputArraySize; row++) {
+            if (projectionFp16Context[context]) {
+                GolemFp16 dot;
+                for (uint32_t col = 0; col < activeColumns; ++col)
+                    dot += GolemFp16(static_cast<float>(matrix[row * inputArraySize + col])) *
+                           GolemFp16(static_cast<float>(inputVector[col]));
+                if (accumulateMode)
+                    dot += GolemFp16(static_cast<float>(outputVector[row]));
+                outputVector[row] = static_cast<T>(static_cast<float>(dot));
+                continue;
+            }
             T dot = 0;
             for (uint32_t col = 0; col < activeColumns; col++) {
                 dot += matrix[row * inputArraySize + col] * inputVector[col];
@@ -757,12 +785,42 @@ public:
     }
 
 protected:
+    struct TraceMacGroup {
+        uint64_t id = 0, start = 0, count = 0, remaining = 0;
+    };
+    uint64_t traceMacSequence_ = 0;
+    std::unordered_map<uint64_t, TraceMacGroup> traceMacGroups_;
+    std::unordered_map<uint32_t, uint64_t> traceMacOwners_;
+    void traceMacBegin(uint32_t arrayID) {
+        if (!resourceTraceEnabled()) return;
+        const uint64_t tick = getCurrentSimCycle();
+        auto& group = traceMacGroups_[tick];
+        if (group.id == 0) { group.id = ++traceMacSequence_; group.start = tick; }
+        ++group.count;
+        ++group.remaining;
+        traceMacOwners_[arrayID] = tick;
+    }
+    void traceMacDone(uint32_t arrayID) {
+        if (!resourceTraceEnabled()) return;
+        const auto owner = traceMacOwners_.find(arrayID);
+        if (owner == traceMacOwners_.end()) return;
+        const uint64_t key = owner->second;
+        traceMacOwners_.erase(owner);
+        auto& group = traceMacGroups_.at(key);
+        if (--group.remaining == 0) {
+            traceResourceInterval("array", "compute", coreId, group.id, 0, 0,
+                group.start, group.start, getCurrentSimCycle(), getCurrentSimCycle(),
+                0, 0, 0, group.count);
+            traceMacGroups_.erase(key);
+        }
+    }
     enum class OutputMode : uint8_t { Overwrite = 0, Accumulate = 1 };
     std::vector<std::vector<T>> inputVectors;
     std::vector<std::vector<T>> outputVectors;
     std::vector<std::vector<T>> matrixData;
     std::vector<OutputMode> outputModes;
     std::vector<uint32_t> activeInputColumns;
+    std::vector<bool> projectionFp16Context;
     bool functionalCompute = true;
     uint32_t attentionClusterQkArrays = 24;
     bool dumpEnabled = false;
@@ -777,6 +835,7 @@ protected:
             uint32_t arrayID, uint32_t operandBank,
             const std::vector<double>& matrix,
             uint32_t activeColumns) {
+        projectionFp16Context[operandIndex(arrayID, operandBank)] = false;
         auto& target = matrixData[operandIndex(arrayID, operandBank)];
         std::fill(target.begin(), target.end(), T());
         for (uint32_t row = 0; row < outputArraySize; ++row) {
@@ -856,11 +915,12 @@ protected:
     }
 
     bool validOperandContext(uint32_t arrayID, uint32_t operandBank) const {
-        return arrayID < numArrays && operandBank < operandContextBanks;
+        return arrayID < numArrays && operandBank == 0;
     }
 
     size_t operandIndex(uint32_t arrayID, uint32_t operandBank) const {
-        return static_cast<size_t>(operandBank) * numArrays + arrayID;
+        (void)operandBank;  // Nonzero bank IDs are rejected by request validation.
+        return arrayID;
     }
 
     void printValue(const T& value) {

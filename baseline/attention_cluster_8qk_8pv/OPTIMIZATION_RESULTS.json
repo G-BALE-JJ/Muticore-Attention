@@ -1,0 +1,41 @@
+{
+  "status": "PASS",
+  "hardware_changes": false,
+  "resource_contract": "single operand context per physical array; existing GM only",
+  "implemented": [
+    "bounded GM weight prefetch lookahead (1..8, default 4)",
+    "GM input pair prefetch during array compute",
+    "GM/C-buffer partial prefetch and ahead restore",
+    "single-context row-group scheduling with required weight reprogramming",
+    "retained output accumulation for 64-array single-row groups",
+    "RMSNorm/projection fused dataflow retained"
+  ],
+  "validation": {
+    "attention_unit_tests": 135,
+    "baseline_unit_tests": 19,
+    "prefetch_depth8_regressions": {
+      "status": "PASS",
+      "cases_passed": 6,
+      "three_blocks_cycles": 243842,
+      "projection_cycles": 76979,
+      "weight_prefetch_requests_per_worker": 72,
+      "weight_prefetch_hits_per_worker": 72
+    },
+    "existing_single_operand_e2e": {
+      "S1024": 573772,
+      "S2048": 1354890
+    },
+    "multirow_single_context": {
+      "cbuffer": {
+        "before": 74571,
+        "after": 77966
+      },
+      "gm_partial": {
+        "before": 104484,
+        "after": 104971
+      }
+    },
+    "numerical": "byte exact against reference; NumPy O max abs error 0.0001220703125"
+  },
+  "conclusion": "GM-side overlap is active and correct; depth-8 lookahead does not reduce the critical path for the tested cases because array programming remains the limiter."
+}

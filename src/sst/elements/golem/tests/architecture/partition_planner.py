@@ -10,6 +10,16 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 Placement = Tuple[int, int]
 
 
+def attention_query_block_placements(num_routers,num_cores,num_ranks):
+    """Keep memory/manager/QK local; split PV onto the paired rank at eight."""
+    if num_cores!=20 or num_ranks not in (2,4,8) or num_routers<24:
+        raise ValueError('Attention query-block partition requires 20 cores and 2, 4 or 8 ranks')
+    if num_ranks!=8:
+        return [(router%num_ranks if router<24 else 0,0) for router in range(num_routers)]
+    return [(2*(router%4)+(1 if 16<=router<24 else 0) if router<24 else 0,0)
+            for router in range(num_routers)]
+
+
 @dataclass(frozen=True)
 class _Region:
     x0: int

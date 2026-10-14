@@ -44,6 +44,7 @@ enum class LocalMemoryClient : uint8_t {
     SFU,
     WCP,
     Control,
+    ProjectionOracleOperand,
 };
 
 enum class DmaRequestKind : uint8_t {
@@ -122,6 +123,7 @@ enum class ControlTransportMessageKind {
     AttentionClusterPvVPrefetchHint,
     AttentionClusterPvVRequest,
     AttentionClusterPvVDelivery,
+    DiagnosticProjectionReady,
 };
 
 struct ControlTransportMessage {
@@ -569,6 +571,11 @@ private:
         uint64_t issue_cycle = 0;
         uint64_t ownerGeneration = 0;
         uint64_t ownerGenerationToken = 0;
+        uint64_t traceRequest = 0;
+        uint64_t traceSubmitTick = 0;
+        uint64_t traceArrivalTick = 0;
+        uint64_t traceSendTick = 0;
+        uint64_t traceDepth = 0;
     };
 
     struct PendingReadReply {
@@ -594,6 +601,8 @@ private:
         LocalMemoryClient client = LocalMemoryClient::Control;
         uint64_t tag = 0;
         uint64_t submitCycle = 0;
+        uint64_t serviceStartTick = 0;
+        uint64_t traceDepth = 0;
         uint64_t ownerGeneration = 0;
         bool issued = false;
         bool cancelled = false;
@@ -631,6 +640,8 @@ private:
     SST::Interfaces::StandardMem* dma_iface = nullptr;
     StdMemHandlers* dma_handlers = nullptr;
     std::unordered_map<uint64_t, PendingDmaOp> dma_pending;
+    uint64_t nextTraceDmaRequest_ = 1;
+    std::unordered_map<SST::Interfaces::SimpleNetwork::Request*, uint64_t> traceWriteSendKeys_;
     std::unordered_map<uint64_t, bool> dma_completion_tokens;
     std::unordered_map<uint64_t, PendingReadReply> read_pending;
     std::unordered_map<uint64_t, PendingReadRequest> request_pending;

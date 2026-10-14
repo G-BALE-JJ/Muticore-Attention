@@ -39,6 +39,9 @@ class ProjectionReportTest(unittest.TestCase):
                          f"status=done sst_tick=0 rocc_cycle={last_flag + 51} "
                          f"core={core} role=manager job=0 tag=0 query_tile=-1 kv_tile=-1")
         report = summarize("\n".join(lines), attention)
+        decoder_flags = [f"[PROJECTION_SYNC] core=0 stage=flag_wait cycle=60000 flag={(node+1)*0x08000000+0x01ff0100+lane*8} status=0"
+                         for node in range(4) for lane in range(4)]
+        self.assertEqual(summarize("\n".join(lines+decoder_flags), attention), report)
         self.assertEqual(report["stages"]["rmsnorm"]["jobs"], 16)
         self.assertEqual(report["stages"]["projection"]["weight_loads"], 48)
         self.assertEqual(report["stages"]["projection"]["input_loads"], 12)
@@ -53,6 +56,28 @@ class ProjectionReportTest(unittest.TestCase):
             summarize("\n".join(lines).replace("read_bytes=1585152", "read_bytes=1"), attention)
         with self.assertRaisesRegex(ValueError, "Local-GM timing"):
             summarize("\n".join(lines).replace("timed=1", "timed=0"), attention)
+
+    def test_attention_can_start_before_last_manager_observes_barrier(self):
+        attention = {"status": "PASS", "shape": {"Hq": 4, "Hkv": 2,
+            "query_length": 1024, "kv_length": 1024, "head_dim": 64, "causal": True},
+            "start_cycle": 30500, "end_cycle": 40000}
+        lines = []
+        for core in range(4):
+            for batch in range(8):
+                lines.append(f"[SFU_RMSNORM] core={core} issue_tick={5000000 + batch*100000} "
+                             f"complete_tick={5050000 + batch*100000} vector_cycles=40 status=0")
+            lines.append(f"[PROJECTION_JOB] manager={core} start=10000 end=30000 cycles=20000 "
+                         "weight_loads=32 weight_programs=32 weight_reuses=0 input_loads=1 status=0")
+            lines.append(f"[PROJECTION_SYNC] core={core} stage=local_wait cycle=30010 status=0")
+            sync = 33000 if core == 3 else 30100 + core*100
+            for slot in range(4):
+                lines.append(f"[PROJECTION_SYNC] core={core} stage=flag_wait cycle={sync} flag={slot} status=0")
+            lines.append(f"[ATTENTION_MILESTONE] stage=manager_descriptor_accept status=done "
+                         f"rocc_cycle={sync+10} core={core}")
+        report = summarize("\n".join(lines), attention, 66)
+        self.assertLess(report["stage_handoff_cycles"]["descriptor_to_attention"], 0)
+        with self.assertRaisesRegex(ValueError, "synchronization timestamps"):
+            summarize("\n".join(lines).replace("rocc_cycle=33010", "rocc_cycle=32999"), attention, 66)
 
     def test_rejects_missing_projection_manager(self):
         attention = {

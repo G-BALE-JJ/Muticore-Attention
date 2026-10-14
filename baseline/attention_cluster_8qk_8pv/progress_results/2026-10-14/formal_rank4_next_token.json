@@ -1,0 +1,13 @@
+{
+  "method": "greedy_argmax",
+  "token_id": 99037,
+  "logit": 0.6982421875,
+  "vocab": 128256,
+  "tie_break": "lowest token ID",
+  "host_selection_seconds": 0.000761203,
+  "status": "PASS",
+  "local_reference_token_id": 99037,
+  "composed_reference_token_id": 99037,
+  "composed_reference_agrees": true,
+  "timing_scope": "host argmax only; excluded from accelerator cycles"
+}

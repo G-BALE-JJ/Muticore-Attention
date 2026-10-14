@@ -1,0 +1,159 @@
+{
+  "status": "PASS",
+  "cases": [
+    {
+      "artifact_root": "results/retired_ws_final_verified/s1024",
+      "shape": {
+        "Hq": 32,
+        "Hkv": 8,
+        "query_length": 1024,
+        "kv_length": 1024,
+        "head_dim": 64,
+        "causal": true
+      },
+      "critical_worker": 16,
+      "projection_cycles": 416538,
+      "end_to_end_cycles": 573772,
+      "compute_only_serial_reference_cycles": 268592,
+      "gap_cycles": 305180,
+      "projection_partition_cycles": {
+        "worker_start_skew": 30701,
+        "norm_vector": 27952,
+        "foreground_local_gm_read": 112032,
+        "matrix_program_and_submit": 64512,
+        "input_scatter_and_prepare": 55296,
+        "array_launch_and_compute": 104448,
+        "output_read": 1680,
+        "other_projection_phases": 19917
+      },
+      "gap_partition_cycles": {
+        "worker_start_skew": 30701,
+        "foreground_local_gm_read": 112032,
+        "matrix_program_and_submit": 64512,
+        "input_scatter_and_prepare": 55296,
+        "output_read": 1680,
+        "other_projection_phases": 19917,
+        "array_launch_over_compute_floor": 3072,
+        "projection_to_attention_handoff": 2019,
+        "attention_over_exp_floor": 15951
+      },
+      "local_gm_operand_read_cycles": {
+        "weight": 55296,
+        "input": 55296,
+        "fusion": 1440
+      },
+      "input_flow": {
+        "packed_input": 1,
+        "input_prefetch_budget": 0,
+        "max_request_bytes": 4096,
+        "input_read_requests": 3072,
+        "background_input_read_requests": 0,
+        "weight_read_requests": 3072,
+        "norm_write_requests": 256,
+        "budget_stalls": 0
+      },
+      "pipeline": {
+        "enabled": 1,
+        "shared_input": 1,
+        "input_prefetches": 0,
+        "partial_prefetches": 0,
+        "scatter_prefetches": 0,
+        "background_read_cycles": 0,
+        "background_write_cycles": 0,
+        "staging_bytes": 32768,
+        "array_count": 64
+      },
+      "scope": "Additive measured critical-worker phase partition; not independent savings or a new overlapping-schedule lower bound."
+    },
+    {
+      "artifact_root": "results/retired_ws_final_verified/s2048",
+      "shape": {
+        "Hq": 32,
+        "Hkv": 8,
+        "query_length": 2048,
+        "kv_length": 2048,
+        "head_dim": 64,
+        "causal": true
+      },
+      "critical_worker": 18,
+      "projection_cycles": 801164,
+      "end_to_end_cycles": 1354890,
+      "compute_only_serial_reference_cycles": 799328,
+      "gap_cycles": 555562,
+      "projection_partition_cycles": {
+        "worker_start_skew": 30190,
+        "norm_vector": 55904,
+        "foreground_local_gm_read": 224064,
+        "matrix_program_and_submit": 129024,
+        "input_scatter_and_prepare": 110592,
+        "array_launch_and_compute": 208896,
+        "output_read": 3360,
+        "other_projection_phases": 39134
+      },
+      "gap_partition_cycles": {
+        "worker_start_skew": 30190,
+        "foreground_local_gm_read": 224064,
+        "matrix_program_and_submit": 129024,
+        "input_scatter_and_prepare": 110592,
+        "output_read": 3360,
+        "other_projection_phases": 39134,
+        "array_launch_over_compute_floor": 6144,
+        "projection_to_attention_handoff": 3794,
+        "attention_over_exp_floor": 9260
+      },
+      "local_gm_operand_read_cycles": {
+        "weight": 110592,
+        "input": 110592,
+        "fusion": 2880
+      },
+      "input_flow": {
+        "packed_input": 1,
+        "input_prefetch_budget": 0,
+        "max_request_bytes": 4096,
+        "input_read_requests": 6144,
+        "background_input_read_requests": 0,
+        "weight_read_requests": 6144,
+        "norm_write_requests": 512,
+        "budget_stalls": 0
+      },
+      "pipeline": {
+        "enabled": 1,
+        "shared_input": 1,
+        "input_prefetches": 0,
+        "partial_prefetches": 0,
+        "scatter_prefetches": 0,
+        "background_read_cycles": 0,
+        "background_write_cycles": 0,
+        "staging_bytes": 32768,
+        "array_count": 64
+      },
+      "scope": "Additive measured critical-worker phase partition; not independent savings or a new overlapping-schedule lower bound."
+    }
+  ],
+  "array_partition_service_model": [
+    {
+      "physical_arrays": 64,
+      "groups": 1,
+      "rows_per_group": 64,
+      "hidden_tiles": 32,
+      "matrix_service_per_group": 39,
+      "scatter_service_per_group": 33,
+      "mac_per_group": 66,
+      "port_service_cycles": 2304,
+      "makespan_cycles": 4416,
+      "scope": "Illustration only: excludes GM, output, WCP command latency, head boundaries and contention; not SST evidence."
+    },
+    {
+      "physical_arrays": 64,
+      "groups": 2,
+      "rows_per_group": 32,
+      "hidden_tiles": 32,
+      "matrix_service_per_group": 38,
+      "scatter_service_per_group": 17,
+      "mac_per_group": 66,
+      "port_service_cycles": 3520,
+      "makespan_cycles": 3927,
+      "scope": "Illustration only: excludes GM, output, WCP command latency, head boundaries and contention; not SST evidence."
+    }
+  ]
+}

@@ -370,6 +370,24 @@ def _preload_fused_attention(node_buffers):
         return
     if 1 not in node_buffers:
         raise ValueError("fused Attention requires HBM data node 1")
+    stack_manifest = os.getenv("GOLEM_DECODER_STACK_MANIFEST", "")
+    if stack_manifest:
+        import json
+        from pathlib import Path
+        manifest=json.loads(Path(stack_manifest).read_text())
+        if (not ATTENTION_PROJECTION or manifest["sequence"]!=ATTENTION_QUERY_LENGTH or
+            manifest["hidden"]!=ATTENTION_NUM_QUERY_HEADS*ATTENTION_HEAD_DIM or
+            manifest["num_kv_heads"]!=ATTENTION_NUM_KV_HEADS or
+            len(manifest["layout"]["layers"])!=int(os.getenv("GOLEM_DECODER_LAYERS","0"))):
+            raise ValueError("decoder stack preload shape/layer mismatch")
+        import hashlib
+        for entry in manifest["preloads"]:
+            data=Path(entry["path"]).read_bytes()
+            if len(data)!=entry["bytes"] or hashlib.sha256(data).hexdigest()!=entry["sha256"]:
+                raise ValueError("decoder stack preload size/hash mismatch")
+            _write_block(node_buffers[entry["node"]],entry["offset"],data,entry["name"])
+        print("Preloaded decoder stack weights, X0, RoPE and poisoned completion flags")
+        return
     if ATTENTION_ROPE_TABLE_FILE:
         with open(ATTENTION_ROPE_TABLE_FILE, "rb") as table_file:
             data = table_file.read()
@@ -413,6 +431,20 @@ def _preload_fused_attention(node_buffers):
                                  f"projection_{name.lower()}")
         if weights_offset + files[2][3] > 0x01ff0000:
             raise ValueError("projection weights overlap completion flags")
+        decoder_manifest = os.getenv("GOLEM_DECODER_INPUT_MANIFEST", "")
+        if decoder_manifest:
+            import json
+            from pathlib import Path
+            manifest = json.loads(Path(decoder_manifest).read_text())
+            if (manifest["sequence"] != ATTENTION_QUERY_LENGTH or manifest["hidden"] != hidden or
+                ATTENTION_QUERY_LENGTH != 1024 or ATTENTION_HEAD_DIM != 64):
+                raise ValueError("decoder preload shape mismatch")
+            for entry in manifest["preloads"]:
+                data = Path(entry["path"]).read_bytes()
+                if len(data) != entry["bytes"]:
+                    raise ValueError("decoder preload byte count mismatch")
+                _write_block(node_buffers[entry["node"]], entry["offset"], data, entry["name"])
+            print("Preloaded output-tile striped decoder weights and second RMSNorm gamma")
         print("Preloaded projection X/gamma/weights; Q/K/V are device-produced")
         return
     tensors = (

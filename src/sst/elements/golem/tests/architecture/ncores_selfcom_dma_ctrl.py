@@ -14,6 +14,7 @@ if __package__ in {None, ""}:
 
 from architecture.noc_builder import MeshNoCBuilder
 from architecture.partition_planner import (
+    attention_query_block_placements,
     build_weighted_topology_plan,
     write_partition_audit,
 )
@@ -232,6 +233,13 @@ process_env_keys = [
     "GOLEM_RUNTIME_SILENT",
     "GOLEM_SILENT",
     "GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE",
+    "GOLEM_ATTENTION_CAUSAL_BALANCE",
+    "GOLEM_DECODER_LAYERS",
+    "GOLEM_DECODER_VOCAB",
+    "GOLEM_DECODER_NODE_BYTES",
+    "GOLEM_FUSION_NORM_PROJECTION",
+    "GOLEM_FUSION_PROJECTION_ROPE",
+    "GOLEM_FUSION_SKIP_AUDIT_OUTPUT",
 ]
 process_env_entries = [
     f"{key}={os.environ[key]}" for key in process_env_keys if key in os.environ
@@ -443,12 +451,8 @@ else:
 
 attention_query_block_mpi = _env_flag("GOLEM_ATTENTION_QUERY_BLOCK_MPI", False)
 if attention_query_block_mpi:
-    if not EXPLICIT_PARTITION or MPI_RANKS not in (2, 4) or numCpus != 20:
-        raise ValueError("Attention query-block partition requires 20 cores and 2 or 4 ranks")
-    router_partition_placements = [
-        (router_id % MPI_RANKS if router_id < 24 else 0, 0)
-        for router_id in range(noc.num_nodes)
-    ]
+    if not EXPLICIT_PARTITION:raise ValueError('Attention query-block partition requires explicit partitioning')
+    router_partition_placements = attention_query_block_placements(noc.num_nodes,numCpus,MPI_RANKS)
 
 cpu_partition_placements = [
     router_partition_placements[router_id] for router_id in cpu_routers

@@ -1,0 +1,22 @@
+[
+  {
+    "pid": 2220585,
+    "mpi_rank": 0,
+    "allowed_logical_cpus": "0-3,16-19"
+  },
+  {
+    "pid": 2220586,
+    "mpi_rank": 1,
+    "allowed_logical_cpus": "0-3,16-19"
+  },
+  {
+    "pid": 2220587,
+    "mpi_rank": 2,
+    "allowed_logical_cpus": "0-3,16-19"
+  },
+  {
+    "pid": 2220588,
+    "mpi_rank": 3,
+    "allowed_logical_cpus": "0-3,16-19"
+  }
+]

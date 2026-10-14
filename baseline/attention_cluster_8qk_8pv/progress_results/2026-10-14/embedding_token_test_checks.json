@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "checks": [
+    {
+      "command": "python3 -m unittest test_embedding_verifier test_embedding_token test_lm_head test_decoder_stack test_decoder_layer",
+      "cwd": "baseline/attention_cluster_8qk_8pv",
+      "tests": 21
+    },
+    {
+      "command": "python3 -m unittest test_decoder_tail test_decoder_vectors test_sfu_vector_pipeline",
+      "cwd": "src/sst/elements/golem/tests/small/muticore_attention",
+      "tests": 7
+    },
+    {
+      "command": "python3 -m unittest test_partition_planner",
+      "cwd": "src/sst/elements/golem/tests/architecture",
+      "tests": 6
+    }
+  ],
+  "total_tests": 34,
+  "builds": [
+    "decoder-embedding guest",
+    "golem shared library and local install"
+  ]
+}

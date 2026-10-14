@@ -5,7 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNNER="$ROOT/src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh"
 
-# Projection owns the manager arrays until the attention handoff.
+# Projection and Attention share the sixteen workers' arrays; managers control
+# dispatch and own HBM data partitions without compute arrays.
 export GOLEM_PROJECTION_ARRAYS="${GOLEM_PROJECTION_ARRAYS:-64}"
 export GOLEM_PROJECTION_WEIGHT_PREFETCH="${GOLEM_PROJECTION_WEIGHT_PREFETCH:-1}"
 
@@ -44,5 +45,14 @@ export GOLEM_SCHED_SUBMIT_BATCH_SIZE="${GOLEM_SCHED_SUBMIT_BATCH_SIZE:-4}"
 export GOLEM_SCHED_DONE_BATCH_SIZE="${GOLEM_SCHED_DONE_BATCH_SIZE:-4}"
 export GOLEM_DMA_GROUP_RR_ENABLE="${GOLEM_DMA_GROUP_RR_ENABLE:-0}"
 export GOLEM_DMA_TILE_CHUNK_QUANTUM="${GOLEM_DMA_TILE_CHUNK_QUANTUM:-1}"
+
+# The canonical DMA timing report requires event evidence. An explicit trace=0
+# remains respected, and the report fails rather than changing its boundary.
+for argument in "$@"; do
+  if [[ "$argument" == "--projection" ]]; then
+    export GOLEM_CRITICAL_PATH_TRACE="${GOLEM_CRITICAL_PATH_TRACE:-1}"
+    export GOLEM_RESOURCE_TRACE_DOMAINS="${GOLEM_RESOURCE_TRACE_DOMAINS:-gm,array,wcp,projection}"
+  fi
+done
 
 exec "$RUNNER" "$@"

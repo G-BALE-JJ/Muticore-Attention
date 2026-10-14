@@ -1,0 +1,2380 @@
+{
+  "status": "PASS",
+  "scope": "fixed 4 managers + 8 QK/SFU + 8 PV; no resource/model changes",
+  "cases": [
+    {
+      "sequence": 1024,
+      "control": {
+        "e2e_cycles": 1162378,
+        "projection_cycles": 911236,
+        "attention_cycles": 249766,
+        "stage_spans": {
+          "qk": {
+            "start_cycle": 1027266,
+            "end_cycle": 1235431,
+            "elapsed_cycles": 208165,
+            "count": 64
+          },
+          "sfu": {
+            "start_cycle": 1030197,
+            "end_cycle": 1276115,
+            "elapsed_cycles": 245918,
+            "count": 64
+          },
+          "pv": {
+            "start_cycle": 1031496,
+            "end_cycle": 1276762,
+            "elapsed_cycles": 245266,
+            "count": 1280
+          }
+        },
+        "route_audit": {
+          "descriptors": 64,
+          "by_core": {
+            "4": {
+              "qk_tiles": 160,
+              "pv_windows": 64,
+              "jobs": 8
+            },
+            "5": {
+              "qk_tiles": 416,
+              "pv_windows": 128,
+              "jobs": 8
+            },
+            "6": {
+              "qk_tiles": 672,
+              "pv_windows": 192,
+              "jobs": 8
+            },
+            "7": {
+              "qk_tiles": 928,
+              "pv_windows": 256,
+              "jobs": 8
+            },
+            "8": {
+              "qk_tiles": 160,
+              "pv_windows": 64,
+              "jobs": 8
+            },
+            "9": {
+              "qk_tiles": 416,
+              "pv_windows": 128,
+              "jobs": 8
+            },
+            "10": {
+              "qk_tiles": 672,
+              "pv_windows": 192,
+              "jobs": 8
+            },
+            "11": {
+              "qk_tiles": 928,
+              "pv_windows": 256,
+              "jobs": 8
+            }
+          },
+          "coverage": "each original head/band/slot exactly once",
+          "ownership": "original query band, unchanged Q/O addresses and completion manager"
+        },
+        "qk_by_core": {
+          "4": {
+            "compute": 10560,
+            "dma_wait": 27553,
+            "total": 38129,
+            "wait_2d_activate": 3777,
+            "wait_2d_active_not_ready": 23616,
+            "c_buffer_read_wait": 0
+          },
+          "5": {
+            "compute": 27456,
+            "dma_wait": 48638,
+            "total": 76110,
+            "wait_2d_activate": 2750,
+            "wait_2d_active_not_ready": 45472,
+            "c_buffer_read_wait": 0
+          },
+          "6": {
+            "compute": 44352,
+            "dma_wait": 70941,
+            "total": 115309,
+            "wait_2d_activate": 2941,
+            "wait_2d_active_not_ready": 67328,
+            "c_buffer_read_wait": 0
+          },
+          "7": {
+            "compute": 61248,
+            "dma_wait": 91752,
+            "total": 153016,
+            "wait_2d_activate": 1640,
+            "wait_2d_active_not_ready": 89184,
+            "c_buffer_read_wait": 0
+          },
+          "8": {
+            "compute": 10560,
+            "dma_wait": 27863,
+            "total": 38439,
+            "wait_2d_activate": 4087,
+            "wait_2d_active_not_ready": 23616,
+            "c_buffer_read_wait": 0
+          },
+          "9": {
+            "compute": 27456,
+            "dma_wait": 48119,
+            "total": 75591,
+            "wait_2d_activate": 2231,
+            "wait_2d_active_not_ready": 45472,
+            "c_buffer_read_wait": 0
+          },
+          "10": {
+            "compute": 44352,
+            "dma_wait": 71230,
+            "total": 115598,
+            "wait_2d_activate": 3230,
+            "wait_2d_active_not_ready": 67328,
+            "c_buffer_read_wait": 0
+          },
+          "11": {
+            "compute": 61248,
+            "dma_wait": 92228,
+            "total": 153492,
+            "wait_2d_activate": 2116,
+            "wait_2d_active_not_ready": 89184,
+            "c_buffer_read_wait": 0
+          }
+        },
+        "sfu_exp_by_core": {
+          "6": {
+            "elements": 2752512,
+            "issue_tokens": 172032,
+            "issue_wait_cycles": 96791,
+            "lanes": 16,
+            "ii": 1
+          },
+          "9": {
+            "elements": 1703936,
+            "issue_tokens": 106496,
+            "issue_wait_cycles": 59904,
+            "lanes": 16,
+            "ii": 1
+          },
+          "4": {
+            "elements": 655360,
+            "issue_tokens": 40960,
+            "issue_wait_cycles": 23051,
+            "lanes": 16,
+            "ii": 1
+          },
+          "8": {
+            "elements": 655360,
+            "issue_tokens": 40960,
+            "issue_wait_cycles": 23051,
+            "lanes": 16,
+            "ii": 1
+          },
+          "11": {
+            "elements": 3801088,
+            "issue_tokens": 237568,
+            "issue_wait_cycles": 133655,
+            "lanes": 16,
+            "ii": 1
+          },
+          "7": {
+            "elements": 3801088,
+            "issue_tokens": 237568,
+            "issue_wait_cycles": 133655,
+            "lanes": 16,
+            "ii": 1
+          },
+          "5": {
+            "elements": 1703936,
+            "issue_tokens": 106496,
+            "issue_wait_cycles": 59904,
+            "lanes": 16,
+            "ii": 1
+          },
+          "10": {
+            "elements": 2752512,
+            "issue_tokens": 172032,
+            "issue_wait_cycles": 96791,
+            "lanes": 16,
+            "ii": 1
+          }
+        },
+        "pv_busy_by_core": {
+          "12": 19328,
+          "13": 38656,
+          "14": 57984,
+          "15": 77312,
+          "16": 19328,
+          "17": 38656,
+          "18": 57998,
+          "19": 77312
+        },
+        "sfu_exp_issue_floor_cycles": 237568,
+        "sfu_exp_balanced_issue_floor_cycles": 139264,
+        "pv_waits": {
+          "p_ready_to_dispatch": {
+            "average_cycles": 0.3078125,
+            "max_cycles": 65,
+            "count": 1280
+          },
+          "dispatch_to_receive": {
+            "average_cycles": 20.221875,
+            "max_cycles": 225,
+            "count": 1280
+          },
+          "receive_to_start": {
+            "average_cycles": 999.9453125,
+            "max_cycles": 12877,
+            "count": 1280
+          }
+        },
+        "transfers": {
+          "q_panels": 1280,
+          "k_panels": 2560,
+          "q_bytes": 10485760,
+          "k_bytes": 20971520,
+          "v_loads": 32,
+          "v_bytes": 1048576,
+          "note": "Q/K: nonzero accepted WCP window transactions; each panel enqueues one HBM read. V: actual broadcast-cache DMA loads, including reloads; excludes NoC multicast copies."
+        },
+        "local_gm": {
+          "16": {
+            "gmem_local_read_requests": 544,
+            "gmem_local_write_requests": 96,
+            "gmem_local_read_bytes": 2228224,
+            "gmem_local_write_bytes": 393216,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 4352000,
+            "gmem_local_write_queue_cycles": 3811500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "0": {
+            "gmem_local_read_requests": 15696,
+            "gmem_local_write_requests": 4360,
+            "gmem_local_read_bytes": 64226944,
+            "gmem_local_write_bytes": 14684216,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 308448000,
+            "gmem_local_write_queue_cycles": 22500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "3": {
+            "gmem_local_read_requests": 15696,
+            "gmem_local_write_requests": 4357,
+            "gmem_local_read_bytes": 64226944,
+            "gmem_local_write_bytes": 14684192,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 308448000,
+            "gmem_local_write_queue_cycles": 27000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "6": {
+            "gmem_local_read_requests": 2720,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 11141120,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 76976000,
+            "gmem_local_write_queue_cycles": 73000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "2": {
+            "gmem_local_read_requests": 15696,
+            "gmem_local_write_requests": 4361,
+            "gmem_local_read_bytes": 64226944,
+            "gmem_local_write_bytes": 14684224,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 308448000,
+            "gmem_local_write_queue_cycles": 22500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "9": {
+            "gmem_local_read_requests": 1696,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 6946816,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 50864000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "1": {
+            "gmem_local_read_requests": 15696,
+            "gmem_local_write_requests": 4381,
+            "gmem_local_read_bytes": 64226944,
+            "gmem_local_write_bytes": 14684384,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 308448000,
+            "gmem_local_write_queue_cycles": 30000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "4": {
+            "gmem_local_read_requests": 672,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 2752512,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 24752000,
+            "gmem_local_write_queue_cycles": 107500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "8": {
+            "gmem_local_read_requests": 672,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 2752512,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 24752000,
+            "gmem_local_write_queue_cycles": 73000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "12": {
+            "gmem_local_read_requests": 544,
+            "gmem_local_write_requests": 96,
+            "gmem_local_read_bytes": 2228224,
+            "gmem_local_write_bytes": 393216,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 4454000,
+            "gmem_local_write_queue_cycles": 3811500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "11": {
+            "gmem_local_read_requests": 3744,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 15335424,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 103088000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "7": {
+            "gmem_local_read_requests": 3744,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 15335424,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 103088000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "15": {
+            "gmem_local_read_requests": 2080,
+            "gmem_local_write_requests": 288,
+            "gmem_local_read_bytes": 8519680,
+            "gmem_local_write_bytes": 1179648,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 17408000,
+            "gmem_local_write_queue_cycles": 15242500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "19": {
+            "gmem_local_read_requests": 2080,
+            "gmem_local_write_requests": 288,
+            "gmem_local_read_bytes": 8519680,
+            "gmem_local_write_bytes": 1179648,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 17408000,
+            "gmem_local_write_queue_cycles": 15327375,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "5": {
+            "gmem_local_read_requests": 1696,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 6946816,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 50864000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "13": {
+            "gmem_local_read_requests": 1056,
+            "gmem_local_write_requests": 160,
+            "gmem_local_read_bytes": 4325376,
+            "gmem_local_write_bytes": 655360,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 8706000,
+            "gmem_local_write_queue_cycles": 7616000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "17": {
+            "gmem_local_read_requests": 1056,
+            "gmem_local_write_requests": 160,
+            "gmem_local_read_bytes": 4325376,
+            "gmem_local_write_bytes": 655360,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 8704000,
+            "gmem_local_write_queue_cycles": 7682500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "10": {
+            "gmem_local_read_requests": 2720,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 11141120,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 76976000,
+            "gmem_local_write_queue_cycles": 58000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "14": {
+            "gmem_local_read_requests": 1568,
+            "gmem_local_write_requests": 224,
+            "gmem_local_read_bytes": 6422528,
+            "gmem_local_write_bytes": 917504,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 13056000,
+            "gmem_local_write_queue_cycles": 11438000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "18": {
+            "gmem_local_read_requests": 1568,
+            "gmem_local_write_requests": 224,
+            "gmem_local_read_bytes": 6422528,
+            "gmem_local_write_bytes": 917504,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 13260000,
+            "gmem_local_write_queue_cycles": 11586500,
+            "gmem_dma_landing_backpressure_retries": 0
+          }
+        },
+        "v_cache": {
+          "hits": 1280,
+          "misses": 0
+        },
+        "max_abs_errors": {
+          "Q_panels": 0.000244140625,
+          "K_panels": 0.0003662109375,
+          "V_panels": 0.000244140625,
+          "O": 0.0001220703125
+        },
+        "provenance": {
+          "git_revision": "f0b093be33237d68d5f15dc7479bcec67d30fdfd",
+          "git_status": "M baseline/attention_cluster_8qk_8pv/README.md\n M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M baseline/attention_cluster_8qk_8pv/test_run_llama_projection.py\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/attention/projectionJobAbi.h\n M src/sst/elements/golem/rocc/roccAnalog.h\n M src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py\n M src/sst/elements/golem/tests/run_noc_dma_pipeline.sh\n M src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp\n M src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h\n M src/sst/elements/golem/tests/small/muticore_attention/projection_case.py\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/verify_attention_hbm_layout.py\n M src/sst/elements/golem/tests/small/muticore_attention/verify_fused_attention_scale_output.py\n M src/sst/elements/golem/workercmdproc/workercmdproc.h\n?? baseline/attention_cluster_8qk_8pv/GM_TIMING_CONTRACT.md\n?? baseline/attention_cluster_8qk_8pv/NEXT_DATAFLOW_OPTIMIZATIONS.md\n?? baseline/attention_cluster_8qk_8pv/OPERATOR_FUSION.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_BANDWIDTH.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_INPUT_FLOW.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_PARTIAL_RESTORE.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_SCHEDULE.md\n?? baseline/attention_cluster_8qk_8pv/analyze_causal_balance.py\n?? baseline/attention_cluster_8qk_8pv/analyze_projection_input_flow.py\n?? baseline/attention_cluster_8qk_8pv/analyze_projection_schedule.py\n?? baseline/attention_cluster_8qk_8pv/gm_timing_probe_results.json\n?? baseline/attention_cluster_8qk_8pv/operator_fusion_results.json\n?? baseline/attention_cluster_8qk_8pv/probe_gm_timing.py\n?? baseline/attention_cluster_8qk_8pv/projection_input_flow_results.json\n?? baseline/attention_cluster_8qk_8pv/projection_partial_restore_results.json\n?? baseline/attention_cluster_8qk_8pv/projection_schedule_results.json\n?? baseline/attention_cluster_8qk_8pv/run_causal_balance.py\n?? baseline/attention_cluster_8qk_8pv/run_operator_fusion.py\n?? baseline/attention_cluster_8qk_8pv/test_causal_balance_analysis.py\n?? baseline/attention_cluster_8qk_8pv/test_projection_schedule_analysis.py\n?? src/sst/elements/golem/tests/small/muticore_attention/test_operator_fusion.py",
+          "tracked_diff_sha256": "f623facd13f9ce7c6caa9a0b3884a9c1b40ff544766b8dce0b5f560d0c93d927",
+          "command": [
+            "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+            "--projection",
+            "--query-length",
+            "1024",
+            "--kv-length",
+            "1024",
+            "--num-query-heads",
+            "32",
+            "--num-kv-heads",
+            "8",
+            "--head-dim",
+            "64",
+            "--artifact-root",
+            "/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024"
+          ],
+          "environment_overrides": {
+            "GOLEM_FUSION_NORM_PROJECTION": "1",
+            "GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD": "1",
+            "GOLEM_PROJECTION_CBUFFER_PARTIAL": "1",
+            "GOLEM_FUSION_SKIP_AUDIT_OUTPUT": "1",
+            "GOLEM_PROJECTION_PACKED_NORM_INPUT": "1",
+            "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 4-7",
+            "GOLEM_ATTENTION_CAUSAL_BALANCE": "0",
+            "GOLEM_FUSION_PROJECTION_ROPE": "0",
+            "GOLEM_PROJECTION_WRAP_PREFETCH": "1",
+            "GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET": "0",
+            "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+            "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+            "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+            "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+            "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+            "GOLEM_LOCAL_GM_READ_PORTS": "1",
+            "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+            "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+            "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+            "GOLEM_MPI_RANKS": "4",
+            "GOLEM_ARRAY_CLOCK": "1.0GHz",
+            "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+            "GOLEM_ARRAY_PIPELINE_DEPTH": "2",
+            "GOLEM_PROJECTION_ARRAYS": "64",
+            "GOLEM_PROJECTION_WEIGHT_PREFETCH": "1",
+            "GOLEM_PROJECTION_INPUT_REFERENCE": "/data/jjgong/LLM/Muticore-Attention/results/projection_input_flow/packed/s1024"
+          },
+          "sha256": {
+            "src/sst/elements/golem/attention/projectionJob.h": "676524b7d603c726519d7df12bfa6c5a5b85651ac5a144d81c5278b50eaa3cca",
+            "src/sst/elements/golem/attention/projectionJobAbi.h": "6d6abfe6ec013d501384650dc07606f54f738cd84c6f0d8c86ee3bd316ddb8ef",
+            "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h": "f469d3ca766db0c07a8ea3e35c9cffce8f2fd58f3ee5fd3ccdc32601a5ec2680",
+            "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "e7027923efc5e29e1598db85a1fd5e78f69bce0f0df3f7ed3c759a1d9afdb564",
+            "src/sst/elements/golem/rocc/roccAnalog.h": "9d0332dfcb2449ff5a0680b0894bce1dd574fe55feb79382d5a436b7b7c452fa",
+            "src/sst/elements/golem/workercmdproc/workercmdproc.h": "b146cb6bf252f442bf32a071d53391f263f75b64a40f66ba2f5b8847d95bc775",
+            "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "ba1c88fcbdfc618c160bc5444ca2e2e169f929e8930b4fa99427f683d5691d6a",
+            "install/lib/sst-elements-library/libgolem.so": "de1c14a862eeae8a87ea5a0c8e33d657c2b3c4092fca652201a5a342dcfe8d8e",
+            "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "57f10dfce856f4c9ab243c8b36f90812a14863aaf1b865662142b2665d710cad"
+          },
+          "input_seed": 1742,
+          "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+          "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=16\n  GOLEM_GEMM_N_TILES(derived)=16\n  GOLEM_GEMM_TOTAL_TASKS(derived)=256\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=32\n  GOLEM_GEMM_M=1024\n  GOLEM_GEMM_N=1024\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=1024/1024/64\n  PADDED_M/N/K=1024/1024/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=64\n  GOLEM_PROJECTION_ARRAYS=64\n  GOLEM_PROJECTION_PIPELINE=1\n  GOLEM_PROJECTION_SHARED_INPUT=1\n  GOLEM_PROJECTION_WEIGHT_PREFETCH=1\n  GOLEM_PROJECTION_WRAP_PREFETCH=1\n  GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD=1\n  GOLEM_PROJECTION_PACKED_NORM_INPUT=1\n  GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET=0\n  GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE=256\n  GOLEM_OUTPUT_SCATTER_GATHER_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --cpu-set 4-7\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/mvm_dumps/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/q_32x1024x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/k_8x1024x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/stdout/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/work/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s1024/logs/attention-sst_fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8.log\n",
+          "input_sha256": {
+            "k_8x1024x64.bin": "e384610eaf8f67f61060a7d9348fbf50262775223133a0186e0a58b1d26b12b2",
+            "projection_gamma.bin": "1826299cb1532fbf10510d8c5bdea6eeefbd953a3c19b417ff8dea99b8dc7b69",
+            "projection_norm.bin": "f8bac01dbf7d3313e32e2262d8c2450b670417f9d8f3772ac7f3c3efdcc5e46a",
+            "projection_weights.bin": "cf64a2351a06736184051401ea5e4f0853e480b483aa9e9be3a5d2d55d2dea38",
+            "projection_x.bin": "b99ebc1d8e6b858c6e9ec4e836c7b5f4b2e2f2a608a573947f9092d7f3ac09b4",
+            "q_32x1024x64.bin": "8e20103b11a7b3c5f8ccf972385395c7cfdaa762d25275de9a5858fa2daceb82",
+            "rope_64.bin": "13c99aa7997e0cdc99663e6534cc668d53e49762d1bbe25e1bcd3c530cd34603",
+            "v_8x1024x64.bin": "8b3522d796686cdcdc34fec7485fb377e31746b7c62da8a279afdc025b54f999"
+          }
+        }
+      },
+      "balanced": {
+        "e2e_cycles": 1066757,
+        "projection_cycles": 910789,
+        "attention_cycles": 154391,
+        "stage_spans": {
+          "qk": {
+            "start_cycle": 1027053,
+            "end_cycle": 1174035,
+            "elapsed_cycles": 146982,
+            "count": 64
+          },
+          "sfu": {
+            "start_cycle": 1029808,
+            "end_cycle": 1180660,
+            "elapsed_cycles": 150852,
+            "count": 64
+          },
+          "pv": {
+            "start_cycle": 1030928,
+            "end_cycle": 1181257,
+            "elapsed_cycles": 150329,
+            "count": 1280
+          }
+        },
+        "route_audit": {
+          "descriptors": 64,
+          "by_core": {
+            "4": {
+              "qk_tiles": 544,
+              "pv_windows": 160,
+              "jobs": 8
+            },
+            "5": {
+              "qk_tiles": 544,
+              "pv_windows": 160,
+              "jobs": 8
+            },
+            "6": {
+              "qk_tiles": 544,
+              "pv_windows": 160,
+              "jobs": 8
+            },
+            "7": {
+              "qk_tiles": 544,
+              "pv_windows": 160,
+              "jobs": 8
+            },
+            "8": {
+              "qk_tiles": 544,
+              "pv_windows": 160,
+              "jobs": 8
+            },
+            "9": {
+              "qk_tiles": 544,
+              "pv_windows": 160,
+              "jobs": 8
+            },
+            "10": {
+              "qk_tiles": 544,
+              "pv_windows": 160,
+              "jobs": 8
+            },
+            "11": {
+              "qk_tiles": 544,
+              "pv_windows": 160,
+              "jobs": 8
+            }
+          },
+          "coverage": "each original head/band/slot exactly once",
+          "ownership": "original query band, unchanged Q/O addresses and completion manager"
+        },
+        "qk_by_core": {
+          "4": {
+            "compute": 35904,
+            "dma_wait": 58220,
+            "total": 94140,
+            "wait_2d_activate": 1276,
+            "wait_2d_active_not_ready": 56400,
+            "c_buffer_read_wait": 0
+          },
+          "5": {
+            "compute": 35904,
+            "dma_wait": 59842,
+            "total": 95762,
+            "wait_2d_activate": 2898,
+            "wait_2d_active_not_ready": 56400,
+            "c_buffer_read_wait": 0
+          },
+          "6": {
+            "compute": 35904,
+            "dma_wait": 60394,
+            "total": 96314,
+            "wait_2d_activate": 3450,
+            "wait_2d_active_not_ready": 56400,
+            "c_buffer_read_wait": 0
+          },
+          "7": {
+            "compute": 35904,
+            "dma_wait": 59365,
+            "total": 95285,
+            "wait_2d_activate": 2421,
+            "wait_2d_active_not_ready": 56400,
+            "c_buffer_read_wait": 0
+          },
+          "8": {
+            "compute": 35904,
+            "dma_wait": 58539,
+            "total": 94459,
+            "wait_2d_activate": 1595,
+            "wait_2d_active_not_ready": 56400,
+            "c_buffer_read_wait": 0
+          },
+          "9": {
+            "compute": 35904,
+            "dma_wait": 58820,
+            "total": 94740,
+            "wait_2d_activate": 1876,
+            "wait_2d_active_not_ready": 56400,
+            "c_buffer_read_wait": 0
+          },
+          "10": {
+            "compute": 35904,
+            "dma_wait": 60603,
+            "total": 96523,
+            "wait_2d_activate": 3659,
+            "wait_2d_active_not_ready": 56400,
+            "c_buffer_read_wait": 0
+          },
+          "11": {
+            "compute": 35904,
+            "dma_wait": 58617,
+            "total": 94537,
+            "wait_2d_activate": 1673,
+            "wait_2d_active_not_ready": 56400,
+            "c_buffer_read_wait": 0
+          }
+        },
+        "sfu_exp_by_core": {
+          "6": {
+            "elements": 2228224,
+            "issue_tokens": 139264,
+            "issue_wait_cycles": 78359,
+            "lanes": 16,
+            "ii": 1
+          },
+          "9": {
+            "elements": 2228224,
+            "issue_tokens": 139264,
+            "issue_wait_cycles": 78336,
+            "lanes": 16,
+            "ii": 1
+          },
+          "10": {
+            "elements": 2228224,
+            "issue_tokens": 139264,
+            "issue_wait_cycles": 78359,
+            "lanes": 16,
+            "ii": 1
+          },
+          "4": {
+            "elements": 2228224,
+            "issue_tokens": 139264,
+            "issue_wait_cycles": 78347,
+            "lanes": 16,
+            "ii": 1
+          },
+          "8": {
+            "elements": 2228224,
+            "issue_tokens": 139264,
+            "issue_wait_cycles": 78347,
+            "lanes": 16,
+            "ii": 1
+          },
+          "5": {
+            "elements": 2228224,
+            "issue_tokens": 139264,
+            "issue_wait_cycles": 78336,
+            "lanes": 16,
+            "ii": 1
+          },
+          "11": {
+            "elements": 2228224,
+            "issue_tokens": 139264,
+            "issue_wait_cycles": 78359,
+            "lanes": 16,
+            "ii": 1
+          },
+          "7": {
+            "elements": 2228224,
+            "issue_tokens": 139264,
+            "issue_wait_cycles": 78359,
+            "lanes": 16,
+            "ii": 1
+          }
+        },
+        "pv_busy_by_core": {
+          "12": 48320,
+          "13": 48340,
+          "14": 48332,
+          "15": 48320,
+          "16": 48320,
+          "17": 48322,
+          "18": 48349,
+          "19": 48327
+        },
+        "sfu_exp_issue_floor_cycles": 139264,
+        "sfu_exp_balanced_issue_floor_cycles": 139264,
+        "pv_waits": {
+          "p_ready_to_dispatch": {
+            "average_cycles": 0.34609375,
+            "max_cycles": 18,
+            "count": 1280
+          },
+          "dispatch_to_receive": {
+            "average_cycles": 29.17109375,
+            "max_cycles": 239,
+            "count": 1280
+          },
+          "receive_to_start": {
+            "average_cycles": 225.875,
+            "max_cycles": 2089,
+            "count": 1280
+          }
+        },
+        "transfers": {
+          "q_panels": 1280,
+          "k_panels": 2560,
+          "q_bytes": 10485760,
+          "k_bytes": 20971520,
+          "v_loads": 32,
+          "v_bytes": 1048576,
+          "note": "Q/K: nonzero accepted WCP window transactions; each panel enqueues one HBM read. V: actual broadcast-cache DMA loads, including reloads; excludes NoC multicast copies."
+        },
+        "local_gm": {
+          "16": {
+            "gmem_local_read_requests": 1312,
+            "gmem_local_write_requests": 192,
+            "gmem_local_read_bytes": 5373952,
+            "gmem_local_write_bytes": 786432,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 8,
+            "gmem_local_read_queue_cycles": 10947000,
+            "gmem_local_write_queue_cycles": 9527000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "0": {
+            "gmem_local_read_requests": 15696,
+            "gmem_local_write_requests": 4357,
+            "gmem_local_read_bytes": 64226944,
+            "gmem_local_write_bytes": 14684192,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 308448000,
+            "gmem_local_write_queue_cycles": 22500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "3": {
+            "gmem_local_read_requests": 15696,
+            "gmem_local_write_requests": 4357,
+            "gmem_local_read_bytes": 64226944,
+            "gmem_local_write_bytes": 14684192,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 308448000,
+            "gmem_local_write_queue_cycles": 22500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "6": {
+            "gmem_local_read_requests": 2208,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 9043968,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 63920000,
+            "gmem_local_write_queue_cycles": 107500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "2": {
+            "gmem_local_read_requests": 15696,
+            "gmem_local_write_requests": 4357,
+            "gmem_local_read_bytes": 64226944,
+            "gmem_local_write_bytes": 14684192,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 308448000,
+            "gmem_local_write_queue_cycles": 22500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "9": {
+            "gmem_local_read_requests": 2208,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 9043968,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 63920000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "1": {
+            "gmem_local_read_requests": 15696,
+            "gmem_local_write_requests": 4377,
+            "gmem_local_read_bytes": 64226944,
+            "gmem_local_write_bytes": 14684352,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 308448000,
+            "gmem_local_write_queue_cycles": 30000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "10": {
+            "gmem_local_read_requests": 2208,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 9043968,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 63920000,
+            "gmem_local_write_queue_cycles": 69500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "14": {
+            "gmem_local_read_requests": 1312,
+            "gmem_local_write_requests": 192,
+            "gmem_local_read_bytes": 5373952,
+            "gmem_local_write_bytes": 786432,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 11,
+            "gmem_local_read_queue_cycles": 11114000,
+            "gmem_local_write_queue_cycles": 9577000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "18": {
+            "gmem_local_read_requests": 1312,
+            "gmem_local_write_requests": 192,
+            "gmem_local_read_bytes": 5373952,
+            "gmem_local_write_bytes": 786432,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 11280000,
+            "gmem_local_write_queue_cycles": 9523500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "4": {
+            "gmem_local_read_requests": 2208,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 9043968,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 63920000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "8": {
+            "gmem_local_read_requests": 2208,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 9043968,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 63920000,
+            "gmem_local_write_queue_cycles": 3500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "12": {
+            "gmem_local_read_requests": 1312,
+            "gmem_local_write_requests": 192,
+            "gmem_local_read_bytes": 5373952,
+            "gmem_local_write_bytes": 786432,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 8,
+            "gmem_local_read_queue_cycles": 11026000,
+            "gmem_local_write_queue_cycles": 9527000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "5": {
+            "gmem_local_read_requests": 2208,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 9043968,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 63920000,
+            "gmem_local_write_queue_cycles": 73000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "13": {
+            "gmem_local_read_requests": 1312,
+            "gmem_local_write_requests": 192,
+            "gmem_local_read_bytes": 5373952,
+            "gmem_local_write_bytes": 786432,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 11054000,
+            "gmem_local_write_queue_cycles": 9530500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "17": {
+            "gmem_local_read_requests": 1312,
+            "gmem_local_write_requests": 192,
+            "gmem_local_read_bytes": 5373952,
+            "gmem_local_write_bytes": 786432,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 11058000,
+            "gmem_local_write_queue_cycles": 9627500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "11": {
+            "gmem_local_read_requests": 2208,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 9043968,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 63920000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "7": {
+            "gmem_local_read_requests": 2208,
+            "gmem_local_write_requests": 32,
+            "gmem_local_read_bytes": 9043968,
+            "gmem_local_write_bytes": 131072,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 32,
+            "gmem_local_read_queue_cycles": 63920000,
+            "gmem_local_write_queue_cycles": 38500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "15": {
+            "gmem_local_read_requests": 1312,
+            "gmem_local_write_requests": 208,
+            "gmem_local_read_bytes": 5373952,
+            "gmem_local_write_bytes": 851968,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 11056000,
+            "gmem_local_write_queue_cycles": 9530500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "19": {
+            "gmem_local_read_requests": 1312,
+            "gmem_local_write_requests": 192,
+            "gmem_local_read_bytes": 5373952,
+            "gmem_local_write_bytes": 786432,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 11070000,
+            "gmem_local_write_queue_cycles": 9520000,
+            "gmem_dma_landing_backpressure_retries": 0
+          }
+        },
+        "v_cache": {
+          "hits": 1280,
+          "misses": 0
+        },
+        "max_abs_errors": {
+          "Q_panels": 0.000244140625,
+          "K_panels": 0.0003662109375,
+          "V_panels": 0.000244140625,
+          "O": 0.0001220703125
+        },
+        "provenance": {
+          "git_revision": "f0b093be33237d68d5f15dc7479bcec67d30fdfd",
+          "git_status": "M baseline/attention_cluster_8qk_8pv/README.md\n M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M baseline/attention_cluster_8qk_8pv/test_run_llama_projection.py\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/attention/projectionJobAbi.h\n M src/sst/elements/golem/rocc/roccAnalog.h\n M src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py\n M src/sst/elements/golem/tests/run_noc_dma_pipeline.sh\n M src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp\n M src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h\n M src/sst/elements/golem/tests/small/muticore_attention/projection_case.py\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/verify_attention_hbm_layout.py\n M src/sst/elements/golem/tests/small/muticore_attention/verify_fused_attention_scale_output.py\n M src/sst/elements/golem/workercmdproc/workercmdproc.h\n?? baseline/attention_cluster_8qk_8pv/GM_TIMING_CONTRACT.md\n?? baseline/attention_cluster_8qk_8pv/NEXT_DATAFLOW_OPTIMIZATIONS.md\n?? baseline/attention_cluster_8qk_8pv/OPERATOR_FUSION.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_BANDWIDTH.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_INPUT_FLOW.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_PARTIAL_RESTORE.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_SCHEDULE.md\n?? baseline/attention_cluster_8qk_8pv/analyze_causal_balance.py\n?? baseline/attention_cluster_8qk_8pv/analyze_projection_input_flow.py\n?? baseline/attention_cluster_8qk_8pv/analyze_projection_schedule.py\n?? baseline/attention_cluster_8qk_8pv/gm_timing_probe_results.json\n?? baseline/attention_cluster_8qk_8pv/operator_fusion_results.json\n?? baseline/attention_cluster_8qk_8pv/probe_gm_timing.py\n?? baseline/attention_cluster_8qk_8pv/projection_input_flow_results.json\n?? baseline/attention_cluster_8qk_8pv/projection_partial_restore_results.json\n?? baseline/attention_cluster_8qk_8pv/projection_schedule_results.json\n?? baseline/attention_cluster_8qk_8pv/run_causal_balance.py\n?? baseline/attention_cluster_8qk_8pv/run_operator_fusion.py\n?? baseline/attention_cluster_8qk_8pv/test_causal_balance_analysis.py\n?? baseline/attention_cluster_8qk_8pv/test_projection_schedule_analysis.py\n?? src/sst/elements/golem/tests/small/muticore_attention/test_operator_fusion.py",
+          "tracked_diff_sha256": "f623facd13f9ce7c6caa9a0b3884a9c1b40ff544766b8dce0b5f560d0c93d927",
+          "command": [
+            "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+            "--projection",
+            "--query-length",
+            "1024",
+            "--kv-length",
+            "1024",
+            "--num-query-heads",
+            "32",
+            "--num-kv-heads",
+            "8",
+            "--head-dim",
+            "64",
+            "--artifact-root",
+            "/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024"
+          ],
+          "environment_overrides": {
+            "GOLEM_FUSION_NORM_PROJECTION": "1",
+            "GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD": "1",
+            "GOLEM_PROJECTION_CBUFFER_PARTIAL": "1",
+            "GOLEM_FUSION_SKIP_AUDIT_OUTPUT": "1",
+            "GOLEM_PROJECTION_PACKED_NORM_INPUT": "1",
+            "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 8-11",
+            "GOLEM_ATTENTION_CAUSAL_BALANCE": "1",
+            "GOLEM_FUSION_PROJECTION_ROPE": "0",
+            "GOLEM_PROJECTION_WRAP_PREFETCH": "1",
+            "GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET": "0",
+            "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+            "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+            "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+            "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+            "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+            "GOLEM_LOCAL_GM_READ_PORTS": "1",
+            "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+            "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+            "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+            "GOLEM_MPI_RANKS": "4",
+            "GOLEM_ARRAY_CLOCK": "1.0GHz",
+            "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+            "GOLEM_ARRAY_PIPELINE_DEPTH": "2",
+            "GOLEM_PROJECTION_ARRAYS": "64",
+            "GOLEM_PROJECTION_WEIGHT_PREFETCH": "1",
+            "GOLEM_PROJECTION_INPUT_REFERENCE": "/data/jjgong/LLM/Muticore-Attention/results/projection_input_flow/packed/s1024"
+          },
+          "sha256": {
+            "src/sst/elements/golem/attention/projectionJob.h": "676524b7d603c726519d7df12bfa6c5a5b85651ac5a144d81c5278b50eaa3cca",
+            "src/sst/elements/golem/attention/projectionJobAbi.h": "6d6abfe6ec013d501384650dc07606f54f738cd84c6f0d8c86ee3bd316ddb8ef",
+            "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h": "f469d3ca766db0c07a8ea3e35c9cffce8f2fd58f3ee5fd3ccdc32601a5ec2680",
+            "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "e7027923efc5e29e1598db85a1fd5e78f69bce0f0df3f7ed3c759a1d9afdb564",
+            "src/sst/elements/golem/rocc/roccAnalog.h": "9d0332dfcb2449ff5a0680b0894bce1dd574fe55feb79382d5a436b7b7c452fa",
+            "src/sst/elements/golem/workercmdproc/workercmdproc.h": "b146cb6bf252f442bf32a071d53391f263f75b64a40f66ba2f5b8847d95bc775",
+            "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "ba1c88fcbdfc618c160bc5444ca2e2e169f929e8930b4fa99427f683d5691d6a",
+            "install/lib/sst-elements-library/libgolem.so": "de1c14a862eeae8a87ea5a0c8e33d657c2b3c4092fca652201a5a342dcfe8d8e",
+            "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "57f10dfce856f4c9ab243c8b36f90812a14863aaf1b865662142b2665d710cad"
+          },
+          "input_seed": 1742,
+          "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+          "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=16\n  GOLEM_GEMM_N_TILES(derived)=16\n  GOLEM_GEMM_TOTAL_TASKS(derived)=256\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=32\n  GOLEM_GEMM_M=1024\n  GOLEM_GEMM_N=1024\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=1024/1024/64\n  PADDED_M/N/K=1024/1024/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=64\n  GOLEM_PROJECTION_ARRAYS=64\n  GOLEM_PROJECTION_PIPELINE=1\n  GOLEM_PROJECTION_SHARED_INPUT=1\n  GOLEM_PROJECTION_WEIGHT_PREFETCH=1\n  GOLEM_PROJECTION_WRAP_PREFETCH=1\n  GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD=1\n  GOLEM_PROJECTION_PACKED_NORM_INPUT=1\n  GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET=0\n  GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE=256\n  GOLEM_OUTPUT_SCATTER_GATHER_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --cpu-set 8-11\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/mvm_dumps/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/q_32x1024x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/k_8x1024x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/stdout/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/work/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/stats/overlap0/fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s1024/logs/attention-sst_fused_attention_q1024_k1024_d64_causal_rope_projection_hq32_hkv8.log\n",
+          "input_sha256": {
+            "k_8x1024x64.bin": "e384610eaf8f67f61060a7d9348fbf50262775223133a0186e0a58b1d26b12b2",
+            "projection_gamma.bin": "1826299cb1532fbf10510d8c5bdea6eeefbd953a3c19b417ff8dea99b8dc7b69",
+            "projection_norm.bin": "f8bac01dbf7d3313e32e2262d8c2450b670417f9d8f3772ac7f3c3efdcc5e46a",
+            "projection_weights.bin": "cf64a2351a06736184051401ea5e4f0853e480b483aa9e9be3a5d2d55d2dea38",
+            "projection_x.bin": "b99ebc1d8e6b858c6e9ec4e836c7b5f4b2e2f2a608a573947f9092d7f3ac09b4",
+            "q_32x1024x64.bin": "8e20103b11a7b3c5f8ccf972385395c7cfdaa762d25275de9a5858fa2daceb82",
+            "rope_64.bin": "13c99aa7997e0cdc99663e6534cc668d53e49762d1bbe25e1bcd3c530cd34603",
+            "v_8x1024x64.bin": "8b3522d796686cdcdc34fec7485fb377e31746b7c62da8a279afdc025b54f999"
+          }
+        }
+      },
+      "comparison": {
+        "status": "PASS",
+        "reference_root": "results/attention_causal_balance/final/control/s1024",
+        "byte_exact_regions": [
+          {
+            "node": 1,
+            "region": "O",
+            "bytes": 1048576
+          },
+          {
+            "node": 1,
+            "region": "Q_panels",
+            "bytes": 1048576
+          },
+          {
+            "node": 1,
+            "region": "K_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 1,
+            "region": "V_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 2,
+            "region": "O",
+            "bytes": 1048576
+          },
+          {
+            "node": 2,
+            "region": "Q_panels",
+            "bytes": 1048576
+          },
+          {
+            "node": 2,
+            "region": "K_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 2,
+            "region": "V_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 3,
+            "region": "O",
+            "bytes": 1048576
+          },
+          {
+            "node": 3,
+            "region": "Q_panels",
+            "bytes": 1048576
+          },
+          {
+            "node": 3,
+            "region": "K_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 3,
+            "region": "V_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 4,
+            "region": "O",
+            "bytes": 1048576
+          },
+          {
+            "node": 4,
+            "region": "Q_panels",
+            "bytes": 1048576
+          },
+          {
+            "node": 4,
+            "region": "K_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 4,
+            "region": "V_panels",
+            "bytes": 262144
+          }
+        ],
+        "end_to_end": {
+          "before": 1162378,
+          "after": 1066757,
+          "saved_cycles": 95621,
+          "reduction_percent": 8.226325687513013
+        },
+        "projection": {
+          "before": 911236,
+          "after": 910789,
+          "saved_cycles": 447,
+          "reduction_percent": 0.04905425158795307
+        }
+      },
+      "transfer_delta": {
+        "q_panels": 0,
+        "k_panels": 0,
+        "q_bytes": 0,
+        "k_bytes": 0,
+        "v_loads": 0,
+        "v_bytes": 0
+      }
+    },
+    {
+      "sequence": 2048,
+      "control": {
+        "e2e_cycles": 2767997,
+        "projection_cycles": 1821309,
+        "attention_cycles": 943687,
+        "stage_spans": {
+          "qk": {
+            "start_cycle": 1938964,
+            "end_cycle": 2716202,
+            "elapsed_cycles": 777238,
+            "count": 64
+          },
+          "sfu": {
+            "start_cycle": 1943784,
+            "end_cycle": 2881387,
+            "elapsed_cycles": 937603,
+            "count": 64
+          },
+          "pv": {
+            "start_cycle": 1944553,
+            "end_cycle": 2882457,
+            "elapsed_cycles": 937904,
+            "count": 4608
+          }
+        },
+        "route_audit": {
+          "descriptors": 64,
+          "by_core": {
+            "4": {
+              "qk_tiles": 576,
+              "pv_windows": 192,
+              "jobs": 8
+            },
+            "5": {
+              "qk_tiles": 1600,
+              "pv_windows": 448,
+              "jobs": 8
+            },
+            "6": {
+              "qk_tiles": 2624,
+              "pv_windows": 704,
+              "jobs": 8
+            },
+            "7": {
+              "qk_tiles": 3648,
+              "pv_windows": 960,
+              "jobs": 8
+            },
+            "8": {
+              "qk_tiles": 576,
+              "pv_windows": 192,
+              "jobs": 8
+            },
+            "9": {
+              "qk_tiles": 1600,
+              "pv_windows": 448,
+              "jobs": 8
+            },
+            "10": {
+              "qk_tiles": 2624,
+              "pv_windows": 704,
+              "jobs": 8
+            },
+            "11": {
+              "qk_tiles": 3648,
+              "pv_windows": 960,
+              "jobs": 8
+            }
+          },
+          "coverage": "each original head/band/slot exactly once",
+          "ownership": "original query band, unchanged Q/O addresses and completion manager"
+        },
+        "qk_by_core": {
+          "4": {
+            "compute": 38016,
+            "dma_wait": 67708,
+            "total": 105740,
+            "wait_2d_activate": 2123,
+            "wait_2d_active_not_ready": 65009,
+            "c_buffer_read_wait": 0
+          },
+          "5": {
+            "compute": 105600,
+            "dma_wait": 151162,
+            "total": 256778,
+            "wait_2d_activate": 5626,
+            "wait_2d_active_not_ready": 143936,
+            "c_buffer_read_wait": 0
+          },
+          "6": {
+            "compute": 173184,
+            "dma_wait": 227359,
+            "total": 400559,
+            "wait_2d_activate": 1759,
+            "wait_2d_active_not_ready": 222976,
+            "c_buffer_read_wait": 0
+          },
+          "7": {
+            "compute": 240768,
+            "dma_wait": 308633,
+            "total": 549417,
+            "wait_2d_activate": 1921,
+            "wait_2d_active_not_ready": 303064,
+            "c_buffer_read_wait": 0
+          },
+          "8": {
+            "compute": 38016,
+            "dma_wait": 68103,
+            "total": 106135,
+            "wait_2d_activate": 2631,
+            "wait_2d_active_not_ready": 64896,
+            "c_buffer_read_wait": 0
+          },
+          "9": {
+            "compute": 105600,
+            "dma_wait": 147197,
+            "total": 252813,
+            "wait_2d_activate": 1661,
+            "wait_2d_active_not_ready": 143936,
+            "c_buffer_read_wait": 0
+          },
+          "10": {
+            "compute": 173184,
+            "dma_wait": 227715,
+            "total": 400915,
+            "wait_2d_activate": 2115,
+            "wait_2d_active_not_ready": 222976,
+            "c_buffer_read_wait": 0
+          },
+          "11": {
+            "compute": 240768,
+            "dma_wait": 309238,
+            "total": 550022,
+            "wait_2d_activate": 2526,
+            "wait_2d_active_not_ready": 303064,
+            "c_buffer_read_wait": 0
+          }
+        },
+        "sfu_exp_by_core": {
+          "6": {
+            "elements": 10747904,
+            "issue_tokens": 671744,
+            "issue_wait_cycles": 377879,
+            "lanes": 16,
+            "ii": 1
+          },
+          "9": {
+            "elements": 6553600,
+            "issue_tokens": 409600,
+            "issue_wait_cycles": 230423,
+            "lanes": 16,
+            "ii": 1
+          },
+          "11": {
+            "elements": 14942208,
+            "issue_tokens": 933888,
+            "issue_wait_cycles": 525335,
+            "lanes": 16,
+            "ii": 1
+          },
+          "7": {
+            "elements": 14942208,
+            "issue_tokens": 933888,
+            "issue_wait_cycles": 525335,
+            "lanes": 16,
+            "ii": 1
+          },
+          "10": {
+            "elements": 10747904,
+            "issue_tokens": 671744,
+            "issue_wait_cycles": 377856,
+            "lanes": 16,
+            "ii": 1
+          },
+          "5": {
+            "elements": 6553600,
+            "issue_tokens": 409600,
+            "issue_wait_cycles": 230405,
+            "lanes": 16,
+            "ii": 1
+          },
+          "4": {
+            "elements": 2359296,
+            "issue_tokens": 147456,
+            "issue_wait_cycles": 82955,
+            "lanes": 16,
+            "ii": 1
+          },
+          "8": {
+            "elements": 2359296,
+            "issue_tokens": 147456,
+            "issue_wait_cycles": 82955,
+            "lanes": 16,
+            "ii": 1
+          }
+        },
+        "pv_busy_by_core": {
+          "12": 58021,
+          "13": 135318,
+          "14": 212613,
+          "15": 289923,
+          "16": 57984,
+          "17": 135296,
+          "18": 212615,
+          "19": 289920
+        },
+        "sfu_exp_issue_floor_cycles": 933888,
+        "sfu_exp_balanced_issue_floor_cycles": 540672,
+        "pv_waits": {
+          "p_ready_to_dispatch": {
+            "average_cycles": 0.2693142361111111,
+            "max_cycles": 114,
+            "count": 4608
+          },
+          "dispatch_to_receive": {
+            "average_cycles": 33.783854166666664,
+            "max_cycles": 284,
+            "count": 4608
+          },
+          "receive_to_start": {
+            "average_cycles": 578.001953125,
+            "max_cycles": 9636,
+            "count": 4608
+          }
+        },
+        "transfers": {
+          "q_panels": 4608,
+          "k_panels": 9216,
+          "q_bytes": 37748736,
+          "k_bytes": 75497472,
+          "v_loads": 64,
+          "v_bytes": 2097152,
+          "note": "Q/K: nonzero accepted WCP window transactions; each panel enqueues one HBM read. V: actual broadcast-cache DMA loads, including reloads; excludes NoC multicast copies."
+        },
+        "local_gm": {
+          "16": {
+            "gmem_local_read_requests": 1600,
+            "gmem_local_write_requests": 192,
+            "gmem_local_read_bytes": 6553600,
+            "gmem_local_write_bytes": 786432,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 8,
+            "gmem_local_read_queue_cycles": 13056000,
+            "gmem_local_write_queue_cycles": 7637000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "0": {
+            "gmem_local_read_requests": 31376,
+            "gmem_local_write_requests": 8716,
+            "gmem_local_read_bytes": 128452224,
+            "gmem_local_write_bytes": 29364312,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 616896000,
+            "gmem_local_write_queue_cycles": 51000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "3": {
+            "gmem_local_read_requests": 31376,
+            "gmem_local_write_requests": 8709,
+            "gmem_local_read_bytes": 128452224,
+            "gmem_local_write_bytes": 29364256,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 616896000,
+            "gmem_local_write_queue_cycles": 48000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "6": {
+            "gmem_local_read_requests": 10560,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 43253760,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 301920000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "2": {
+            "gmem_local_read_requests": 31376,
+            "gmem_local_write_requests": 8718,
+            "gmem_local_read_bytes": 128452224,
+            "gmem_local_write_bytes": 29364328,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 616896000,
+            "gmem_local_write_queue_cycles": 51000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "9": {
+            "gmem_local_read_requests": 6464,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 26476544,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 197472000,
+            "gmem_local_write_queue_cycles": 10500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "1": {
+            "gmem_local_read_requests": 31376,
+            "gmem_local_write_requests": 8722,
+            "gmem_local_read_bytes": 128452224,
+            "gmem_local_write_bytes": 29364360,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 616896000,
+            "gmem_local_write_queue_cycles": 51000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "11": {
+            "gmem_local_read_requests": 14656,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 60030976,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 406368000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "7": {
+            "gmem_local_read_requests": 14656,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 60030976,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 406368000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "15": {
+            "gmem_local_read_requests": 7744,
+            "gmem_local_write_requests": 3768,
+            "gmem_local_read_bytes": 31719424,
+            "gmem_local_write_bytes": 15433728,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 65483000,
+            "gmem_local_write_queue_cycles": 31461000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "19": {
+            "gmem_local_read_requests": 7744,
+            "gmem_local_write_requests": 3712,
+            "gmem_local_read_bytes": 31719424,
+            "gmem_local_write_bytes": 15204352,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 65341000,
+            "gmem_local_write_queue_cycles": 31605625,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "10": {
+            "gmem_local_read_requests": 10560,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 43253760,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 301920000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "14": {
+            "gmem_local_read_requests": 5696,
+            "gmem_local_write_requests": 2712,
+            "gmem_local_read_bytes": 23330816,
+            "gmem_local_write_bytes": 11108352,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 48188000,
+            "gmem_local_write_queue_cycles": 23327000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "18": {
+            "gmem_local_read_requests": 5696,
+            "gmem_local_write_requests": 2744,
+            "gmem_local_read_bytes": 23330816,
+            "gmem_local_write_bytes": 11239424,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 47886000,
+            "gmem_local_write_queue_cycles": 23387750,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "5": {
+            "gmem_local_read_requests": 6464,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 26476544,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 197472000,
+            "gmem_local_write_queue_cycles": 236500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "13": {
+            "gmem_local_read_requests": 3648,
+            "gmem_local_write_requests": 320,
+            "gmem_local_read_bytes": 14942208,
+            "gmem_local_write_bytes": 1310720,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 30665000,
+            "gmem_local_write_queue_cycles": 15246000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "17": {
+            "gmem_local_read_requests": 3648,
+            "gmem_local_write_requests": 320,
+            "gmem_local_read_bytes": 14942208,
+            "gmem_local_write_bytes": 1310720,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 30464000,
+            "gmem_local_write_queue_cycles": 15253000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "4": {
+            "gmem_local_read_requests": 2368,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 9699328,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 93024000,
+            "gmem_local_write_queue_cycles": 35000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "8": {
+            "gmem_local_read_requests": 2368,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 9699328,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 93024000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "12": {
+            "gmem_local_read_requests": 1600,
+            "gmem_local_write_requests": 192,
+            "gmem_local_read_bytes": 6553600,
+            "gmem_local_write_bytes": 786432,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 13801000,
+            "gmem_local_write_queue_cycles": 7637000,
+            "gmem_dma_landing_backpressure_retries": 0
+          }
+        },
+        "v_cache": {
+          "hits": 4608,
+          "misses": 0
+        },
+        "max_abs_errors": {
+          "Q_panels": 0.00048828125,
+          "K_panels": 0.000244140625,
+          "V_panels": 0.000244140625,
+          "O": 0.0001220703125
+        },
+        "provenance": {
+          "git_revision": "f0b093be33237d68d5f15dc7479bcec67d30fdfd",
+          "git_status": "M baseline/attention_cluster_8qk_8pv/README.md\n M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M baseline/attention_cluster_8qk_8pv/test_run_llama_projection.py\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/attention/projectionJobAbi.h\n M src/sst/elements/golem/rocc/roccAnalog.h\n M src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py\n M src/sst/elements/golem/tests/run_noc_dma_pipeline.sh\n M src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp\n M src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h\n M src/sst/elements/golem/tests/small/muticore_attention/projection_case.py\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/verify_attention_hbm_layout.py\n M src/sst/elements/golem/tests/small/muticore_attention/verify_fused_attention_scale_output.py\n M src/sst/elements/golem/workercmdproc/workercmdproc.h\n?? baseline/attention_cluster_8qk_8pv/GM_TIMING_CONTRACT.md\n?? baseline/attention_cluster_8qk_8pv/NEXT_DATAFLOW_OPTIMIZATIONS.md\n?? baseline/attention_cluster_8qk_8pv/OPERATOR_FUSION.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_BANDWIDTH.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_INPUT_FLOW.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_PARTIAL_RESTORE.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_SCHEDULE.md\n?? baseline/attention_cluster_8qk_8pv/analyze_causal_balance.py\n?? baseline/attention_cluster_8qk_8pv/analyze_projection_input_flow.py\n?? baseline/attention_cluster_8qk_8pv/analyze_projection_schedule.py\n?? baseline/attention_cluster_8qk_8pv/gm_timing_probe_results.json\n?? baseline/attention_cluster_8qk_8pv/operator_fusion_results.json\n?? baseline/attention_cluster_8qk_8pv/probe_gm_timing.py\n?? baseline/attention_cluster_8qk_8pv/projection_input_flow_results.json\n?? baseline/attention_cluster_8qk_8pv/projection_partial_restore_results.json\n?? baseline/attention_cluster_8qk_8pv/projection_schedule_results.json\n?? baseline/attention_cluster_8qk_8pv/run_causal_balance.py\n?? baseline/attention_cluster_8qk_8pv/run_operator_fusion.py\n?? baseline/attention_cluster_8qk_8pv/test_causal_balance_analysis.py\n?? baseline/attention_cluster_8qk_8pv/test_projection_schedule_analysis.py\n?? baseline/attention_cluster_8qk_8pv/verify_causal_balance_shapes.py\n?? src/sst/elements/golem/tests/small/muticore_attention/test_operator_fusion.py",
+          "tracked_diff_sha256": "f623facd13f9ce7c6caa9a0b3884a9c1b40ff544766b8dce0b5f560d0c93d927",
+          "command": [
+            "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+            "--projection",
+            "--query-length",
+            "2048",
+            "--kv-length",
+            "2048",
+            "--num-query-heads",
+            "32",
+            "--num-kv-heads",
+            "8",
+            "--head-dim",
+            "64",
+            "--artifact-root",
+            "/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048"
+          ],
+          "environment_overrides": {
+            "GOLEM_FUSION_NORM_PROJECTION": "1",
+            "GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD": "1",
+            "GOLEM_PROJECTION_CBUFFER_PARTIAL": "1",
+            "GOLEM_FUSION_SKIP_AUDIT_OUTPUT": "1",
+            "GOLEM_PROJECTION_PACKED_NORM_INPUT": "1",
+            "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 4-7",
+            "GOLEM_ATTENTION_CAUSAL_BALANCE": "0",
+            "GOLEM_FUSION_PROJECTION_ROPE": "0",
+            "GOLEM_PROJECTION_WRAP_PREFETCH": "1",
+            "GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET": "0",
+            "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+            "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+            "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+            "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+            "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+            "GOLEM_LOCAL_GM_READ_PORTS": "1",
+            "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+            "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+            "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+            "GOLEM_MPI_RANKS": "4",
+            "GOLEM_ARRAY_CLOCK": "1.0GHz",
+            "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+            "GOLEM_ARRAY_PIPELINE_DEPTH": "2",
+            "GOLEM_PROJECTION_ARRAYS": "64",
+            "GOLEM_PROJECTION_WEIGHT_PREFETCH": "1",
+            "GOLEM_PROJECTION_INPUT_REFERENCE": "/data/jjgong/LLM/Muticore-Attention/results/projection_input_flow/packed/s2048"
+          },
+          "sha256": {
+            "src/sst/elements/golem/attention/projectionJob.h": "676524b7d603c726519d7df12bfa6c5a5b85651ac5a144d81c5278b50eaa3cca",
+            "src/sst/elements/golem/attention/projectionJobAbi.h": "6d6abfe6ec013d501384650dc07606f54f738cd84c6f0d8c86ee3bd316ddb8ef",
+            "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h": "f469d3ca766db0c07a8ea3e35c9cffce8f2fd58f3ee5fd3ccdc32601a5ec2680",
+            "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "e7027923efc5e29e1598db85a1fd5e78f69bce0f0df3f7ed3c759a1d9afdb564",
+            "src/sst/elements/golem/rocc/roccAnalog.h": "9d0332dfcb2449ff5a0680b0894bce1dd574fe55feb79382d5a436b7b7c452fa",
+            "src/sst/elements/golem/workercmdproc/workercmdproc.h": "b146cb6bf252f442bf32a071d53391f263f75b64a40f66ba2f5b8847d95bc775",
+            "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "ba1c88fcbdfc618c160bc5444ca2e2e169f929e8930b4fa99427f683d5691d6a",
+            "install/lib/sst-elements-library/libgolem.so": "de1c14a862eeae8a87ea5a0c8e33d657c2b3c4092fca652201a5a342dcfe8d8e",
+            "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "57f10dfce856f4c9ab243c8b36f90812a14863aaf1b865662142b2665d710cad"
+          },
+          "input_seed": 1742,
+          "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+          "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=32\n  GOLEM_GEMM_N_TILES(derived)=32\n  GOLEM_GEMM_TOTAL_TASKS(derived)=1024\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=128\n  GOLEM_GEMM_M=2048\n  GOLEM_GEMM_N=2048\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=2048/2048/64\n  PADDED_M/N/K=2048/2048/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=64\n  GOLEM_PROJECTION_ARRAYS=64\n  GOLEM_PROJECTION_PIPELINE=1\n  GOLEM_PROJECTION_SHARED_INPUT=1\n  GOLEM_PROJECTION_WEIGHT_PREFETCH=1\n  GOLEM_PROJECTION_WRAP_PREFETCH=1\n  GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD=1\n  GOLEM_PROJECTION_PACKED_NORM_INPUT=1\n  GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET=0\n  GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE=256\n  GOLEM_OUTPUT_SCATTER_GATHER_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --cpu-set 4-7\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/mvm_dumps/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/q_32x2048x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/k_8x2048x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/stdout/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/work/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/control/s2048/logs/attention-sst_fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8.log\n",
+          "input_sha256": {
+            "k_8x2048x64.bin": "0123d0ecfe44f99e01e2a24ef55222e2e28909f6074fc46d005fb6af55b0f6fc",
+            "projection_gamma.bin": "47ce4f7d3bfa3eae345603349e24368ee15a8cadde5ecea70ba2fadd753c9cf8",
+            "projection_norm.bin": "745480e41d1d41b5032da8f11f7fc6d541083a2e55f3616a27fa001d06c441d4",
+            "projection_weights.bin": "de56b7c702ec4a832c20a67749443e606e9f657cba9131d8dce416940653bf41",
+            "projection_x.bin": "3fd1add52b248019c56cbc957a55a0d54f697f74d697d484a8efe693b520afe8",
+            "q_32x2048x64.bin": "64b490792db23bd9a57a6e59abf108d38eaaf0f6736629b6896e57d293296f79",
+            "rope_64.bin": "44303ad847a27fe22afbea2db01ec84b3adae4c8581751e148a1d439b0f53a6c",
+            "v_8x2048x64.bin": "408a33b609b2c5a05fd14204a23ca0d71da2f9cbaa962bed440febbfdb3fcc53"
+          }
+        }
+      },
+      "balanced": {
+        "e2e_cycles": 2373527,
+        "projection_cycles": 1820535,
+        "attention_cycles": 550110,
+        "stage_spans": {
+          "qk": {
+            "start_cycle": 1938104,
+            "end_cycle": 2463678,
+            "elapsed_cycles": 525574,
+            "count": 64
+          },
+          "sfu": {
+            "start_cycle": 1943086,
+            "end_cycle": 2487680,
+            "elapsed_cycles": 544594,
+            "count": 64
+          },
+          "pv": {
+            "start_cycle": 1944316,
+            "end_cycle": 2488004,
+            "elapsed_cycles": 543688,
+            "count": 4608
+          }
+        },
+        "route_audit": {
+          "descriptors": 64,
+          "by_core": {
+            "4": {
+              "qk_tiles": 2112,
+              "pv_windows": 576,
+              "jobs": 8
+            },
+            "5": {
+              "qk_tiles": 2112,
+              "pv_windows": 576,
+              "jobs": 8
+            },
+            "6": {
+              "qk_tiles": 2112,
+              "pv_windows": 576,
+              "jobs": 8
+            },
+            "7": {
+              "qk_tiles": 2112,
+              "pv_windows": 576,
+              "jobs": 8
+            },
+            "8": {
+              "qk_tiles": 2112,
+              "pv_windows": 576,
+              "jobs": 8
+            },
+            "9": {
+              "qk_tiles": 2112,
+              "pv_windows": 576,
+              "jobs": 8
+            },
+            "10": {
+              "qk_tiles": 2112,
+              "pv_windows": 576,
+              "jobs": 8
+            },
+            "11": {
+              "qk_tiles": 2112,
+              "pv_windows": 576,
+              "jobs": 8
+            }
+          },
+          "coverage": "each original head/band/slot exactly once",
+          "ownership": "original query band, unchanged Q/O addresses and completion manager"
+        },
+        "qk_by_core": {
+          "4": {
+            "compute": 139392,
+            "dma_wait": 187456,
+            "total": 326864,
+            "wait_2d_activate": 1364,
+            "wait_2d_active_not_ready": 183980,
+            "c_buffer_read_wait": 0
+          },
+          "5": {
+            "compute": 139392,
+            "dma_wait": 186716,
+            "total": 326124,
+            "wait_2d_activate": 1148,
+            "wait_2d_active_not_ready": 183456,
+            "c_buffer_read_wait": 0
+          },
+          "6": {
+            "compute": 139392,
+            "dma_wait": 191275,
+            "total": 330683,
+            "wait_2d_activate": 5707,
+            "wait_2d_active_not_ready": 183456,
+            "c_buffer_read_wait": 0
+          },
+          "7": {
+            "compute": 139392,
+            "dma_wait": 187866,
+            "total": 327274,
+            "wait_2d_activate": 1774,
+            "wait_2d_active_not_ready": 183980,
+            "c_buffer_read_wait": 0
+          },
+          "8": {
+            "compute": 139392,
+            "dma_wait": 188527,
+            "total": 327935,
+            "wait_2d_activate": 2435,
+            "wait_2d_active_not_ready": 183980,
+            "c_buffer_read_wait": 0
+          },
+          "9": {
+            "compute": 139392,
+            "dma_wait": 186672,
+            "total": 326080,
+            "wait_2d_activate": 1104,
+            "wait_2d_active_not_ready": 183456,
+            "c_buffer_read_wait": 0
+          },
+          "10": {
+            "compute": 139392,
+            "dma_wait": 186928,
+            "total": 326336,
+            "wait_2d_activate": 1360,
+            "wait_2d_active_not_ready": 183456,
+            "c_buffer_read_wait": 0
+          },
+          "11": {
+            "compute": 139392,
+            "dma_wait": 187743,
+            "total": 327151,
+            "wait_2d_activate": 1651,
+            "wait_2d_active_not_ready": 183980,
+            "c_buffer_read_wait": 0
+          }
+        },
+        "sfu_exp_by_core": {
+          "6": {
+            "elements": 8650752,
+            "issue_tokens": 540672,
+            "issue_wait_cycles": 304151,
+            "lanes": 16,
+            "ii": 1
+          },
+          "9": {
+            "elements": 8650752,
+            "issue_tokens": 540672,
+            "issue_wait_cycles": 304151,
+            "lanes": 16,
+            "ii": 1
+          },
+          "11": {
+            "elements": 8650752,
+            "issue_tokens": 540672,
+            "issue_wait_cycles": 304128,
+            "lanes": 16,
+            "ii": 1
+          },
+          "7": {
+            "elements": 8650752,
+            "issue_tokens": 540672,
+            "issue_wait_cycles": 304128,
+            "lanes": 16,
+            "ii": 1
+          },
+          "4": {
+            "elements": 8650752,
+            "issue_tokens": 540672,
+            "issue_wait_cycles": 304139,
+            "lanes": 16,
+            "ii": 1
+          },
+          "8": {
+            "elements": 8650752,
+            "issue_tokens": 540672,
+            "issue_wait_cycles": 304139,
+            "lanes": 16,
+            "ii": 1
+          },
+          "10": {
+            "elements": 8650752,
+            "issue_tokens": 540672,
+            "issue_wait_cycles": 304151,
+            "lanes": 16,
+            "ii": 1
+          },
+          "5": {
+            "elements": 8650752,
+            "issue_tokens": 540672,
+            "issue_wait_cycles": 304151,
+            "lanes": 16,
+            "ii": 1
+          }
+        },
+        "pv_busy_by_core": {
+          "12": 173972,
+          "13": 173954,
+          "14": 173971,
+          "15": 173961,
+          "16": 173952,
+          "17": 173975,
+          "18": 173982,
+          "19": 173952
+        },
+        "sfu_exp_issue_floor_cycles": 540672,
+        "sfu_exp_balanced_issue_floor_cycles": 540672,
+        "pv_waits": {
+          "p_ready_to_dispatch": {
+            "average_cycles": 1.0598958333333333,
+            "max_cycles": 224,
+            "count": 4608
+          },
+          "dispatch_to_receive": {
+            "average_cycles": 24.41558159722222,
+            "max_cycles": 265,
+            "count": 4608
+          },
+          "receive_to_start": {
+            "average_cycles": 276.72938368055554,
+            "max_cycles": 7152,
+            "count": 4608
+          }
+        },
+        "transfers": {
+          "q_panels": 4608,
+          "k_panels": 9216,
+          "q_bytes": 37748736,
+          "k_bytes": 75497472,
+          "v_loads": 64,
+          "v_bytes": 2097152,
+          "note": "Q/K: nonzero accepted WCP window transactions; each panel enqueues one HBM read. V: actual broadcast-cache DMA loads, including reloads; excludes NoC multicast copies."
+        },
+        "local_gm": {
+          "16": {
+            "gmem_local_read_requests": 4672,
+            "gmem_local_write_requests": 1536,
+            "gmem_local_read_bytes": 19136512,
+            "gmem_local_write_bytes": 6291456,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 39344000,
+            "gmem_local_write_queue_cycles": 19341875,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "0": {
+            "gmem_local_read_requests": 31376,
+            "gmem_local_write_requests": 8709,
+            "gmem_local_read_bytes": 128452224,
+            "gmem_local_write_bytes": 29364256,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 616896000,
+            "gmem_local_write_queue_cycles": 51000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "3": {
+            "gmem_local_read_requests": 31376,
+            "gmem_local_write_requests": 8709,
+            "gmem_local_read_bytes": 128452224,
+            "gmem_local_write_bytes": 29364256,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 616896000,
+            "gmem_local_write_queue_cycles": 51000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "6": {
+            "gmem_local_read_requests": 8512,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 34865152,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 249696000,
+            "gmem_local_write_queue_cycles": 292000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "2": {
+            "gmem_local_read_requests": 31376,
+            "gmem_local_write_requests": 8709,
+            "gmem_local_read_bytes": 128452224,
+            "gmem_local_write_bytes": 29364256,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 616896000,
+            "gmem_local_write_queue_cycles": 51000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "9": {
+            "gmem_local_read_requests": 8512,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 34865152,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 249696000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "1": {
+            "gmem_local_read_requests": 31376,
+            "gmem_local_write_requests": 8714,
+            "gmem_local_read_bytes": 128452224,
+            "gmem_local_write_bytes": 29364296,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 5,
+            "gmem_local_read_queue_cycles": 616896000,
+            "gmem_local_write_queue_cycles": 51000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "11": {
+            "gmem_local_read_requests": 8512,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 34865152,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 249696000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "7": {
+            "gmem_local_read_requests": 8512,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 34865152,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 249696000,
+            "gmem_local_write_queue_cycles": 3500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "15": {
+            "gmem_local_read_requests": 4672,
+            "gmem_local_write_requests": 1688,
+            "gmem_local_read_bytes": 19136512,
+            "gmem_local_write_bytes": 6914048,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 39507000,
+            "gmem_local_write_queue_cycles": 19440875,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "19": {
+            "gmem_local_read_requests": 4672,
+            "gmem_local_write_requests": 1680,
+            "gmem_local_read_bytes": 19136512,
+            "gmem_local_write_bytes": 6881280,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 39385000,
+            "gmem_local_write_queue_cycles": 19465500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "4": {
+            "gmem_local_read_requests": 8512,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 34865152,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 249696000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "8": {
+            "gmem_local_read_requests": 8512,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 34865152,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 249696000,
+            "gmem_local_write_queue_cycles": 0,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "12": {
+            "gmem_local_read_requests": 4672,
+            "gmem_local_write_requests": 1504,
+            "gmem_local_read_bytes": 19136512,
+            "gmem_local_write_bytes": 6160384,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 39476000,
+            "gmem_local_write_queue_cycles": 19314500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "10": {
+            "gmem_local_read_requests": 8512,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 34865152,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 249696000,
+            "gmem_local_write_queue_cycles": 3500,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "14": {
+            "gmem_local_read_requests": 4672,
+            "gmem_local_write_requests": 1432,
+            "gmem_local_read_bytes": 19136512,
+            "gmem_local_write_bytes": 5865472,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 39848000,
+            "gmem_local_write_queue_cycles": 19276875,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "18": {
+            "gmem_local_read_requests": 4672,
+            "gmem_local_write_requests": 1424,
+            "gmem_local_read_bytes": 19136512,
+            "gmem_local_write_bytes": 5832704,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 9,
+            "gmem_local_read_queue_cycles": 39614000,
+            "gmem_local_write_queue_cycles": 19356625,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "5": {
+            "gmem_local_read_requests": 8512,
+            "gmem_local_write_requests": 64,
+            "gmem_local_read_bytes": 34865152,
+            "gmem_local_write_bytes": 262144,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 64,
+            "gmem_local_read_queue_cycles": 249696000,
+            "gmem_local_write_queue_cycles": 14000,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "13": {
+            "gmem_local_read_requests": 4672,
+            "gmem_local_write_requests": 1520,
+            "gmem_local_read_bytes": 19136512,
+            "gmem_local_write_bytes": 6225920,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 39594000,
+            "gmem_local_write_queue_cycles": 19435750,
+            "gmem_dma_landing_backpressure_retries": 0
+          },
+          "17": {
+            "gmem_local_read_requests": 4672,
+            "gmem_local_write_requests": 1560,
+            "gmem_local_read_bytes": 19136512,
+            "gmem_local_write_bytes": 6389760,
+            "gmem_local_queue_rejected": 0,
+            "gmem_local_queue_high_water": 10,
+            "gmem_local_read_queue_cycles": 39673000,
+            "gmem_local_write_queue_cycles": 19310000,
+            "gmem_dma_landing_backpressure_retries": 0
+          }
+        },
+        "v_cache": {
+          "hits": 4608,
+          "misses": 0
+        },
+        "max_abs_errors": {
+          "Q_panels": 0.00048828125,
+          "K_panels": 0.000244140625,
+          "V_panels": 0.000244140625,
+          "O": 0.0001220703125
+        },
+        "provenance": {
+          "git_revision": "f0b093be33237d68d5f15dc7479bcec67d30fdfd",
+          "git_status": "M baseline/attention_cluster_8qk_8pv/README.md\n M baseline/attention_cluster_8qk_8pv/run_llama_projection.py\n M baseline/attention_cluster_8qk_8pv/test_run_llama_projection.py\n M src/sst/elements/golem/attention/projectionJob.h\n M src/sst/elements/golem/attention/projectionJobAbi.h\n M src/sst/elements/golem/rocc/roccAnalog.h\n M src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py\n M src/sst/elements/golem/tests/run_noc_dma_pipeline.sh\n M src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp\n M src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h\n M src/sst/elements/golem/tests/small/muticore_attention/projection_case.py\n M src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh\n M src/sst/elements/golem/tests/small/muticore_attention/test_report_projection_e2e.py\n M src/sst/elements/golem/tests/small/muticore_attention/verify_attention_hbm_layout.py\n M src/sst/elements/golem/tests/small/muticore_attention/verify_fused_attention_scale_output.py\n M src/sst/elements/golem/workercmdproc/workercmdproc.h\n?? baseline/attention_cluster_8qk_8pv/GM_TIMING_CONTRACT.md\n?? baseline/attention_cluster_8qk_8pv/NEXT_DATAFLOW_OPTIMIZATIONS.md\n?? baseline/attention_cluster_8qk_8pv/OPERATOR_FUSION.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_BANDWIDTH.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_INPUT_FLOW.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_PARTIAL_RESTORE.md\n?? baseline/attention_cluster_8qk_8pv/PROJECTION_SCHEDULE.md\n?? baseline/attention_cluster_8qk_8pv/analyze_causal_balance.py\n?? baseline/attention_cluster_8qk_8pv/analyze_projection_input_flow.py\n?? baseline/attention_cluster_8qk_8pv/analyze_projection_schedule.py\n?? baseline/attention_cluster_8qk_8pv/gm_timing_probe_results.json\n?? baseline/attention_cluster_8qk_8pv/operator_fusion_results.json\n?? baseline/attention_cluster_8qk_8pv/probe_gm_timing.py\n?? baseline/attention_cluster_8qk_8pv/projection_input_flow_results.json\n?? baseline/attention_cluster_8qk_8pv/projection_partial_restore_results.json\n?? baseline/attention_cluster_8qk_8pv/projection_schedule_results.json\n?? baseline/attention_cluster_8qk_8pv/run_causal_balance.py\n?? baseline/attention_cluster_8qk_8pv/run_operator_fusion.py\n?? baseline/attention_cluster_8qk_8pv/test_causal_balance_analysis.py\n?? baseline/attention_cluster_8qk_8pv/test_projection_schedule_analysis.py\n?? baseline/attention_cluster_8qk_8pv/verify_causal_balance_shapes.py\n?? src/sst/elements/golem/tests/small/muticore_attention/test_operator_fusion.py",
+          "tracked_diff_sha256": "f623facd13f9ce7c6caa9a0b3884a9c1b40ff544766b8dce0b5f560d0c93d927",
+          "command": [
+            "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+            "--projection",
+            "--query-length",
+            "2048",
+            "--kv-length",
+            "2048",
+            "--num-query-heads",
+            "32",
+            "--num-kv-heads",
+            "8",
+            "--head-dim",
+            "64",
+            "--artifact-root",
+            "/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048"
+          ],
+          "environment_overrides": {
+            "GOLEM_FUSION_NORM_PROJECTION": "1",
+            "GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD": "1",
+            "GOLEM_PROJECTION_CBUFFER_PARTIAL": "1",
+            "GOLEM_FUSION_SKIP_AUDIT_OUTPUT": "1",
+            "GOLEM_PROJECTION_PACKED_NORM_INPUT": "1",
+            "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 8-11",
+            "GOLEM_ATTENTION_CAUSAL_BALANCE": "1",
+            "GOLEM_FUSION_PROJECTION_ROPE": "0",
+            "GOLEM_PROJECTION_WRAP_PREFETCH": "1",
+            "GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET": "0",
+            "GOLEM_SST_ARGS": "--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config",
+            "GOLEM_PRIVATE_DRAMSIM3_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/install/lib/dramsim3",
+            "GOLEM_PRIVATE_RAMULATOR2_LIB_DIR": "/data/jjgong/LLM/Muticore-Attention/deps/ramulator2-2.1",
+            "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+            "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+            "GOLEM_LOCAL_GM_READ_PORTS": "1",
+            "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+            "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+            "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+            "GOLEM_MPI_RANKS": "4",
+            "GOLEM_ARRAY_CLOCK": "1.0GHz",
+            "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+            "GOLEM_ARRAY_PIPELINE_DEPTH": "2",
+            "GOLEM_PROJECTION_ARRAYS": "64",
+            "GOLEM_PROJECTION_WEIGHT_PREFETCH": "1",
+            "GOLEM_PROJECTION_INPUT_REFERENCE": "/data/jjgong/LLM/Muticore-Attention/results/projection_input_flow/packed/s2048"
+          },
+          "sha256": {
+            "src/sst/elements/golem/attention/projectionJob.h": "676524b7d603c726519d7df12bfa6c5a5b85651ac5a144d81c5278b50eaa3cca",
+            "src/sst/elements/golem/attention/projectionJobAbi.h": "6d6abfe6ec013d501384650dc07606f54f738cd84c6f0d8c86ee3bd316ddb8ef",
+            "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h": "f469d3ca766db0c07a8ea3e35c9cffce8f2fd58f3ee5fd3ccdc32601a5ec2680",
+            "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "e7027923efc5e29e1598db85a1fd5e78f69bce0f0df3f7ed3c759a1d9afdb564",
+            "src/sst/elements/golem/rocc/roccAnalog.h": "9d0332dfcb2449ff5a0680b0894bce1dd574fe55feb79382d5a436b7b7c452fa",
+            "src/sst/elements/golem/workercmdproc/workercmdproc.h": "b146cb6bf252f442bf32a071d53391f263f75b64a40f66ba2f5b8847d95bc775",
+            "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "ba1c88fcbdfc618c160bc5444ca2e2e169f929e8930b4fa99427f683d5691d6a",
+            "install/lib/sst-elements-library/libgolem.so": "de1c14a862eeae8a87ea5a0c8e33d657c2b3c4092fca652201a5a342dcfe8d8e",
+            "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "57f10dfce856f4c9ab243c8b36f90812a14863aaf1b865662142b2665d710cad"
+          },
+          "input_seed": 1742,
+          "scope": "synthetic FP16 X/gamma/weights; RMSNorm -> QKV -> RoPE -> causal GQA -> O HBM; excludes Wo/residual/MLP",
+          "resolved_run_config": "[RUN] Configuration:\n  AUTO_PRESET_FILE=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/configs/default.env\n  GOLEM_TOTAL_GROUPS=4\n  GOLEM_ARRAY_INPUT_SIZE=64\n  GOLEM_ARRAY_OUTPUT_SIZE=64\n  GOLEM_NUM_ARRAYS=64\n  GOLEM_TOTAL_CORES=20\n  GOLEM_TOTAL_GEMM_CORES=20\n  GOLEM_NUM_MEMORY_NODES=5\n  GOLEM_MEMORY_LAYOUT=top_hbm\n  GOLEM_MEMORY_BACKEND=ramulator2\n  GOLEM_RAMULATOR2_CONFIG=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml\n  GOLEM_MEM_NODE_SIZE_BYTES=134217728\n  GOLEM_IDENTITY_BASE=134217728\n  GOLEM_HBM_DUMP_OUTPUT=1\n  GOLEM_GLOBAL_STRIDE_KB=2048\n  GOLEM_GLOBAL_STRIDE_BYTES=2097152\n  GOLEM_LOCAL_GM_BYTES_PER_CYCLE=256\n  GOLEM_GM_C_BUFFER_BYTES=1048576\n  GOLEM_GM_C_BUFFER_READ_BPC=256\n  GOLEM_GM_C_BUFFER_WRITE_BPC=256\n  GOLEM_GM_C_BUFFER_LATENCY_CYCLES=1\n  GOLEM_FINAL_C_WRITE_ENABLE=0\n  GOLEM_DMA_WRITE_VN=2\n  GOLEM_DMA_STAGGER_CYCLES=0\n  GOLEM_DMA_OVERLAP=0\n  GOLEM_CTRL_OVERLAP_AB=1\n  GOLEM_GROUP_MANAGER_ENABLE=1\n  GOLEM_CTRL_LINK_ENABLE=1\n  GOLEM_WORKER_START_BARRIER_ENABLE=1\n  GOLEM_WORKER_START_GUARD_CYCLES=32768\n  GOLEM_A_REUSE_N_TILES=4\n  GOLEM_B_REUSE_M_TILES=2\n  GOLEM_DMA_NODE_CREDITS(legacy transfer credits)=4\n  GOLEM_DMA_NODE_CHUNK_CREDITS=128\n  GOLEM_DMA_PANEL_CHUNK_BYTES=16384\n  GOLEM_DMA_CREDIT_CHUNK_BYTES=4096\n  GOLEM_DMA_ADMISSION_LIMIT=0\n  GOLEM_DMA_WINDOW_PRIORITY_ENABLE=1\n  GOLEM_DMA_WINDOW_REORDER_CYCLES=512\n  GOLEM_DMA_RESPONSE_DRAIN_LIMIT=0\n  GOLEM_DMA_RESPONSE_TILE_PRIORITY_ENABLE=1\n  GOLEM_DMA_RESPONSE_REORDER_CYCLES=0\n  GOLEM_DMA_RESPONSE_MAX_STARVATION_CYCLES=65536\n  GOLEM_DMA_ADMISSION_MAX_STARVATION_CYCLES=4096\n  GOLEM_SCHED_ISSUE_BUDGET_PER_TICK=2\n  GOLEM_SCHED_WORKER_CREDIT_CAP=0\n  GOLEM_DMA_GROUP_RR_ENABLE=0\n  GOLEM_DMA_TILE_CHUNK_QUANTUM=1\n  GOLEM_DMA_SLOT_COUNT=24\n  GOLEM_DMA_WINDOW_K_TILES=4\n  GOLEM_WCP_PREFETCH_WINDOWS=2\n  GOLEM_WCP_CROSS_MACRO_PREFETCH_ENABLE=1\n  GOLEM_WCP_RESIDENT_K_TILES(derived)=1\n  GOLEM_SCHED_SUBMIT_BATCH_SIZE=4\n  GOLEM_SCHED_DONE_BATCH_SIZE=4\n  GOLEM_GEMM_K_TILES(derived)=1\n  GOLEM_GEMM_M_TILES(derived)=32\n  GOLEM_GEMM_N_TILES(derived)=32\n  GOLEM_GEMM_TOTAL_TASKS(derived)=1024\n  GOLEM_GEMM_TOTAL_MACRO_TASKS(derived)=128\n  GOLEM_GEMM_M=2048\n  GOLEM_GEMM_N=2048\n  GOLEM_GEMM_K=64\n  ORIG_M/N/K=2048/2048/64\n  PADDED_M/N/K=2048/2048/64\n  GOLEM_MATMUL_BLOCK_M=64\n  GOLEM_MATMUL_BLOCK_N=64\n  GOLEM_MATMUL_BLOCK_K=64\n  GOLEM_BIAS_ENABLE=0\n  GOLEM_BIAS_VALUE=0\n  GOLEM_MATMUL_DTYPE=fp16\n  VANADIS_CPU_CLOCK=1.0GHz\n  GOLEM_ARRAY_CLOCK=1.0GHz\n  GOLEM_MEMCTRL_CLOCK=1.25GHz\n  GOLEM_MATMUL_LAYOUT=row_major\n  GOLEM_DMA_READ_RETRY_TICKS=4096\n  GOLEM_DMA_READ_MAX_RETRIES=32\n  GOLEM_DMA_MAX_INFLIGHT=256\n  GOLEM_DMA_BURST_BYTES=16384\n  GOLEM_LATENCY_MVM_GM2IMAT=10\n  GOLEM_LATENCY_MVM_GM2IVEC=10\n  GOLEM_LATENCY_MVM_OVEC2GM=10\n  GOLEM_ARRAY_NUM_CU=64\n  GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE=1\n  GOLEM_ARRAY_PIPELINE_DEPTH=2\n  GOLEM_ARRAY_BUFFER_BASE_LATENCY_CYCLES=1\n  GOLEM_ARRAY_BUFFER_BYTES_PER_CYCLE=64\n  GOLEM_ARRAY_BUFFER_PORTS=1\n  GOLEM_ARRAY_BUFFER_QUEUE_DEPTH=64\n  GOLEM_MATRIX_BROADCAST_MAX_FANOUT=64\n  GOLEM_PROJECTION_ARRAYS=64\n  GOLEM_PROJECTION_PIPELINE=1\n  GOLEM_PROJECTION_SHARED_INPUT=1\n  GOLEM_PROJECTION_WEIGHT_PREFETCH=1\n  GOLEM_PROJECTION_WRAP_PREFETCH=1\n  GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD=1\n  GOLEM_PROJECTION_PACKED_NORM_INPUT=1\n  GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET=0\n  GOLEM_INPUT_SCATTER_BYTES_PER_CYCLE=256\n  GOLEM_OUTPUT_SCATTER_GATHER_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BYTES_PER_CYCLE=256\n  GOLEM_MATRIX_BROADCAST_BASE_LATENCY_CYCLES=1\n  GOLEM_MATRIX_BROADCAST_STAGE_LATENCY_CYCLES=1\n  GOLEM_PROGRESS_HEARTBEAT=0\n  GOLEM_PROGRESS_INTERVAL_CYCLES=50000\n  GOLEM_TERMINAL_VERBOSE=0\n  GOLEM_TERMINAL_REFRESH_SECONDS=1\n  GOLEM_SST_ARGS=--lib-path=/data/jjgong/LLM/Muticore-Attention/install/lib/sst-elements-library --no-env-config\n  GOLEM_SST_THREADS=1\n  GOLEM_CPUSET=<none>\n  GOLEM_CPU_BINDING_MODE=default\n  GOLEM_MPI_RANKS=4\n  GOLEM_MPI_LAUNCHER=mpirun\n  GOLEM_MPI_ARGS=--bind-to core --cpu-set 8-11\n  GOLEM_MPI_PARTITIONER=sst.self\n  GOLEM_EXPLICIT_PARTITION=1\n  GOLEM_PARTITION_STRATEGY=weighted_topology\n  GOLEM_PARTITION_WEIGHT_PROFILE=<none>\n  GOLEM_PARTITION_AUDIT_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/partition_plan.csv\n  GOLEM_PARTITION_WEIGHTS=router:0.1,cpu:1.0,manager:0.5,data_memory:5.0,os:0.5,affinity_edge:2.0\n  GOLEM_SST_STAT_LOAD_LEVEL=16\n  GOLEM_SST_ENABLE_ALL_STATS=1\n  GOLEM_EXPORT_NOC_HEATMAPS=0\n  GOLEM_SKIP_TENSOR_GEN=0\n  GOLEM_SKIP_HBM_GEN=0\n  GOLEM_SKIP_BUILD=0\n  GOLEM_SKIP_DEFAULT_GUEST_BUILD=1\n  GOLEM_BENCH_QUIET_LOGS=1\n  GOLEM_BENCH_DISABLE_SST_STATS=0\n  GOLEM_ROCC_TYPE=golem.RoCCAnalogFloat\n  GOLEM_ARRAY_TYPE=golem.MVMFloatArray\n  GOLEM_NOC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_INPUT_BUF_SIZE=128KB\n  GOLEM_NOC_MEMNIC_OUTPUT_BUF_SIZE=128KB\n  GOLEM_NOC_LINK_BW=512GB/s\n  GOLEM_NOC_XBAR_BW=1024GB/s\n  GOLEM_NOC_FLIT_SIZE=128B\n  GOLEM_NOC_VN_PRIORITY_ENABLE=1\n  GOLEM_NOC_VN_PRIORITY_ORDER=1,0,2\n  GOLEM_NOC_VN_STARVATION_VN=2\n  GOLEM_NOC_VN_MAX_STARVATION_CYCLES=4096\n  GOLEM_NOC_INTER_ROUTER_NO_CUT=1\n  GOLEM_NOC_LOCAL_NO_CUT=0\n  GOLEM_NOC_MEMORY_LOCAL_NO_CUT=1\n  GOLEM_NOC_SCHED_LOCAL_NO_CUT=1\n  GOLEM_MESH_DIM_X=4\n  GOLEM_GM_BUFFER_LENGTH=128KB\n  GOLEM_ROCC_VERBOSE=0\n  GOLEM_GM_VERBOSE=0\n  GOLEM_GM_DUMP_DATA=0\n  GOLEM_DMA_TRACE=0\n  GOLEM_REQUEST_SCHEDULER_TRACE=0\n  GOLEM_LLSC_TRACE=0\n  GOLEM_MVM_DUMP_ENABLE=0\n  GOLEM_MVM_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/mvm_dumps/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_MVM_DUMP_MODE=overwrite\n  GOLEM_SIM_MODE=full-functional\n  GOLEM_OUTPUT_MODE=fusion\n  GOLEM_FUSION_DUMP_ENABLE=0\n  GOLEM_FUSION_DUMP_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/fusion_c\n  GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH=auto\n  GOLEM_VANADIS_ROCC_WAIT_FASTPATH_THRESHOLD=256\n  GOLEM_HBM_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/hbm\n  GOLEM_STATS_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_STATS_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/stats_selfcom.txt\n  GOLEM_PRINT_CORE_MAP=0\n  GOLEM_CORE_MAP_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/core_memory_map.csv\n  GOLEM_VERIFY_MVM=0\n  GOLEM_VERIFY_C=0\n  GOLEM_TIMELINE=0\n  GOLEM_TENSOR_SOURCE=file\n  GOLEM_TENSOR_DIR=/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/data\n  GOLEM_MVM_VERIFY_SUMMARY_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/mvm_verify_summary.csv\n  GOLEM_TENSOR_A_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/q_32x2048x64.bin\n  GOLEM_TENSOR_B_FILE=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/k_8x2048x64.bin\n  GOLEM_BIAS_FILE=<none>\n  GOLEM_POOL1_FILE=<none>\n  GOLEM_CONV2_BPACK_FILE=<none>\n  GOLEM_CONV2_BIAS_FILE=<none>\n  GOLEM_FC1_WEIGHT_FILE=<none>\n  GOLEM_FC1_BIAS_FILE=<none>\n  GOLEM_FC2_WEIGHT_FILE=<none>\n  GOLEM_FC2_BIAS_FILE=<none>\n  GOLEM_FC3_WEIGHT_FILE=<none>\n  GOLEM_FC3_BIAS_FILE=<none>\n  GOLEM_DUMP_C_FILE=<none>\n  GOLEM_STDOUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/stdout/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_RUN_ID=fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_SST_WORK_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/work/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8\n  GOLEM_DRAMSIM3_OUT_DIR=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/stats/overlap0/fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8/dramsim3\n  LOG_PATH=/data/jjgong/LLM/Muticore-Attention/results/attention_causal_balance/final/balanced/s2048/logs/attention-sst_fused_attention_q2048_k2048_d64_causal_rope_projection_hq32_hkv8.log\n",
+          "input_sha256": {
+            "k_8x2048x64.bin": "0123d0ecfe44f99e01e2a24ef55222e2e28909f6074fc46d005fb6af55b0f6fc",
+            "projection_gamma.bin": "47ce4f7d3bfa3eae345603349e24368ee15a8cadde5ecea70ba2fadd753c9cf8",
+            "projection_norm.bin": "745480e41d1d41b5032da8f11f7fc6d541083a2e55f3616a27fa001d06c441d4",
+            "projection_weights.bin": "de56b7c702ec4a832c20a67749443e606e9f657cba9131d8dce416940653bf41",
+            "projection_x.bin": "3fd1add52b248019c56cbc957a55a0d54f697f74d697d484a8efe693b520afe8",
+            "q_32x2048x64.bin": "64b490792db23bd9a57a6e59abf108d38eaaf0f6736629b6896e57d293296f79",
+            "rope_64.bin": "44303ad847a27fe22afbea2db01ec84b3adae4c8581751e148a1d439b0f53a6c",
+            "v_8x2048x64.bin": "408a33b609b2c5a05fd14204a23ca0d71da2f9cbaa962bed440febbfdb3fcc53"
+          }
+        }
+      },
+      "comparison": {
+        "status": "PASS",
+        "reference_root": "results/attention_causal_balance/final/control/s2048",
+        "byte_exact_regions": [
+          {
+            "node": 1,
+            "region": "O",
+            "bytes": 2097152
+          },
+          {
+            "node": 1,
+            "region": "Q_panels",
+            "bytes": 2097152
+          },
+          {
+            "node": 1,
+            "region": "K_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 1,
+            "region": "V_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 2,
+            "region": "O",
+            "bytes": 2097152
+          },
+          {
+            "node": 2,
+            "region": "Q_panels",
+            "bytes": 2097152
+          },
+          {
+            "node": 2,
+            "region": "K_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 2,
+            "region": "V_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 3,
+            "region": "O",
+            "bytes": 2097152
+          },
+          {
+            "node": 3,
+            "region": "Q_panels",
+            "bytes": 2097152
+          },
+          {
+            "node": 3,
+            "region": "K_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 3,
+            "region": "V_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 4,
+            "region": "O",
+            "bytes": 2097152
+          },
+          {
+            "node": 4,
+            "region": "Q_panels",
+            "bytes": 2097152
+          },
+          {
+            "node": 4,
+            "region": "K_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 4,
+            "region": "V_panels",
+            "bytes": 524288
+          }
+        ],
+        "end_to_end": {
+          "before": 2767997,
+          "after": 2373527,
+          "saved_cycles": 394470,
+          "reduction_percent": 14.251099260584459
+        },
+        "projection": {
+          "before": 1821309,
+          "after": 1820535,
+          "saved_cycles": 774,
+          "reduction_percent": 0.04249690744404162
+        }
+      },
+      "transfer_delta": {
+        "q_panels": 0,
+        "k_panels": 0,
+        "q_bytes": 0,
+        "k_bytes": 0,
+        "v_loads": 0,
+        "v_bytes": 0
+      }
+    }
+  ]
+}

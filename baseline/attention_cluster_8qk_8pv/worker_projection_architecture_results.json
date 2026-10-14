@@ -1,0 +1,133 @@
+{
+  "status": "PASS",
+  "resource_topology": {
+    "manager_cores": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "manager_arrays": 0,
+    "manager_sfus": 0,
+    "worker_cores": [
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+    ],
+    "arrays_per_worker": 64,
+    "worker_gm_bytes": 2097152,
+    "new_compute_banks_ports_bandwidth": false
+  },
+  "tests": {
+    "attention_unit_tests": 129,
+    "baseline_unit_tests": 16,
+    "regression_cases": [
+      {
+        "name": "three_blocks",
+        "status": "PASS",
+        "resource_topology_valid": true,
+        "end_to_end_cycles": 245628,
+        "max_abs_error": 5.240038113726864e-05
+      },
+      {
+        "name": "fused_rope",
+        "status": "PASS",
+        "resource_topology_valid": true,
+        "end_to_end_cycles": 70186,
+        "max_abs_error": 5.430391072286378e-05
+      },
+      {
+        "name": "unfused_norm_gm_partial",
+        "status": "PASS",
+        "resource_topology_valid": true,
+        "end_to_end_cycles": 104993,
+        "max_abs_error": 5.430391072286378e-05
+      },
+      {
+        "name": "attention_d128",
+        "status": "PASS",
+        "resource_topology_valid": true,
+        "end_to_end_cycles": 22663,
+        "max_abs_error": 0.00019153815278949438
+      }
+    ]
+  },
+  "cases": [
+    {
+      "shape": {
+        "Hq": 32,
+        "Hkv": 8,
+        "query_length": 1024,
+        "kv_length": 1024,
+        "head_dim": 64,
+        "causal": true
+      },
+      "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/worker_projection_architecture_fix/verified/s1024",
+      "resource_topology_valid": true,
+      "end_to_end_cycles": 645470,
+      "projection_including_norm_cycles": 488180,
+      "attention_cycles": 155209,
+      "handoff_cycles": 2081,
+      "projection_jobs": 16,
+      "weight_loads": 24576,
+      "weight_programs": 24576,
+      "norm_jobs": 256,
+      "max_abs_output_error": 0.0001220703125,
+      "byte_exact_comparison_regions": 16,
+      "byte_exact_comparison_bytes": 10485760,
+      "historical_performance_comparable": false,
+      "optimistic_resource_floor_cycles": 268592,
+      "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+      "provenance_path": "/data/jjgong/LLM/Muticore-Attention/results/worker_projection_architecture_fix/verified/s1024/baseline_provenance.json"
+    },
+    {
+      "shape": {
+        "Hq": 32,
+        "Hkv": 8,
+        "query_length": 2048,
+        "kv_length": 2048,
+        "head_dim": 64,
+        "causal": true
+      },
+      "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/worker_projection_architecture_fix/verified/s2048",
+      "resource_topology_valid": true,
+      "end_to_end_cycles": 1499733,
+      "projection_including_norm_cycles": 946000,
+      "attention_cycles": 550540,
+      "handoff_cycles": 3193,
+      "projection_jobs": 16,
+      "weight_loads": 49152,
+      "weight_programs": 49152,
+      "norm_jobs": 512,
+      "max_abs_output_error": 0.0001220703125,
+      "byte_exact_comparison_regions": 16,
+      "byte_exact_comparison_bytes": 20971520,
+      "historical_performance_comparable": false,
+      "optimistic_resource_floor_cycles": 799328,
+      "floor_scope": "RMSNorm vector work + projection launches at configured full-width array latency + causal attention exp lanes; excludes DMA, NoC, control and handoff",
+      "provenance_path": "/data/jjgong/LLM/Muticore-Attention/results/worker_projection_architecture_fix/verified/s2048/baseline_provenance.json"
+    }
+  ],
+  "final_source_sha256": {
+    "src/sst/elements/golem/array/mvmComputeArray.h": "95c92062c7403633f2ed726aad4ec4595931725c9c7432ad2047db00f980f26b",
+    "src/sst/elements/golem/attention/projectionJob.h": "c39d5b70ea702629660a4c86d27174a1a8f961ea0214fd3e6c3274a15a5b16f4",
+    "src/sst/elements/golem/rocc/roccAnalog.h": "e36d0339b13611d6f88c0bc91f917563c49a1727487fa57d85d40b614049eda7",
+    "src/sst/elements/golem/tests/architecture/cpu_builder.py": "0fe159f13da6de56d11e6eda0c3acf47574ab3718a15638d02cab86158054854",
+    "src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py": "6ecdb62ab64f024dbfc1c78b3cafd0184efd1c10bdcf11cf4a87d2f3f686e555",
+    "install/lib/sst-elements-library/libgolem.so": "5c6360119903cf88c849fd369a6a71578a8a2769e5bdbaad3e040a634b7e3699",
+    "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "76b67fb4026c3142142bd9ac07d325f07173e254e6def29f1f98700002aa2d46"
+  }
+}

@@ -19,6 +19,8 @@
 #include <sst/core/component.h>
 #include <sst/core/subcomponent.h>
 #include <sst/elements/golem/attention/attentionCluster.h>
+#include <sst/elements/golem/attention/resourceTrace.h>
+#include <sst/elements/golem/attention/diagnosticOracle.h>
 #include <sst/core/event.h>
 #include <sst/core/link.h>
 #include <sst/core/output.h>
@@ -104,7 +106,7 @@ public:
         {"arrayOutputReadBanks", "Number of independent output-read banks", "1"},
         {"attentionNearArrayOutputBytesPerCycle", "Bandwidth of the dedicated Attention near-array output fabric", "512"},
         {"attentionNearArrayOutputCredits", "Maximum grouped PV drains in flight", "2"},
-        {"operandContextBanks", "Number of matrix/input operand contexts per physical array", "1"},
+        {"operandContextBanks", "Compatibility parameter: each physical array has exactly one operand context", "1"},
         {"matrixBroadcastMaxFanout", "Maximum number of array matrix banks reached by one broadcast", "16"},
         {"matrixBroadcastBytesPerCycle", "Ingress bytes delivered per cycle by the matrix broadcast tree", "256"},
         {"matrixBroadcastBaseLatencyCycles", "Base setup latency for a matrix broadcast", "1"},
@@ -175,9 +177,9 @@ public:
         numArrays = params.find<uint64_t>("numArrays", 1);
         const uint32_t requestedOperandContextBanks =
             params.find<uint32_t>("operandContextBanks", 1);
-        if (requestedOperandContextBanks == 0 || requestedOperandContextBanks > 2) {
+        if (requestedOperandContextBanks != 1) {
             out.fatal(CALL_INFO, -1,
-                "operandContextBanks must be one or two for the bounded array model\n");
+                "Only one operand context per array is supported; extra operand banks were removed\n");
         }
         operandContextBanks = requestedOperandContextBanks;
         inputArraySize = params.find<uint64_t>("arrayInputSize", 1);
@@ -674,7 +676,7 @@ protected:
             (bytes + arrayBufferBytesPerCycle_ - 1) / arrayBufferBytesPerCycle_;
         return enqueueModeledBufferTransfer(
             bytes, transferCycles, tag, std::move(completion), true, bank,
-            trafficClass);
+            trafficClass, "output_read");
     }
 
     bool enqueueNearArrayOutputTransfer(
@@ -696,6 +698,10 @@ protected:
                 requestId, tag, bytes, transferCycles, std::move(completion),
                 false, 0, trafficClass, true
             });
+        auto& trace = bufferRequests_.at(requestId);
+        trace.submitTick = trace.startTick = getCurrentSimCycle();
+        trace.traceDepth = bufferRequests_.size();
+        trace.traceResource = "near_output";
         ++nearArrayOutputInFlight_;
         if (trafficClass == AttentionClusterTrafficClass::PvOFinalDrain) {
             statAttentionClusterPvGroupDrains_->addData(1);
@@ -717,13 +723,15 @@ protected:
             AttentionClusterTrafficClass trafficClass =
                 AttentionClusterTrafficClass::Legacy) {
         const uint64_t treeStages = ceilLog2(fanout);
-        const uint64_t transferCycles = matrixBroadcastBaseLatencyCycles_ +
+        const uint64_t transferCycles = oracleServiceCycles("matrix_program",
+            trafficClass == AttentionClusterTrafficClass::ProjectionWeights,
+            matrixBroadcastBaseLatencyCycles_ +
             (bytes + matrixBroadcastBytesPerCycle_ - 1) /
                 matrixBroadcastBytesPerCycle_ +
-            treeStages * matrixBroadcastStageLatencyCycles_;
+            treeStages * matrixBroadcastStageLatencyCycles_);
         if (!enqueueModeledBufferTransfer(
                 bytes, transferCycles, tag, std::move(completion), false, 0,
-                trafficClass)) {
+                trafficClass, "matrix_broadcast")) {
             matrixBroadcastRejected_ += 1;
             statMatrixBroadcastRejected_->addData(1);
             return false;
@@ -747,12 +755,14 @@ protected:
             size_t bytes, size_t destinations, uint64_t tag,
             std::function<void()> completion,
             AttentionClusterTrafficClass trafficClass) {
-        const uint64_t transferCycles = arrayBufferBaseLatencyCycles_ +
+        const uint64_t transferCycles = oracleServiceCycles("input_scatter",
+            trafficClass == AttentionClusterTrafficClass::ProjectionInputScatter,
+            arrayBufferBaseLatencyCycles_ +
             (bytes + inputScatterBytesPerCycle_ - 1) /
-                inputScatterBytesPerCycle_;
+                inputScatterBytesPerCycle_);
         if (!enqueueModeledBufferTransfer(
                 bytes, transferCycles, tag, std::move(completion), false, 0,
-                trafficClass)) {
+                trafficClass, "input_scatter")) {
             ++inputScatterRejected_;
             statInputScatterRejected_->addData(1);
             return false;
@@ -778,7 +788,7 @@ protected:
                 outputScatterGatherBytesPerCycle_;
         if (!enqueueModeledBufferTransfer(
                 bytes, transferCycles, tag, std::move(completion), false, 0,
-                trafficClass)) {
+                trafficClass, "output_scatter_gather")) {
             ++outputScatterGatherRejected_;
             statOutputScatterGatherRejected_->addData(1);
             return false;
@@ -816,7 +826,8 @@ private:
                                       bool outputRead = false,
                                       uint32_t outputBank = 0,
                                       AttentionClusterTrafficClass trafficClass =
-                                          AttentionClusterTrafficClass::Legacy) {
+                                          AttentionClusterTrafficClass::Legacy,
+                                      const char* traceResource = "buffer") {
         if (!completion || bufferRequests_.size() >= arrayBufferQueueDepth_) {
             arrayBufferRejected_ += 1;
             return false;
@@ -828,6 +839,10 @@ private:
                 requestId, tag, bytes, transferCycles, std::move(completion),
                 outputRead, outputBank, trafficClass, false
             });
+        auto& trace = bufferRequests_.at(requestId);
+        trace.submitTick = getCurrentSimCycle();
+        trace.traceDepth = bufferRequests_.size();
+        trace.traceResource = traceResource;
         bufferQueue_.push_back(requestId);
         arrayBufferRequests_ += 1;
         arrayBufferBytes_ += bytes;
@@ -888,6 +903,10 @@ private:
         AttentionClusterTrafficClass trafficClass =
             AttentionClusterTrafficClass::Legacy;
         bool dedicatedOutput = false;
+        uint64_t submitTick = 0;
+        uint64_t startTick = 0;
+        uint64_t traceDepth = 0;
+        const char* traceResource = "buffer";
     };
 
     void tryIssueBufferTransfers() {
@@ -919,8 +938,9 @@ private:
             if (it == bufferRequests_.end()) {
                 continue;
             }
+            it->second.startTick = getCurrentSimCycle();
             const uint64_t transferCycles = it->second.transferCycles;
-            if (attentionClusterEnable_ &&
+            if (transferCycles != 0 && attentionClusterEnable_ &&
                 it->second.trafficClass != AttentionClusterTrafficClass::Legacy) {
                 const uint64_t start = getCurrentSimCycle();
                 if (!attentionClusterBufferIntervals_.add(
@@ -971,6 +991,10 @@ private:
         const auto it = bufferRequests_.find(bufferEvent->requestId());
         bool usedArrayBufferPort = false;
         if (it != bufferRequests_.end()) {
+            const auto& trace = it->second;
+            traceResourceInterval("array", trace.traceResource, arrayCoreId_, trace.requestId, trace.tag, 0,
+                trace.submitTick, trace.startTick, getCurrentSimCycle(), getCurrentSimCycle(),
+                trace.bytes, trace.traceDepth, 0, -1, static_cast<int64_t>(trace.trafficClass));
             usedArrayBufferPort = !it->second.dedicatedOutput;
             if (it->second.dedicatedOutput) {
                 if (nearArrayOutputInFlight_ > 0) --nearArrayOutputInFlight_;

@@ -61,6 +61,11 @@ protected:
         bool isWrite;
         unsigned numBytes;
         Ramulator::Addr_t transactionAddr;
+        uint64_t traceRequest = 0;
+        uint64_t submitTick = 0;
+        uint64_t acceptedTick = 0;
+        uint64_t firstCommandTick = 0;
+        uint64_t depth = 0;
     };
 
     struct TransactionDependency {
@@ -80,6 +85,8 @@ protected:
     unsigned backendId_;
     Cycle_t currentCycle_;
     std::map<ReqId, PendingRequest> pendingRequests_;
+    uint64_t nextTraceRequest_ = 1;
+    std::map<ReqId, uint64_t> traceFirstAttempt_;
     std::map<Ramulator::Addr_t, TransactionDependency> outstandingTransactions_;
     std::deque<ReqId> completedRequests_;
     std::vector<uint64_t> readLatencies_;

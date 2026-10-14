@@ -23,6 +23,8 @@
 #include <sst/elements/golem/globalmemory/globalmemory.h>
 #include <sst/elements/golem/attention/attentionCluster.h>
 #include <sst/elements/golem/sfu/vector_math.h>
+#include <sst/elements/golem/sfu/vector_pipeline.h>
+#include <memory>
 
 namespace SST {
 namespace Golem {
@@ -57,57 +59,7 @@ enum class TensorRowEngineEventKind : uint8_t {
     DirectWriteDone,
     ScoreFifoWriteDone,
     PFifoReadDone,
-};
-
-// Architectural pipeline model, at the same abstraction level as an MVM array:
-// accepted tokens occupy finite hardware state and become visible only when the
-// completion event fires. Functional arithmetic is evaluated by the host then.
-struct TensorHardwarePipeline {
-    uint64_t latency = 1;
-    uint64_t initiationInterval = 1;
-    uint32_t queueDepth = 1;
-    uint64_t nextIssueCycle = 0;
-    std::deque<uint64_t> completionCycles;
-    uint64_t acceptedTokens = 0;
-    uint64_t issueWaitCycles = 0;
-    uint64_t backpressureEvents = 0;
-    uint64_t maxOccupancy = 0;
-
-    void configure(uint64_t configuredLatency, uint64_t configuredII,
-                   uint32_t configuredQueueDepth) {
-        latency = std::max<uint64_t>(1, configuredLatency);
-        initiationInterval = std::max<uint64_t>(1, configuredII);
-        queueDepth = std::max<uint32_t>(1, configuredQueueDepth);
-    }
-
-    void retire(uint64_t now) {
-        while (!completionCycles.empty() && completionCycles.front() <= now) {
-            completionCycles.pop_front();
-        }
-    }
-
-    bool reserve(uint64_t now, uint64_t* completionCycle) {
-        retire(now);
-        if (completionCycle == nullptr || completionCycles.size() >= queueDepth) {
-            ++backpressureEvents;
-            return false;
-        }
-        const uint64_t issue = std::max(now, nextIssueCycle);
-        *completionCycle = issue + latency;
-        nextIssueCycle = issue + initiationInterval;
-        completionCycles.push_back(*completionCycle);
-        ++acceptedTokens;
-        issueWaitCycles += issue - now;
-        maxOccupancy = std::max<uint64_t>(
-            maxOccupancy, completionCycles.size());
-        return true;
-    }
-
-    uint64_t retryDelay(uint64_t now) {
-        retire(now);
-        if (completionCycles.size() < queueDepth) return 1;
-        return std::max<uint64_t>(1, completionCycles.front() - now + 1);
-    }
+    VectorPump,
 };
 
 class TensorRowEngineEvent : public SST::Event {
@@ -371,6 +323,7 @@ struct SFUVectorResult {
     std::vector<double> values;
     uint64_t modeledCycles = 0;
     uint64_t readyTick = 0;
+    bool completed = false;
 };
 
 class SFUAPI : public SST::SubComponent {
@@ -441,6 +394,8 @@ public:
         {"vector_op_lanes", "Generic vector operation lanes", "16"},
         {"vector_op_latency", "Generic vector operation pipeline latency", "3"},
         {"vector_op_ii", "Generic vector operation initiation interval", "1"},
+        {"vector_fifo_elements", "Elements per vector interstage FIFO and request", "64"},
+        {"vector_max_requests", "Concurrent vector pipeline request contexts", "8"},
         {"vector_reduce_latency", "Vector reduction stage latency", "4"},
         {"vector_rsqrt_latency", "Vector reciprocal square-root latency", "8"},
         {"exp_lanes", "FP32 EXP issue lanes per physical Row Engine", "4"},
@@ -708,6 +663,8 @@ private:
             double pendingLNew = 0.0;
             TensorRowEngineEventKind pendingHardwareCompletionKind =
                 TensorRowEngineEventKind::ResourceDone;
+            uint64_t traceHardwareSubmit = 0, traceHardwareStart = 0, traceHardwareRequest = 0;
+            const char* traceHardwareResource = "unknown";
             std::vector<float> laneValues;
             std::vector<float> residentValues;
         };
@@ -836,6 +793,7 @@ private:
     TensorHardwarePipeline* tensorHardwarePipeline(
         TensorRowEngineStage stage, TensorRowEngineEventKind completionKind);
     void handleTensorRowEngineEvent(SST::Event* event);
+    void advanceVectorPipeline();
     void finishTensorWorker(const TensorWorkerKey& key, bool ok);
     uint64_t scheduleScoreFifoPort(uint64_t bytes, bool write);
     void completeAttentionScoreWrite(uint64_t pendingId);
@@ -887,12 +845,16 @@ private:
     TensorHardwarePipeline reciprocalPipeline_;
     TensorHardwarePipeline normalizePipeline_;
     TensorHardwarePipeline vectorOpPipeline_;
+    std::unique_ptr<SFUVectorPipeline> vectorScheduler_;
+    std::map<uint64_t, SFUVectorResult*> vectorResults_;
+    bool vectorPumpScheduled_ = false;
     bool tileStreamEnable_ = true;
     uint64_t tileStreamBytesPerCycle_ = 256;
     uint64_t tileStreamBaseLatencyCycles_ = 1;
     uint64_t rowDispatchIntervalCycles_ = 4;
     uint64_t tensorHardwareBackpressureEvents_ = 0;
     uint64_t nextTensorLocalTag_ = 1;
+    uint64_t traceResourceSequence_ = 0;
     uint64_t tensorLaneBufferHighWater_ = 0;
     uint64_t tensorMaxLocalReadBytes_ = 0;
     uint64_t tensorMaxLocalWriteBytes_ = 0;

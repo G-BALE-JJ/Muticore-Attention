@@ -1,0 +1,512 @@
+{
+  "status": "PASS",
+  "optimization": "retain projection partial in the existing output accumulator across hidden-tile pairs",
+  "hardware_resources_changed": false,
+  "enable_environment": "GOLEM_PROJECTION_RETAIN_OUTPUT=1",
+  "unit_tests": {
+    "attention": 131,
+    "baseline": 19
+  },
+  "probe": {
+    "status": "PASS",
+    "same_installed_binary": true,
+    "byte_exact_regions": [
+      {
+        "node": 1,
+        "region": "O",
+        "bytes": 131072
+      },
+      {
+        "node": 1,
+        "region": "Q_panels",
+        "bytes": 131072
+      },
+      {
+        "node": 1,
+        "region": "K_panels",
+        "bytes": 65536
+      },
+      {
+        "node": 1,
+        "region": "V_panels",
+        "bytes": 65536
+      },
+      {
+        "node": 2,
+        "region": "O",
+        "bytes": 131072
+      },
+      {
+        "node": 2,
+        "region": "Q_panels",
+        "bytes": 131072
+      },
+      {
+        "node": 2,
+        "region": "K_panels",
+        "bytes": 65536
+      },
+      {
+        "node": 2,
+        "region": "V_panels",
+        "bytes": 65536
+      },
+      {
+        "node": 3,
+        "region": "O",
+        "bytes": 131072
+      },
+      {
+        "node": 3,
+        "region": "Q_panels",
+        "bytes": 131072
+      },
+      {
+        "node": 3,
+        "region": "K_panels",
+        "bytes": 65536
+      },
+      {
+        "node": 3,
+        "region": "V_panels",
+        "bytes": 65536
+      },
+      {
+        "node": 4,
+        "region": "O",
+        "bytes": 131072
+      },
+      {
+        "node": 4,
+        "region": "Q_panels",
+        "bytes": 131072
+      },
+      {
+        "node": 4,
+        "region": "K_panels",
+        "bytes": 65536
+      },
+      {
+        "node": 4,
+        "region": "V_panels",
+        "bytes": 65536
+      }
+    ],
+    "end_to_end_before": 74318,
+    "end_to_end_after": 73588,
+    "projection_before": 47290,
+    "projection_after": 46319
+  },
+  "regressions": [
+    {
+      "name": "three_blocks",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "end_to_end_cycles": 243842,
+      "max_abs_error": 5.240038113726864e-05
+    },
+    {
+      "name": "fused_rope",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "end_to_end_cycles": 69457,
+      "max_abs_error": 5.430391072286378e-05
+    },
+    {
+      "name": "unfused_norm_gm_partial",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "end_to_end_cycles": 102561,
+      "max_abs_error": 5.430391072286378e-05
+    },
+    {
+      "name": "attention_d128",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "end_to_end_cycles": 22663,
+      "max_abs_error": 0.00019153815278949438
+    },
+    {
+      "name": "fallback32",
+      "status": "PASS",
+      "retain_output": false,
+      "end_to_end_cycles": 74571
+    },
+    {
+      "name": "fallback32_gm_partial",
+      "status": "PASS",
+      "retain_output": false,
+      "end_to_end_cycles": 104484
+    }
+  ],
+  "cases": [
+    {
+      "sequence": 1024,
+      "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/projection_retained_output/verified/s1024",
+      "comparison": {
+        "status": "PASS",
+        "reference_root": "/data/jjgong/LLM/Muticore-Attention/results/worker_projection_architecture_fix/verified/s1024",
+        "performance_comparable": true,
+        "reference_resource_topology_valid": true,
+        "byte_exact_regions": [
+          {
+            "node": 1,
+            "region": "O",
+            "bytes": 1048576
+          },
+          {
+            "node": 1,
+            "region": "Q_panels",
+            "bytes": 1048576
+          },
+          {
+            "node": 1,
+            "region": "K_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 1,
+            "region": "V_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 2,
+            "region": "O",
+            "bytes": 1048576
+          },
+          {
+            "node": 2,
+            "region": "Q_panels",
+            "bytes": 1048576
+          },
+          {
+            "node": 2,
+            "region": "K_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 2,
+            "region": "V_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 3,
+            "region": "O",
+            "bytes": 1048576
+          },
+          {
+            "node": 3,
+            "region": "Q_panels",
+            "bytes": 1048576
+          },
+          {
+            "node": 3,
+            "region": "K_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 3,
+            "region": "V_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 4,
+            "region": "O",
+            "bytes": 1048576
+          },
+          {
+            "node": 4,
+            "region": "Q_panels",
+            "bytes": 1048576
+          },
+          {
+            "node": 4,
+            "region": "K_panels",
+            "bytes": 262144
+          },
+          {
+            "node": 4,
+            "region": "V_panels",
+            "bytes": 262144
+          }
+        ],
+        "end_to_end": {
+          "before": 645470,
+          "after": 573772,
+          "saved_cycles": 71698,
+          "reduction_percent": 11.107874881869026
+        },
+        "projection": {
+          "before": 488180,
+          "after": 416538,
+          "saved_cycles": 71642,
+          "reduction_percent": 14.675324675324676
+        }
+      },
+      "projection_cycles": 416538,
+      "handoff_cycles": 2019,
+      "attention_cycles": 155215,
+      "floor_cycles": 268592,
+      "actual_to_floor": 2.136,
+      "partial_reads_before": 11520,
+      "partial_reads_after": 0,
+      "final_reads": 768,
+      "weight_loads": 24576,
+      "weight_programs": 24576,
+      "local_gm_operand_read_bytes": 402653184,
+      "critical_worker_phase_before": {
+        "wrap_prefetch": 1,
+        "idle": 0,
+        "load_block": 126,
+        "load_input": 1536,
+        "load_weight": 10704,
+        "load_weight_dma": 0,
+        "program_weight": 1536,
+        "program_weight_ready": 62976,
+        "program_input": 53760,
+        "launch": 104448,
+        "wait_input_prefetch": 0,
+        "read_output": 26880,
+        "restore_output": 720,
+        "restore_output_ready": 48240,
+        "prepare_output": 48,
+        "norm_batch": 4021,
+        "norm_wait": 27952,
+        "rope_wait": 0,
+        "local_read": 112032,
+        "local_write": 1536,
+        "stage_partial": 720,
+        "write_output": 48,
+        "write_drain": 144,
+        "write_completion": 52,
+        "failed": 0,
+        "complete": 0,
+        "local_weight_read": 55296,
+        "local_input_read": 55296,
+        "local_fusion_read": 1440,
+        "local_other_read": 0
+      },
+      "critical_worker_phase_after": {
+        "wrap_prefetch": 1,
+        "idle": 0,
+        "load_block": 126,
+        "load_input": 1536,
+        "load_weight": 13628,
+        "load_weight_dma": 0,
+        "program_weight": 1536,
+        "program_weight_ready": 62976,
+        "program_input": 53760,
+        "launch": 104448,
+        "wait_input_prefetch": 0,
+        "read_output": 1680,
+        "restore_output": 0,
+        "restore_output_ready": 0,
+        "prepare_output": 48,
+        "norm_batch": 4313,
+        "norm_wait": 27952,
+        "rope_wait": 0,
+        "local_read": 112032,
+        "local_write": 1536,
+        "stage_partial": 0,
+        "write_output": 48,
+        "write_drain": 157,
+        "write_completion": 61,
+        "failed": 0,
+        "complete": 0,
+        "local_weight_read": 55296,
+        "local_input_read": 55296,
+        "local_fusion_read": 1440,
+        "local_other_read": 0
+      },
+      "max_abs_output_error": 0.0001220703125
+    },
+    {
+      "sequence": 2048,
+      "artifact_root": "/data/jjgong/LLM/Muticore-Attention/results/projection_retained_output/final/s2048",
+      "comparison": {
+        "status": "PASS",
+        "reference_root": "/data/jjgong/LLM/Muticore-Attention/results/worker_projection_architecture_fix/verified/s2048",
+        "performance_comparable": true,
+        "reference_resource_topology_valid": true,
+        "byte_exact_regions": [
+          {
+            "node": 1,
+            "region": "O",
+            "bytes": 2097152
+          },
+          {
+            "node": 1,
+            "region": "Q_panels",
+            "bytes": 2097152
+          },
+          {
+            "node": 1,
+            "region": "K_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 1,
+            "region": "V_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 2,
+            "region": "O",
+            "bytes": 2097152
+          },
+          {
+            "node": 2,
+            "region": "Q_panels",
+            "bytes": 2097152
+          },
+          {
+            "node": 2,
+            "region": "K_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 2,
+            "region": "V_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 3,
+            "region": "O",
+            "bytes": 2097152
+          },
+          {
+            "node": 3,
+            "region": "Q_panels",
+            "bytes": 2097152
+          },
+          {
+            "node": 3,
+            "region": "K_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 3,
+            "region": "V_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 4,
+            "region": "O",
+            "bytes": 2097152
+          },
+          {
+            "node": 4,
+            "region": "Q_panels",
+            "bytes": 2097152
+          },
+          {
+            "node": 4,
+            "region": "K_panels",
+            "bytes": 524288
+          },
+          {
+            "node": 4,
+            "region": "V_panels",
+            "bytes": 524288
+          }
+        ],
+        "end_to_end": {
+          "before": 1499733,
+          "after": 1354890,
+          "saved_cycles": 144843,
+          "reduction_percent": 9.65791910960151
+        },
+        "projection": {
+          "before": 946000,
+          "after": 801164,
+          "saved_cycles": 144836,
+          "reduction_percent": 15.310359408033827
+        }
+      },
+      "projection_cycles": 801164,
+      "handoff_cycles": 3794,
+      "attention_cycles": 549932,
+      "floor_cycles": 799328,
+      "actual_to_floor": 1.695,
+      "partial_reads_before": 23040,
+      "partial_reads_after": 0,
+      "final_reads": 1536,
+      "weight_loads": 49152,
+      "weight_programs": 49152,
+      "local_gm_operand_read_bytes": 805306368,
+      "critical_worker_phase_before": {
+        "wrap_prefetch": 1,
+        "idle": 0,
+        "load_block": 127,
+        "load_input": 3072,
+        "load_weight": 21942,
+        "load_weight_dma": 0,
+        "program_weight": 3072,
+        "program_weight_ready": 125952,
+        "program_input": 107520,
+        "launch": 208896,
+        "wait_input_prefetch": 0,
+        "read_output": 53760,
+        "restore_output": 1440,
+        "restore_output_ready": 96480,
+        "prepare_output": 96,
+        "norm_batch": 8172,
+        "norm_wait": 55904,
+        "rope_wait": 0,
+        "local_read": 224064,
+        "local_write": 3072,
+        "stage_partial": 1440,
+        "write_output": 96,
+        "write_drain": 136,
+        "write_completion": 58,
+        "failed": 0,
+        "complete": 0,
+        "local_weight_read": 110592,
+        "local_input_read": 110592,
+        "local_fusion_read": 2880,
+        "local_other_read": 0
+      },
+      "critical_worker_phase_after": {
+        "wrap_prefetch": 1,
+        "idle": 0,
+        "load_block": 127,
+        "load_input": 3072,
+        "load_weight": 26431,
+        "load_weight_dma": 0,
+        "program_weight": 3072,
+        "program_weight_ready": 125952,
+        "program_input": 107520,
+        "launch": 208896,
+        "wait_input_prefetch": 0,
+        "read_output": 3360,
+        "restore_output": 0,
+        "restore_output_ready": 0,
+        "prepare_output": 96,
+        "norm_batch": 8581,
+        "norm_wait": 55904,
+        "rope_wait": 0,
+        "local_read": 224064,
+        "local_write": 3072,
+        "stage_partial": 0,
+        "write_output": 96,
+        "write_drain": 147,
+        "write_completion": 47,
+        "failed": 0,
+        "complete": 0,
+        "local_weight_read": 110592,
+        "local_input_read": 110592,
+        "local_fusion_read": 2880,
+        "local_other_read": 0
+      },
+      "max_abs_output_error": 0.0001220703125
+    }
+  ],
+  "sha256": {
+    "src/sst/elements/golem/attention/projectionJob.h": "46cc957614c0db8bfabacaeb86efc61a7a22d552e3704ce40dad09849676dbfe",
+    "src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py": "1eb261aa2ef1f749fb87f690732312917c58011e75a6a1fc1c34a8a88ad5b958",
+    "src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh": "3deab8ecda811a3fa1724fe28f9fb7a44943063850743c160fa3206e7e6ca523",
+    "baseline/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py": "11c4b249e2c895ebe586d7b07c8fd604d0d420d52ac031c6c97780a11f978d70",
+    "install/lib/sst-elements-library/libgolem.so": "8890c8103724c3b34d9cda7e3fec456182ff9f5d8fd72720c3aeac4aa16b5ab9",
+    "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "76b67fb4026c3142142bd9ac07d325f07173e254e6def29f1f98700002aa2d46"
+  }
+}

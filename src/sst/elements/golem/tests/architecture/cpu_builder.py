@@ -220,6 +220,10 @@ array_buffer_ports = int(os.getenv("GOLEM_ARRAY_BUFFER_PORTS", "1"))
 array_operand_context_banks = int(
     os.getenv("GOLEM_ARRAY_OPERAND_CONTEXT_BANKS", "1")
 )
+if array_operand_context_banks != 1:
+    raise ValueError("Extra array operand banks were removed; GOLEM_ARRAY_OPERAND_CONTEXT_BANKS must be 1")
+if int(os.getenv("GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE", "0")):
+    raise ValueError("Cross-tile array operand pipeline requires removed extra operand banks")
 array_buffer_queue_depth = int(
     os.getenv("GOLEM_ARRAY_BUFFER_QUEUE_DEPTH", "64")
 )
@@ -335,6 +339,11 @@ sfu_stats_latency = os.getenv("GOLEM_SFU_STATS_LATENCY", "1")
 sfu_merge_latency = os.getenv("GOLEM_SFU_MERGE_LATENCY", "1")
 sfu_normalize_latency = os.getenv("GOLEM_SFU_NORMALIZE_LATENCY", "1")
 sfu_vector_lanes = os.getenv("GOLEM_SFU_VECTOR_LANES", "16")
+sfu_vector_op_lanes = os.getenv("GOLEM_SFU_VECTOR_OP_LANES", sfu_vector_lanes)
+sfu_vector_op_latency = os.getenv("GOLEM_SFU_VECTOR_OP_LATENCY", "3")
+sfu_vector_op_ii = os.getenv("GOLEM_SFU_VECTOR_OP_II", "1")
+sfu_vector_fifo_elements = os.getenv("GOLEM_SFU_VECTOR_FIFO_ELEMENTS", "64")
+sfu_vector_max_requests = os.getenv("GOLEM_SFU_VECTOR_MAX_REQUESTS", "8")
 sfu_exp_lanes = os.getenv("GOLEM_SFU_EXP_LANES", "4")
 sfu_scale_latency = os.getenv("GOLEM_SFU_SCALE_LATENCY", "3")
 sfu_scale_ii = os.getenv("GOLEM_SFU_SCALE_II", "1")
@@ -1018,7 +1027,9 @@ class CPU_Builder:
             )
             cpu_rocc.addParam("groupCtrlEnable", ctrl_link_enable)
             cpu_rocc.addParam("requestSchedulerEnable", request_scheduler_enable)
-            cpu_rocc.addParam("sfuEnable", 1 if sfu_enable else 0)
+            manager_only = cpuId < dedicated_manager_cores
+            cpu_rocc.addParam("managerOnly", int(manager_only))
+            cpu_rocc.addParam("sfuEnable", int(sfu_enable and not manager_only))
             cpu_rocc.addParam("active_worker_cores", active_worker_cores)
             cpu_rocc.addParam("groupCtrlLatency", ctrl_link_latency)
             cpu_rocc.addParam("groupCtrlQueueDepth", ctrl_link_queue_depth)
@@ -1037,23 +1048,20 @@ class CPU_Builder:
             if enable_all_stats:
                 cpu_rocc.enableAllStatistics()
 
-            projection_manager = (
-                os.getenv("GOLEM_ATTENTION_PROJECTION", "0") == "1" and
-                matmul_dtype == "fp16" and cpuId < 4
-            )
-            computeArray = cpu_rocc.setSubComponent(
-                "array", "golem.MVMFp16Array" if projection_manager else array_type
-            )
-            computeArray.addParams(arrayParams)
-            computeArray.addParam("inputOperandSize", matmul_elem_bytes)
-            computeArray.addParam("outputOperandSize", matmul_elem_bytes)
-            computeArray.addParam("core_id", cpuId)
-            computeArray.addParam("mvm_dump_enable", mvm_dump_enable)
-            computeArray.addParam("mvm_dump_dir", mvm_dump_dir)
-            computeArray.addParam("mvm_dump_mode", mvm_dump_mode)
-            computeArray.addParam("functionalCompute", functional_compute)
-            if enable_all_stats:
-                computeArray.enableAllStatistics()
+            # Dedicated managers own control resources only. Never instantiate
+            # otherwise idle arrays and subsequently use them for projection.
+            if not manager_only:
+                computeArray = cpu_rocc.setSubComponent("array", array_type)
+                computeArray.addParams(arrayParams)
+                computeArray.addParam("inputOperandSize", matmul_elem_bytes)
+                computeArray.addParam("outputOperandSize", matmul_elem_bytes)
+                computeArray.addParam("core_id", cpuId)
+                computeArray.addParam("mvm_dump_enable", mvm_dump_enable)
+                computeArray.addParam("mvm_dump_dir", mvm_dump_dir)
+                computeArray.addParam("mvm_dump_mode", mvm_dump_mode)
+                computeArray.addParam("functionalCompute", functional_compute)
+                if enable_all_stats:
+                    computeArray.enableAllStatistics()
 
             GlobalMemory = cpu_rocc.setSubComponent(
                 "global_memory", "golem.GlobalMemory"
@@ -1100,7 +1108,7 @@ class CPU_Builder:
             if enable_all_stats:
                 GlobalMemory.enableAllStatistics()
 
-            if sfu_enable:
+            if sfu_enable and not manager_only:
                 sfu = cpu_rocc.setSubComponent("sfu", "golem.SFU")
                 sfu.addParams(
                     {
@@ -1112,6 +1120,11 @@ class CPU_Builder:
                         "normalize_latency": sfu_normalize_latency,
                         "accelerator_clock_hz": int(_parse_frequency_hz(cpu_clock)),
                         "vector_lanes": sfu_vector_lanes,
+                        "vector_op_lanes": sfu_vector_op_lanes,
+                        "vector_op_latency": sfu_vector_op_latency,
+                        "vector_op_ii": sfu_vector_op_ii,
+                        "vector_fifo_elements": sfu_vector_fifo_elements,
+                        "vector_max_requests": sfu_vector_max_requests,
                         "exp_lanes": sfu_exp_lanes,
                         "scale_latency": sfu_scale_latency,
                         "scale_ii": sfu_scale_ii,

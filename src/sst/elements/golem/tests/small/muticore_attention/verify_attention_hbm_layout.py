@@ -9,7 +9,8 @@ import numpy as np
 
 
 def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
-                  hq, hkv, head_dim, dtype, offsets, projection=False):
+                  hq, hkv, head_dim, dtype, offsets, projection=False,
+                  rotated_panels=False, skip_audit_output=False):
     if query_length % 256 or kv_length % 256 or head_dim % 64:
         raise ValueError("panel layout requires lengths divisible by 256 and D by 64")
     element = np.dtype("<f2" if dtype == "fp16" else "<f4")
@@ -22,6 +23,11 @@ def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
     panel_bytes = 64 * 64 * elem_bytes
     checked = 0
     nodes = []
+    if (rotated_panels or skip_audit_output) and not projection:
+        raise ValueError("fusion layout flags require projection")
+    if rotated_panels:
+        from verify_fused_attention_scale_output import rotate_rope
+        rope_table = np.fromfile(Path(hbm_dir).parent / f"rope_{head_dim}.bin", dtype="<f2")
     if projection:
         hidden = hq * head_dim
         norm_end = 0x01100000 + (query_length // 4) * hidden * 2
@@ -72,7 +78,7 @@ def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
                 regions.append((name, offset, offset + len(expected)))
                 return actual
 
-            if projection:
+            if projection and not skip_audit_output:
                 norm_file = Path(hbm_dir).parent / "projection_norm.bin"
                 norm = np.fromfile(norm_file, dtype=element).reshape(query_length, hq * head_dim)
                 norm_shard = norm[band * (query_length // 4):(band + 1) * (query_length // 4)]
@@ -82,21 +88,29 @@ def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
                 tensor = tensors[name]
                 rows = tensor.shape[1] // 4
                 shard = tensor[:, band * rows:(band + 1) * rows]
-                actual = check(name, offsets[name], shard.tobytes(), numeric=projection)
-                if projection:
-                    shard = np.frombuffer(actual, dtype=element).reshape(shard.shape)
+                if not skip_audit_output:
+                    actual = check(name, offsets[name], shard.tobytes(), numeric=projection)
+                    if projection:
+                        shard = np.frombuffer(actual, dtype=element).reshape(shard.shape)
+                if rotated_panels and name != "V":
+                    rotated = np.empty_like(shard)
+                    for head in range(shard.shape[0]):
+                        coefficients = rope_table.reshape(-1, head_dim)[band * rows:(band + 1) * rows]
+                        rotated[head] = np.asarray(rotate_rope(shard[head], rows, head_dim, coefficients, simulator_storage=True),
+                                                   dtype=element).reshape(rows, head_dim)
+                    shard = rotated
                 if name != "V":
                     panels = shard.reshape(tensor.shape[0], rows // 64, 64,
                         head_dim // 64, 64).transpose(0, 1, 3, 2, 4)
                     check(name + "_panels", 0x04000000 if name == "Q" else 0x05000000,
-                          panels.tobytes())
+                          panels.tobytes(), numeric=skip_audit_output)
             output_bytes = hq * (query_length // 4) * head_dim * elem_bytes
             regions.append(("O", offsets["O"], offsets["O"] + output_bytes))
             begin = band * windows_per_node
             count = max(0, min(windows_per_node, windows - begin))
             v_panels = bytearray(hkv * windows_per_node * 4 * (head_dim // 64) * panel_bytes)
             if count:
-                if projection:
+                if projection and not skip_audit_output:
                     handle.seek(offsets["V"])
                     actual_v = handle.read(hkv * (kv_length // 4) * head_dim * elem_bytes)
                     selected = np.frombuffer(actual_v, dtype=element).reshape(
@@ -109,7 +123,7 @@ def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
                 for head in range(hkv):
                     data = panels[head].tobytes()
                     v_panels[head * head_bytes:head * head_bytes + len(data)] = data
-            check("V_panels", 0x06000000, bytes(v_panels))
+            check("V_panels", 0x06000000, bytes(v_panels), numeric=skip_audit_output)
         regions.sort(key=lambda entry: entry[1])
         for name, begin, end in regions:
             if begin < 0 or end > capacity:
@@ -121,7 +135,8 @@ def verify_layout(q_file, k_file, v_file, hbm_dir, query_length, kv_length,
                       "numerical_errors": numerical,
                       "regions": [{"name": n, "begin": b, "end": e} for n, b, e in regions]})
     return {"status": "PASS", "dtype": dtype, "element_bytes": elem_bytes,
-            "checked_bytes": checked, "nodes": nodes}
+            "checked_bytes": checked, "nodes": nodes,
+            "rotated_panels": rotated_panels, "audit_output": not skip_audit_output}
 
 
 def main():
@@ -134,12 +149,15 @@ def main():
         parser.add_argument(f"--{name}-offset", type=lambda value: int(value, 0), required=True)
     parser.add_argument("--dtype", choices=("fp16", "fp32"), default="fp16")
     parser.add_argument("--projection", action="store_true")
+    parser.add_argument("--rotated-panels", action="store_true")
+    parser.add_argument("--skip-audit-output", action="store_true")
     args = parser.parse_args()
     try:
         result = verify_layout(args.q_file, args.k_file, args.v_file, args.hbm_dir,
             args.query_length, args.kv_length, args.num_query_heads, args.num_kv_heads,
             args.head_dim, args.dtype, {name.upper(): getattr(args, f"{name}_offset") for name in "qkvo"},
-            projection=args.projection)
+            projection=args.projection, rotated_panels=args.rotated_panels,
+            skip_audit_output=args.skip_audit_output)
     except (OSError, ValueError) as error:
         result = {"status": "FAIL", "error": str(error)}
     Path(args.result_json).write_text(json.dumps(result, indent=2) + "\n")

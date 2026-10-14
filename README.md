@@ -23,6 +23,20 @@ See [Contributing](https://github.com/sstsimulator/sst-elements/blob/devel/CONTR
 
 ## Muticore-Attention status
 
+**Latest progress (2026-10-14):** token IDs now pass through timed worker
+Embedding, two Decoder layers (Attention/Wo/residual/RMSNorm/SwiGLU FFN),
+final RMSNorm and the last-token LM head, followed by host greedy argmax.
+The validated synthetic prefill workload uses S=1024, hidden=2048,
+FFN=8192 and vocab=128256 with 2 GiB per HBM data node. Matched 4/8-rank
+runs produce identical logits, token ID 99037 and **20,167,497.75 cycles**
+(20.167498 ms at 1 GHz). Eight MPI ranks reduce simulator wall time from
+1566.43 s to 1377.20 s (**12.08%**, single matched pair).
+See the [current progress and reproduction commands](baseline/attention_cluster_8qk_8pv/PROGRESS_2026-10-14.md)
+and [archived cycle/wall comparison](baseline/attention_cluster_8qk_8pv/progress_results/2026-10-14/embedding_token_summary.md).
+Real checkpoints, the complete model layer count, tokenizer and autoregressive
+decode remain future work. Earlier measurements below retain their original
+Attention-only scope.
+
 The integrated development branch is `softmax-update` in
 [`G-BALE-JJ/Muticore-Attention`](https://github.com/G-BALE-JJ/Muticore-Attention).
 It combines the Golem generic GEMM/WCP path, deterministic MPI partitioning,

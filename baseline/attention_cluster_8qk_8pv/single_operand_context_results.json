@@ -1,0 +1,340 @@
+{
+  "status": "PASS",
+  "resource_contract": {
+    "manager_cores": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "manager_array_sfu_present": false,
+    "worker_cores": [
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+    ],
+    "arrays_per_worker": 64,
+    "operand_contexts_per_array": 1,
+    "GM_bytes_per_core": 2097152,
+    "scope": "extra operand storage removed; existing ports, bandwidth and array output accumulators unchanged"
+  },
+  "cycle_comparison_scope": "resource-removal impact; historical two-context references are not a same-resource optimization baseline",
+  "unit_tests": 154,
+  "cases": [
+    {
+      "sequence": 1024,
+      "status": "PASS",
+      "artifact_root": "results/single_operand_context/verified/s1024",
+      "end_to_end_cycles": 573772,
+      "projection_including_rmsnorm_cycles": 416538,
+      "attention_cycles": 155215,
+      "handoff_cycles": 2019,
+      "array_operand_banks": 1,
+      "resource_topology_valid": true,
+      "byte_exact_regions": 16,
+      "byte_exact_bytes": 10485760,
+      "O_max_abs_error": 0.0001220703125,
+      "historical_two_context_cycles": 573772,
+      "source_binary_sha256": {
+        "src/sst/elements/golem/attention/projectionJob.h": "e4425dd8b6e23d42d99012241d28c611e6b56b86eeb02832aa643e1d52b80fde",
+        "src/sst/elements/golem/array/computeArray.h": "dbae4bbdae930a78c8ddda58ffdc647598e4c3d44c356a1d906ae6340e81b365",
+        "src/sst/elements/golem/attention/attentionCluster.h": "b73a385a3b47692d8469ae6d3be24e253ce57267d42ae73b4e1ebc839c3e67e1",
+        "src/sst/elements/golem/attention/projectionJobAbi.h": "176d0d187db10e17e8d193b066c94ee64ca9de427d174f62dc1314fcdce5b402",
+        "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h": "13e6290b9a74da99697069ec787cf6892fbd574a039d15ef709b6fa197ad1671",
+        "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "9bf7b7f526f77f0a96870df0e1ce9ee3a3103ca48300c035cbf68ea2ba3c25e0",
+        "src/sst/elements/golem/rocc/roccAnalog.h": "d16a34cb5c291547e2daa667c6fdd48cbdcf11ef8049dbe79d9dd88beba3e033",
+        "src/sst/elements/golem/workercmdproc/workercmdproc.h": "b146cb6bf252f442bf32a071d53391f263f75b64a40f66ba2f5b8847d95bc775",
+        "src/sst/elements/golem/array/mvmComputeArray.h": "235c176b3c682acdd515d65198cc7172e74db533128aa5fd2c3e24858e0791d7",
+        "src/sst/elements/golem/tests/architecture/cpu_builder.py": "42609caade6c66a37ada89276667330e37cfb18025d3205432a366b20aa3413a",
+        "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "ba1c88fcbdfc618c160bc5444ca2e2e169f929e8930b4fa99427f683d5691d6a",
+        "install/lib/sst-elements-library/libgolem.so": "de5e100b0fbaa8ef0b04ff50834709f7b7e11414002dd3b2435b84446c36296c",
+        "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "76b67fb4026c3142142bd9ac07d325f07173e254e6def29f1f98700002aa2d46"
+      }
+    },
+    {
+      "sequence": 2048,
+      "status": "PASS",
+      "artifact_root": "results/single_operand_context/verified/s2048",
+      "end_to_end_cycles": 1354890,
+      "projection_including_rmsnorm_cycles": 801164,
+      "attention_cycles": 549932,
+      "handoff_cycles": 3794,
+      "array_operand_banks": 1,
+      "resource_topology_valid": true,
+      "byte_exact_regions": 16,
+      "byte_exact_bytes": 20971520,
+      "O_max_abs_error": 0.0001220703125,
+      "historical_two_context_cycles": 1354890,
+      "source_binary_sha256": {
+        "src/sst/elements/golem/attention/projectionJob.h": "e4425dd8b6e23d42d99012241d28c611e6b56b86eeb02832aa643e1d52b80fde",
+        "src/sst/elements/golem/array/computeArray.h": "dbae4bbdae930a78c8ddda58ffdc647598e4c3d44c356a1d906ae6340e81b365",
+        "src/sst/elements/golem/attention/attentionCluster.h": "b73a385a3b47692d8469ae6d3be24e253ce57267d42ae73b4e1ebc839c3e67e1",
+        "src/sst/elements/golem/attention/projectionJobAbi.h": "176d0d187db10e17e8d193b066c94ee64ca9de427d174f62dc1314fcdce5b402",
+        "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h": "13e6290b9a74da99697069ec787cf6892fbd574a039d15ef709b6fa197ad1671",
+        "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "9bf7b7f526f77f0a96870df0e1ce9ee3a3103ca48300c035cbf68ea2ba3c25e0",
+        "src/sst/elements/golem/rocc/roccAnalog.h": "d16a34cb5c291547e2daa667c6fdd48cbdcf11ef8049dbe79d9dd88beba3e033",
+        "src/sst/elements/golem/workercmdproc/workercmdproc.h": "b146cb6bf252f442bf32a071d53391f263f75b64a40f66ba2f5b8847d95bc775",
+        "src/sst/elements/golem/array/mvmComputeArray.h": "235c176b3c682acdd515d65198cc7172e74db533128aa5fd2c3e24858e0791d7",
+        "src/sst/elements/golem/tests/architecture/cpu_builder.py": "42609caade6c66a37ada89276667330e37cfb18025d3205432a366b20aa3413a",
+        "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py": "ba1c88fcbdfc618c160bc5444ca2e2e169f929e8930b4fa99427f683d5691d6a",
+        "install/lib/sst-elements-library/libgolem.so": "de5e100b0fbaa8ef0b04ff50834709f7b7e11414002dd3b2435b84446c36296c",
+        "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention": "76b67fb4026c3142142bd9ac07d325f07173e254e6def29f1f98700002aa2d46"
+      }
+    }
+  ],
+  "regressions": [
+    {
+      "name": "three_blocks",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "array_operand_banks": 1,
+      "end_to_end_cycles": 243842,
+      "max_abs_error": 5.240038113726864e-05
+    },
+    {
+      "name": "fused_rope",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "array_operand_banks": 1,
+      "end_to_end_cycles": 69457,
+      "max_abs_error": 5.430391072286378e-05
+    },
+    {
+      "name": "unfused_norm_gm_partial",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "array_operand_banks": 1,
+      "end_to_end_cycles": 102561,
+      "max_abs_error": 5.430391072286378e-05
+    },
+    {
+      "name": "attention_d128",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "array_operand_banks": 1,
+      "end_to_end_cycles": 22663,
+      "max_abs_error": 0.00019153815278949438
+    },
+    {
+      "name": "single_context_32_cbuffer",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "array_operand_banks": 1,
+      "end_to_end_cycles": 77966,
+      "max_abs_error": 5.430391072286378e-05
+    },
+    {
+      "name": "single_context_32_gm_partial",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "array_operand_banks": 1,
+      "end_to_end_cycles": 104971,
+      "max_abs_error": 5.430391072286378e-05
+    },
+    {
+      "name": "single_context_generic_hidden128",
+      "status": "PASS",
+      "resource_topology_valid": true,
+      "array_operand_banks": 1,
+      "end_to_end_cycles": 70527,
+      "max_abs_error": 4.508691636355422e-05
+    }
+  ],
+  "multirow_impact": [
+    {
+      "status": "PASS",
+      "scope": "resource-removal impact; not a same-resource optimization comparison",
+      "reference_root": "results/projection_retained_output/fallback32",
+      "byte_exact_regions": [
+        {
+          "node": 1,
+          "region": "O",
+          "bytes": 131072
+        },
+        {
+          "node": 1,
+          "region": "Q_panels",
+          "bytes": 131072
+        },
+        {
+          "node": 1,
+          "region": "K_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 1,
+          "region": "V_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 2,
+          "region": "O",
+          "bytes": 131072
+        },
+        {
+          "node": 2,
+          "region": "Q_panels",
+          "bytes": 131072
+        },
+        {
+          "node": 2,
+          "region": "K_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 2,
+          "region": "V_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 3,
+          "region": "O",
+          "bytes": 131072
+        },
+        {
+          "node": 3,
+          "region": "Q_panels",
+          "bytes": 131072
+        },
+        {
+          "node": 3,
+          "region": "K_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 3,
+          "region": "V_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 4,
+          "region": "O",
+          "bytes": 131072
+        },
+        {
+          "node": 4,
+          "region": "Q_panels",
+          "bytes": 131072
+        },
+        {
+          "node": 4,
+          "region": "K_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 4,
+          "region": "V_panels",
+          "bytes": 65536
+        }
+      ],
+      "before_cycles": 74571,
+      "after_cycles": 77966,
+      "before_weight_programs": 512,
+      "after_weight_programs": 1024
+    },
+    {
+      "status": "PASS",
+      "scope": "resource-removal impact; not a same-resource optimization comparison",
+      "reference_root": "results/projection_retained_output/fallback32_gm_partial",
+      "byte_exact_regions": [
+        {
+          "node": 1,
+          "region": "O",
+          "bytes": 131072
+        },
+        {
+          "node": 1,
+          "region": "Q_panels",
+          "bytes": 131072
+        },
+        {
+          "node": 1,
+          "region": "K_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 1,
+          "region": "V_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 2,
+          "region": "O",
+          "bytes": 131072
+        },
+        {
+          "node": 2,
+          "region": "Q_panels",
+          "bytes": 131072
+        },
+        {
+          "node": 2,
+          "region": "K_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 2,
+          "region": "V_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 3,
+          "region": "O",
+          "bytes": 131072
+        },
+        {
+          "node": 3,
+          "region": "Q_panels",
+          "bytes": 131072
+        },
+        {
+          "node": 3,
+          "region": "K_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 3,
+          "region": "V_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 4,
+          "region": "O",
+          "bytes": 131072
+        },
+        {
+          "node": 4,
+          "region": "Q_panels",
+          "bytes": 131072
+        },
+        {
+          "node": 4,
+          "region": "K_panels",
+          "bytes": 65536
+        },
+        {
+          "node": 4,
+          "region": "V_panels",
+          "bytes": 65536
+        }
+      ],
+      "before_cycles": 104484,
+      "after_cycles": 104971,
+      "before_weight_programs": 512,
+      "after_weight_programs": 1024
+    }
+  ]
+}

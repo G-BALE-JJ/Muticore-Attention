@@ -1,0 +1,8 @@
+{
+  "status": "PASS",
+  "mpi_ranks": 8,
+  "cpu_set": "0-7",
+  "sst_wall_seconds": 46.140689,
+  "driver_wall_seconds": 50.896964959974866,
+  "timing_scope": "SST wall excludes input generation and host validation; driver wall includes both"
+}

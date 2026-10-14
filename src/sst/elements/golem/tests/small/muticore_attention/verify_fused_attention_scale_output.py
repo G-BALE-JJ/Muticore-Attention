@@ -36,7 +36,7 @@ def compute_attention_blocked(
     return output
 
 
-def rotate_rope(values, positions, head_dim, table):
+def rotate_rope(values, positions, head_dim, table, simulator_storage=False):
     import numpy as np
 
     source = np.asarray(values, dtype=np.float32).reshape(positions, head_dim)
@@ -46,6 +46,12 @@ def rotate_rope(values, positions, head_dim, table):
     rotated = np.empty_like(source)
     rotated[:, 0::2] = source[:, 0::2] * cosine - source[:, 1::2] * sine
     rotated[:, 1::2] = source[:, 0::2] * sine + source[:, 1::2] * cosine
+    if simulator_storage:
+        # Match the existing golem_float_to_fp16 storage contract: magnitudes
+        # below 2^-24 flush to signed zero, including NumPy-roundable subnormals.
+        # Keep the independent numerical Attention reference unchanged by default.
+        tiny = np.abs(rotated) < np.float32(2.0 ** -24)
+        rotated[tiny] = np.copysign(np.float32(0.0), rotated[tiny])
     return rotated.astype(np.float16).astype(np.float64).ravel().tolist()
 
 

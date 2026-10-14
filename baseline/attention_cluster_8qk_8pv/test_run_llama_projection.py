@@ -24,13 +24,31 @@ class ReferenceComparisonTest(unittest.TestCase):
                     (root / 'hbm' / f'hbm_out_node{node}.bin').write_bytes(bytes(range(16)))
             def summary(root):
                 cycles = 100 if root == reference else 80
-                return {'pipeline': {'shape': {'S': 1024}, 'end_to_end_cycles': cycles,
+                return {'pipeline': {'shape': {'S': 1024}, 'resource_topology_valid': True, 'array_operand_banks': 1, 'end_to_end_cycles': cycles,
                                      'stages': {'projection': {'elapsed_cycles': cycles - 20}}}}
             with patch('run_llama_projection.summarize', side_effect=summary):
                 result = compare_reference(current, reference)
                 self.assertEqual(result['end_to_end']['saved_cycles'], 20)
                 self.assertEqual(result['end_to_end']['reduction_percent'], 20)
-                self.assertEqual(len(result['byte_exact_regions']), 28)
+                self.assertEqual(len(result['byte_exact_regions']), 32)
+                self.assertTrue(result['performance_comparable'])
+                def historical_summary(root):
+                    data = summary(root)
+                    data['pipeline']['resource_topology_valid'] = root != reference
+                    return data
+                with patch('run_llama_projection.summarize', side_effect=historical_summary):
+                    historical = compare_reference(current, reference)
+                self.assertFalse(historical['performance_comparable'])
+                self.assertNotIn('saved_cycles', historical['end_to_end'])
+                self.assertNotIn('reduction_percent', historical['projection'])
+                def different_storage(root):
+                    data = summary(root)
+                    data['pipeline']['array_operand_banks'] = 2 if root == reference else 1
+                    return data
+                with patch('run_llama_projection.summarize', side_effect=different_storage):
+                    storage_change = compare_reference(current, reference)
+                self.assertFalse(storage_change['performance_comparable'])
+                self.assertNotIn('saved_cycles', storage_change['end_to_end'])
                 output = current / 'hbm' / 'hbm_out_node4.bin'
                 changed = bytearray(output.read_bytes())
                 changed[2] ^= 1

@@ -13,6 +13,9 @@ namespace Golem {
 enum class SFUVectorOp : uint8_t {
     Rope = 1,
     RmsNorm = 2,
+    Add = 3,
+    Multiply = 4,
+    Silu = 5,
 };
 
 struct SFUVectorRequest {
@@ -41,6 +44,29 @@ inline bool evaluateSFUVectorOp(const SFUVectorRequest& request,
     const auto& input = *request.input;
     const auto& coefficients = *request.coefficients;
     const size_t rows = input.size() / request.rowWidth;
+
+    if (request.op == SFUVectorOp::Add || request.op == SFUVectorOp::Multiply ||
+        request.op == SFUVectorOp::Silu) {
+        if (request.op != SFUVectorOp::Silu && coefficients.size() != input.size()) return false;
+        output->resize(input.size());
+        for (size_t i = 0; i < input.size(); ++i) {
+            const float x = vectorFp16Value(input[i]);
+            // FP16 operands/output, FP32 arithmetic. SiLU matches the hardware
+            // stage sequence EXP -> add-one -> reciprocal -> multiply.
+            float y;
+            if (request.op == SFUVectorOp::Silu) {
+                const float exponential = std::exp(-x);
+                const float denominator = 1.0f + exponential;
+                const float reciprocal = 1.0f / denominator;
+                y = x * reciprocal;
+            } else {
+                const float coefficient = vectorFp16Value(coefficients[i]);
+                y = request.op == SFUVectorOp::Add ? x + coefficient : x * coefficient;
+            }
+            (*output)[i] = vectorFp16Value(y);
+        }
+        return true;
+    }
 
     if (request.op == SFUVectorOp::Rope) {
         if (request.positions == nullptr || request.positions->size() != rows ||

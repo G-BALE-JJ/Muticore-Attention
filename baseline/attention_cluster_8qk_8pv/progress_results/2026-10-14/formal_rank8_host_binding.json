@@ -1,0 +1,42 @@
+[
+  {
+    "pid": 2172667,
+    "mpi_rank": 0,
+    "allowed_logical_cpus": "0-7,16-23"
+  },
+  {
+    "pid": 2172668,
+    "mpi_rank": 1,
+    "allowed_logical_cpus": "0-7,16-23"
+  },
+  {
+    "pid": 2172669,
+    "mpi_rank": 2,
+    "allowed_logical_cpus": "0-7,16-23"
+  },
+  {
+    "pid": 2172670,
+    "mpi_rank": 3,
+    "allowed_logical_cpus": "0-7,16-23"
+  },
+  {
+    "pid": 2172671,
+    "mpi_rank": 4,
+    "allowed_logical_cpus": "0-7,16-23"
+  },
+  {
+    "pid": 2172674,
+    "mpi_rank": 5,
+    "allowed_logical_cpus": "0-7,16-23"
+  },
+  {
+    "pid": 2172679,
+    "mpi_rank": 6,
+    "allowed_logical_cpus": "0-7,16-23"
+  },
+  {
+    "pid": 2172682,
+    "mpi_rank": 7,
+    "allowed_logical_cpus": "0-7,16-23"
+  }
+]

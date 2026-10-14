@@ -1,5 +1,55 @@
 # 8 QK/SFU + 8 PV attention cluster
 
+**Latest progress (2026-10-14):** timed Embedding → two Decoder layers →
+final RMSNorm → last-token LM head → host greedy token selection is validated.
+Formal 4/8-rank runs have identical logits and 20,167,497.75 cycles;
+8 ranks reduce simulator wall time by 12.08% in the matched single-run comparison.
+See [current progress](PROGRESS_2026-10-14.md) and the
+[archived results](progress_results/2026-10-14/embedding_token_summary.md).
+
+**Canonical DMA timing (2026-10-12):** the primary report is `dma_e2e_result.json`, contract `hbmdma_to_O_ack_v1`: first workload data DMA sent → last final O write ACK. Clean IW S1024/S2048 measure **473,902.75 / 1,238,814.75 cycles**. Legacy job-to-worker fields below retain historical boundaries. Current group1 + producer barrier resource lower bounds are **352,816 / 967,776 cycles**, necessary bounds rather than attained optimal schedules. See [timing and lower-bound analysis](DMA_LOWER_BOUND_2026-10-12.md).
+
+**Clean startup measurements (2026-10-12):** guest diagnostic `fprintf`
+calls were serializing worker releases. Build `make clean-startup` and select
+`riscv64/clean_startup/fused_attention` for performance experiments. The IW
+path now measures S1024/S2048 E2E at 473,914/1,238,826 cycles; output arrival
+from simulation zero is 551,750.75/1,316,662.75 cycles. This removes benchmark
+diagnostic overhead, not accelerator work. Error/completion reporting and
+host resource traces remain enabled. See
+[`STARTUP_RELEASE_2026-10-12.md`](STARTUP_RELEASE_2026-10-12.md) for the paired
+experiments, timing boundaries and the observed S2048 schedule sensitivity.
+
+**Read/program/compute overlap (2026-10-11):** matched formal experiments
+reduce S1024/S2048 E2E from 573,772/1,354,890 to 544,931/1,304,066 cycles
+(5.03%/3.75%) using the existing future-input slot and a local-weight snapshot
+within the original staging budget. Use `GOLEM_PROJECTION_INPUT_PAIR_PREFETCH=1`,
+`GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH=1`, and `GOLEM_PROJECTION_ARRAY_GROUPS=1`
+with the 64-array retained-output pipeline. Splitting the existing arrays into
+two groups overlaps programming with MAC, but the extra broadcasts cancel its
+additional benefit in both formal shapes. The new options are opt-in. See the
+[complete experiment report](PROJECTION_READ_PROGRAM_COMPUTE_OVERLAP_2026-10-11.md)
+and [matched results](projection_overlap_results.json).
+
+**Dataflow direction (2026-10-11):** the 32-array weight-stationary prototype
+has been retired at the user's request. The supported path retains outputs
+on the existing 64 arrays and uses one operand context per array. See the
+[latency reanalysis](LATENCY_REANALYSIS_WITHOUT_WEIGHT_STATIONARY_2026-10-11.md)
+for reconciled timing evidence and the new software overlap experiments.
+
+**Architecture correction (2026-10-10):** dedicated managers have no arrays or
+SFUs. Projection and RMSNorm now execute on cores 4..19. Historical projection
+and fusion measurements that executed on manager-local arrays are invalid as
+performance evidence for this target topology, even where numerical checks
+passed. See `WORKER_PROJECTION_ARCHITECTURE_FIX.md` for the corrected baseline.
+
+**Single operand context (2026-10-10):** extra array-local operand banks have
+been removed. Every worker retains 64 physical arrays, with one matrix and one
+input context per array; managers have no arrays or SFUs. Existing GM capacity,
+ports, bandwidth, and output accumulators are unchanged. The older corrected
+worker and retained-output measurements used two operand contexts and are
+historical references. See [`SINGLE_OPERAND_CONTEXT.md`](SINGLE_OPERAND_CONTEXT.md)
+for the current dataflow and validation.
+
 This is the final worker-cluster architecture. The archived 4:12 comparison is
 in `../../archive/baseline_attention_cluster_4qk_12pv/`.
 
@@ -77,6 +127,10 @@ The FP16 `Hq=32,Hkv=8,D=64` kernel sweep also passed at
 attention-kernel validation, not full Llama inference.
 
 ## RMSNorm and projection end-to-end
+
+Fixed-resource RMSNorm/projection and projection/RoPE fusion is available as
+an opt-in execution plan. See [OPERATOR_FUSION.md](OPERATOR_FUSION.md) for
+storage ownership, controls, validation and cycle interpretation.
 
 The latest measured Llama-shape projection pipeline and input sharing results
 are in [LLAMA_PROJECTION_PIPELINE.md](LLAMA_PROJECTION_PIPELINE.md). Its
@@ -457,3 +511,80 @@ python3 baseline/attention_cluster_8qk_8pv/compare.py \
   --baseline-4qk-12pv /tmp/attention_cluster_4qk_12pv/sst_qk_bridge_result.json \
   --experiment-8qk-8pv /tmp/attention_cluster_8qk_8pv/sst_qk_bridge_result.json
 ```
+
+Projection cycle breakdown and the opt-in next-pair input prefetch schedule:
+[`PROJECTION_SCHEDULE.md`](PROJECTION_SCHEDULE.md), with matched results in
+[`projection_schedule_results.json`](projection_schedule_results.json).
+
+Partial transfer bandwidth audit and the opt-in early-restore schedule:
+[`PROJECTION_BANDWIDTH.md`](PROJECTION_BANDWIDTH.md),
+[`PROJECTION_PARTIAL_RESTORE.md`](PROJECTION_PARTIAL_RESTORE.md), with matched
+results in [`projection_partial_restore_results.json`](projection_partial_restore_results.json).
+
+GM queue acceptance, port initiation and response timing are audited in
+[`GM_TIMING_CONTRACT.md`](GM_TIMING_CONTRACT.md), with an executable
+[`probe_gm_timing.py`](probe_gm_timing.py).
+
+Latest fixed-resource projection input optimization:
+[`PROJECTION_INPUT_FLOW.md`](PROJECTION_INPUT_FLOW.md), with the full matched
+results in [`projection_input_flow_results.json`](projection_input_flow_results.json).
+Recommended opt-in: `GOLEM_PROJECTION_PACKED_NORM_INPUT=1`,
+`GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET=0`; the latter can be set to 4 for the
+original row-major input plan.
+
+Fixed-resource causal Attention load balancing:
+[`CAUSAL_BALANCE.md`](CAUSAL_BALANCE.md). Use
+`GOLEM_ATTENTION_CAUSAL_BALANCE=1` to pair complementary query bands through
+existing per-head topology descriptors. The implementation preserves tensor
+ownership and accumulation order and adds no accelerator resources.
+Reproduce and audit with [`run_causal_balance.py`](run_causal_balance.py) and
+[`analyze_causal_balance.py`](analyze_causal_balance.py).
+
+RMSNorm/projection overlap analysis using the latest measured batches:
+[`NORM_PROJECTION_OVERLAP.md`](NORM_PROJECTION_OVERLAP.md), with
+[`norm_projection_overlap_analysis.json`](norm_projection_overlap_analysis.json).
+The proposed cross-block prefix schedule is an estimate, not an implemented
+or benchmarked optimization.
+
+Fine resource timestamps (GM/DMA/HBM, array transfers/MAC, WCP, SFU,
+snapshot ready/consume, worker release/observed/accept) and the distinction
+between Batch B diagnostic oracles and the full 2³ software experiment matrix:
+[`FINE_RESOURCE_TIMELINE_2026-10-12.md`](FINE_RESOURCE_TIMELINE_2026-10-12.md).
+Analyze completed traces with [`analyze_resource_timeline.py`](analyze_resource_timeline.py).
+Resource overlap is measured by interval intersection, not by summing phase totals.
+
+Batch B controlled diagnostic oracles and the full fixed-hardware 2³ matrix:
+[`BATCH_B_2026-10-12.md`](BATCH_B_2026-10-12.md). Reproduce with
+[`run_batch_b_parallel.py`](run_batch_b_parallel.py), validate independent shards
+with [`summarize_batch_b.py`](summarize_batch_b.py), and inspect Projection-only
+queue/service times with [`analyze_batch_b_waits.py`](analyze_batch_b_waits.py).
+Diagnostic oracles are scoped interventions; their savings are not additive
+and are not deployable optimization results.
+
+2026-10-12：新增 [Projection 逐 tile 因果分析](PROJECTION_CAUSAL_ANALYSIS_2026-10-12.md)。`GOLEM_PROJECTION_CAUSAL_TRACE=1` 与资源追踪一起记录完整 tile 标识，MPI 合并后保存在 `.causal.jsonl`；分析器校验 tag/地址/时间戳关联并闭合 MAC 间隙。正式数据在 `results/projection_causal_20261012/summary.json`，包含两个规模的对照及 input-budget / weight-lookahead 单变量试验。
+
+## 单层 decoder prefill 检查点（2026-10-14）
+
+[接入说明和容量分析](DECODER_LAYER_2026-10-14.md)记录了 Wo、第一残差、
+第二次 RMSNorm、SwiGLU FFN 和第二残差的独立检查点。使用
+`run_decoder_layer.py --checkpoint wo|residual|ffn|layer --shape small|formal`
+验证 S=1024 的单层；默认 Attention baseline guest 不受这些 opt-in 变体影响。
+本轮保持每 worker 2 MiB GM 和 4×128 MiB 数据 HBM，down 支持 8192→2048 分块。
+实测输出、逐阶段误差和 DMA ACK 时间边界见
+`results/decoder_layer_20261014/summary.md`。
+
+两层 Decoder 重复执行、统一内存布局和 completion epoch：
+[DECODER_STACK_2026-10-14.md](DECODER_STACK_2026-10-14.md)。
+
+Add/Multiply/SiLU 已接入实际 SFU 管线预占、有限 FIFO 和反压；SiLU 与
+Attention 使用同一个 EXP/倒数资源对象。精度契约、竞争测试及相同输入的
+两层周期对比见 [SFU_VECTOR_PIPELINE_2026-10-14.md](SFU_VECTOR_PIPELINE_2026-10-14.md)。
+
+两层输出已追加独立 gamma 的 final RMSNorm，保持 FP16 I/O 和 FP32 内部计算；检查独立标志清零、epoch=3、完整输出及 completion DMA ACK。
+复现和计时边界见 [FINAL_RMSNORM_2026-10-14.md](FINAL_RMSNORM_2026-10-14.md)。
+
+最后一个 token 的 LM head 支持 M=1、8192 列词表分块及尾块，LM head runner 默认每 HBM 节点容量 2 GiB。
+数据路径和验证见 [LM_HEAD_2026-10-14.md](LM_HEAD_2026-10-14.md)。
+
+已接入 worker 定时 Embedding gather 和 host greedy token 选择；4/8 MPI rank 的相同输入对比见
+[EMBEDDING_TOKEN_MPI_2026-10-14.md](EMBEDDING_TOKEN_MPI_2026-10-14.md)。

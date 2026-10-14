@@ -6,9 +6,11 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -139,6 +141,8 @@ public:
         std::vector<uint8_t> payload) = 0;
     using AttentionPvPrefetchCallback = std::function<void(bool)>;
     virtual bool attentionPvVectorResident(const WorkerTaskListHeader& header) const = 0;
+    // GM is shared with projection/FFN. Reuse requires retiring cache tags.
+    virtual bool invalidateAttentionOperandCaches() = 0;
     virtual bool prefetchAttentionPvVector(
         const WorkerTaskListHeader& header,
         AttentionPvPrefetchCallback callback) = 0;
@@ -425,6 +429,7 @@ public:
           prefetchWindowDepth_(static_cast<uint32_t>(std::max(1, params.find<int>("prefetch_windows", 1)))),
           crossMacroPrefetch_(params.find<int>("cross_macro_prefetch", 0) != 0),
           attentionPvPanelPrefetch_(params.find<int>("attention_pv_panel_prefetch", 0) != 0),
+          fusionRopePanels_(preRotatedInputsRequested()),
           windowKtiles_(std::max(1, params.find<int>("window_k_tiles", 4))),
           cBufferBytes_(params.find<uint64_t>("c_buffer_bytes", 0)),
           cBufferReadBytesPerCycle_(params.find<uint64_t>("c_buffer_read_bytes_per_cycle", 256)),
@@ -938,6 +943,7 @@ public:
         command.arrayId = arrayId;
         command.outputMode = outputMode;
         command.enqueueCycle = enqueueCycle;
+        stampTraceCommand(command);
         gemmProxyCommands_.push_back(std::move(command));
         return true;
     }
@@ -962,6 +968,7 @@ public:
         command.outputMode = outputMode;
         command.activeColumns = activeColumns;
         command.enqueueCycle = enqueueCycle;
+        stampTraceCommand(command);
         gemmProxyCommands_.push_back(std::move(command));
         return true;
     }
@@ -1016,6 +1023,7 @@ public:
         command.outputMode = outputMode;
         command.activeColumns = activeColumns;
         command.enqueueCycle = enqueueCycle;
+        stampTraceCommand(command);
         gemmProxyCommands_.push_back(std::move(command));
         return true;
     }
@@ -1526,6 +1534,23 @@ public:
         return prefetchAttentionPvVectorImpl(header, std::move(callback));
     }
 
+    bool invalidateAttentionOperandCaches() override {
+        if (isBusy() || attentionPvVectorPrefetchInFlight_ ||
+            attentionPvVectorInstallInFlight_ || attentionPvVectorReadInFlight_ ||
+            attentionPvVectorPanelPrefetchInFlight_) return false;
+        uint32_t entries=0;
+        for (auto& entry : attentionPvVectorCache_) { entries+=entry.valid?1:0; entry.valid=false; }
+        attentionPvVectorResidentHit_=false;
+        attentionPvVectorCacheIndex_=attentionPvVectorPrefetchIndex_=-1;
+        ++attentionPvVectorReadGeneration_; ++attentionPvVectorPrefetchGeneration_;
+        attentionPvVectorPanelPrefetchReady_=false;
+        attentionPvVectorPanelPrefetchPayload_.clear();
+        ropeMatCache_.clear(); ropeVecCache_.clear(); ropeCacheOrder_.clear(); ropeCacheUsedBytes_=0;
+        residentMatPayload_.clear();
+        if (extOutput_) extOutput_->output("[ATTENTION_CACHE_RESET] core=%u entries=%u\n",coreId_,entries);
+        return true;
+    }
+
     bool attentionPvVectorResident(const WorkerTaskListHeader& header) const override {
         return std::any_of(attentionPvVectorCache_.begin(), attentionPvVectorCache_.end(),
             [this, &header](const AttentionPvVectorCacheEntry& entry) {
@@ -1824,6 +1849,12 @@ public:
             PendingGemmCompletion completion;
             completion.arrayId = arrayId;
             completion.arrayDoneCycle = cycle;
+            const auto trace = traceComputeGroups_.find(arrayId);
+            if (trace != traceComputeGroups_.end()) {
+                completion.trace = trace->second;
+                completion.trace->done = std::max(completion.trace->done, getCurrentSimCycle());
+                traceComputeGroups_.erase(trace);
+            }
             completion.readyCycle = cycle + gemmProxyCompletionLatencyCycles_;
             completion.callback = std::move(callback);
             pendingGemmCompletions_.push_back(std::move(completion));
@@ -1897,16 +1928,35 @@ private:
         uint32_t index = 0;
         uint64_t storageGeneration = 0;
         uint64_t enqueueCycle = 0;
+        uint64_t traceRequest = 0;
+        uint64_t traceSubmitTick = 0;
+        uint64_t traceDepth = 0;
         std::vector<uint8_t> bytePayload;
         GemmBufferCallback bufferCallback;
         GemmReadCallback readCallback;
         AttentionTileReadCallback attentionReadCallback;
     };
 
+    struct TraceComputeGroup {
+        uint64_t request = 0, submit = 0, start = 0, done = 0, depth = 0;
+        size_t remaining = 0;
+        uint64_t generation = 0;
+    };
+    uint64_t nextTraceCommand_ = 1;
+    std::unordered_map<uint32_t, std::shared_ptr<TraceComputeGroup>> traceComputeGroups_;
+
+    void stampTraceCommand(GemmProxyCommand& command) {
+        if (!resourceTraceEnabled()) return;
+        command.traceRequest = nextTraceCommand_++;
+        command.traceSubmitTick = getCurrentSimCycle();
+        command.traceDepth = gemmProxyCommands_.size() + 1;
+    }
+
     struct PendingGemmCompletion {
         uint32_t arrayId = 0;
         uint64_t arrayDoneCycle = 0;
         uint64_t readyCycle = 0;
+        std::shared_ptr<TraceComputeGroup> trace;
         GemmArrayDoneCallback callback;
     };
 
@@ -1927,6 +1977,7 @@ private:
             statGemmProxyQueueFullStalls_->addData(1);
             return false;
         }
+        stampTraceCommand(command);
         gemmProxyCommands_.push_back(std::move(command));
         return true;
     }
@@ -1954,6 +2005,7 @@ private:
         command.outputMode = outputMode;
         command.activeColumns = activeColumns;
         command.enqueueCycle = enqueueCycle;
+        stampTraceCommand(command);
         gemmProxyCommands_.push_back(std::move(command));
         return true;
     }
@@ -2152,6 +2204,27 @@ private:
                 gemmProxyCommands_.push_front(std::move(command));
                 break;
             }
+            if (resourceTraceEnabled()) {
+                traceResourceInterval("wcp", "command_queue", coreId_, command.traceRequest,
+                    command.tag, command.storageGeneration, command.traceSubmitTick,
+                    getCurrentSimCycle(), getCurrentSimCycle(), getCurrentSimCycle(),
+                    command.payload.size() * command.elemBytes + command.bytePayload.size(),
+                    command.traceDepth, 0, static_cast<int64_t>(command.kind),
+                    static_cast<int64_t>(command.trafficClass));
+                if (command.kind == GemmProxyCommandKind::LAUNCH ||
+                    command.kind == GemmProxyCommandKind::LAUNCH_GROUP) {
+                    auto trace = std::make_shared<TraceComputeGroup>();
+                    trace->request = command.traceRequest;
+                    trace->submit = command.traceSubmitTick;
+                    trace->start = getCurrentSimCycle();
+                    trace->depth = command.traceDepth;
+                    trace->generation = command.storageGeneration;
+                    trace->remaining = command.kind == GemmProxyCommandKind::LAUNCH ? 1 : command.arrayIds.size();
+                    if (command.kind == GemmProxyCommandKind::LAUNCH)
+                        traceComputeGroups_[command.arrayId] = trace;
+                    else for (auto id : command.arrayIds) traceComputeGroups_[id] = trace;
+                }
+            }
             statGemmProxyCommandsIssued_->addData(1);
             statGemmProxyQueueWaitCycles_->addData(cycle - command.enqueueCycle);
             if (command.kind == GemmProxyCommandKind::LAUNCH ||
@@ -2171,6 +2244,12 @@ private:
             statGemmProxyCompletionCallbacks_->addData(1);
             statGemmProxyCompletionDelayCycles_->addData(
                 cycle - completion.arrayDoneCycle);
+            if (completion.trace && --completion.trace->remaining == 0) {
+                const auto& trace = *completion.trace;
+                traceResourceInterval("wcp", "array_compute", coreId_, trace.request, 0,
+                    trace.generation, trace.submit, trace.start, trace.done, getCurrentSimCycle(),
+                    0, trace.depth);
+            }
             completion.callback(completion.arrayId, cycle);
         }
         while (!pendingAttentionStorageCompletions_.empty() &&
@@ -2336,6 +2415,11 @@ private:
     bool is2DReuse() const {
         return std::max<uint32_t>(header_.a_reuse_n_tiles, 1u) > 1 &&
                std::max<uint32_t>(header_.b_reuse_m_tiles, 1u) > 1;
+    }
+
+    static bool preRotatedInputsRequested() {
+        const char* mode = std::getenv("GOLEM_FUSION_PROJECTION_ROPE");
+        return mode != nullptr && std::strcmp(mode, "1") == 0;
     }
 
     bool usesAttentionRowMajorPanels() const {
@@ -3147,6 +3231,13 @@ private:
         txn.kSliceStrideBytes = static_cast<uint64_t>(header_.block_k) * header_.elem_bytes;
         txnIds.push_back(requestScheduler_->submitWindowTransaction(txn));
         const uint64_t txnId = txnIds.back();
+        if (usesAttentionPackedPanels() && txnId != 0 && extOutput_ != nullptr) {
+            extOutput_->output("[ATTENTION_QK_TRANSFER] core=%u txn=%" PRIu64
+                " q_panels=%u k_panels=%u q_bytes=%" PRIu64 " k_bytes=%" PRIu64 "\n",
+                coreId_, txnId, txn.matTileCount, txn.vecTileCount,
+                static_cast<uint64_t>(txn.matTileCount) * txn.matStrideBytes,
+                static_cast<uint64_t>(txn.vecTileCount) * txn.vecStrideBytes);
+        }
         windowTimelines_.push_back(WindowTimeline{
             taskIndex_, current_.task_id, currentMacroTaskId_, txn.windowId,
             kBegin, kCount, txn.kTiles, buffer, txnId, lastAccountCycle_});
@@ -3792,7 +3883,11 @@ private:
                            : (local_tile_idx % slotCount));
         const uint64_t mat_addr = header_.local_mat_ping_gm_addr + static_cast<uint64_t>(matSlotIdx) * header_.local_mat_slot_stride_bytes;
         const uint64_t vec_addr = header_.local_vec_ping_gm_addr + static_cast<uint64_t>(vecSlotIdx) * header_.local_vec_slot_stride_bytes;
-        if (header_.attention_rope && !usesAttentionPvPanels() && !qkPayloadReady_) {
+        // Pre-rotated panels still cross the same GM read port before arrays.
+        // Clearing the RoPE opcode must not turn operand reads into free copies.
+        const bool timedQkPayload = !usesAttentionPvPanels() &&
+            (header_.attention_rope || (fusionRopePanels_ && header_.attention_query_length != 0));
+        if (timedQkPayload && !qkPayloadReady_) {
             if (qkPayloadReadFailed_) return TilePayloadLoadStatus::Failed;
             if (qkPayloadReadsPending_) return TilePayloadLoadStatus::Pending;
             const uint64_t generation = attentionPvVectorReadGeneration_;
@@ -3831,7 +3926,7 @@ private:
             activeMatPayload_.assign(
                 residentMatPayload_.begin() + matOffset,
                 residentMatPayload_.begin() + matOffset + matBytes);
-        } else if (!header_.attention_rope) {
+        } else if (!timedQkPayload) {
             globalMem_->rd_from_globalmem(
                 mat_addr, static_cast<size_t>(current_.mat_stride_bytes),
                 activeMatPayload_);
@@ -3882,7 +3977,7 @@ private:
             attentionPvVectorReadInFlight_ = true;
             return TilePayloadLoadStatus::Pending;
         }
-        if (!header_.attention_rope)
+        if (!timedQkPayload)
             globalMem_->rd_from_globalmem(
                 vec_addr, static_cast<size_t>(vec_bytes), activeVecPayload_);
         if (activeMatPayload_.size() < current_.mat_stride_bytes || activeVecPayload_.size() < vec_bytes) {
@@ -4174,6 +4269,16 @@ private:
         return static_cast<uint64_t>(idx) * static_cast<uint64_t>(partialTileBytes());
     }
 
+    uint64_t traceStorageSequence_ = 0;
+    void traceStorageInterval(const char* resource, uint64_t generation,
+            uint64_t issueCycle, uint64_t startCycle, uint64_t endCycle,
+            uint64_t readyCycle, size_t bytes) {
+        if (!resourceTraceEnabled()) return;
+        const uint64_t factor = getTimeConverter("1GHz")->convertToCoreTime(1);
+        traceResourceInterval("cbuffer_model", resource, coreId_, ++traceStorageSequence_,
+            0, generation, issueCycle * factor, startCycle * factor,
+            endCycle * factor, readyCycle * factor, bytes, 0);
+    }
     uint64_t cBufferTransferCycles(size_t length, uint64_t bytesPerCycle) const {
         return length == 0 ? 0 : (static_cast<uint64_t>(length) + bytesPerCycle - 1) / bytesPerCycle;
     }
@@ -4235,6 +4340,8 @@ private:
         statAttentionTileStorageColumnWrites_->addData(1);
         statAttentionTileStorageWriteBytes_->addData(values.size());
         statAttentionTileStorageWriteWaitCycles_->addData(startCycle - issueCycle);
+        traceStorageInterval("tile_column_write", generation, issueCycle, startCycle,
+            transferEndCycle, readyCycle, values.size());
         return true;
     }
 
@@ -4274,6 +4381,8 @@ private:
         statAttentionTileStorageRowReads_->addData(1);
         statAttentionTileStorageReadBytes_->addData(rowBytes);
         statAttentionTileStorageReadWaitCycles_->addData(startCycle - issueCycle);
+        traceStorageInterval("tile_row_read", generation, issueCycle, startCycle,
+            transferEndCycle, readyCycle, rowBytes);
         return true;
     }
 
@@ -4306,6 +4415,8 @@ private:
         statAttentionAccumulatorRowWrites_->addData(1);
         statAttentionAccumulatorWriteBytes_->addData(values.size());
         statAttentionAccumulatorWriteWaitCycles_->addData(startCycle - issueCycle);
+        traceStorageInterval("accumulator_row_write", generation, issueCycle, startCycle,
+            transferEndCycle, readyCycle, values.size());
         return true;
     }
 
@@ -4341,6 +4452,8 @@ private:
         statAttentionAccumulatorRowReads_->addData(1);
         statAttentionAccumulatorReadBytes_->addData(attentionAccumulatorRowBytes_);
         statAttentionAccumulatorReadWaitCycles_->addData(startCycle - issueCycle);
+        traceStorageInterval("accumulator_row_read", generation, issueCycle, startCycle,
+            transferEndCycle, readyCycle, attentionAccumulatorRowBytes_);
         return true;
     }
 
@@ -4974,8 +5087,9 @@ private:
                 globalQueryRow / header_.attention_query_length;
             const uint32_t queryRow =
                 globalQueryRow % header_.attention_query_length;
-            const uint32_t queryBand = coreId_ %
-                std::max<uint32_t>(header_.total_groups, 1u);
+            // Tensor ownership is independent of the executing core. The
+            // existing header also uses this band for causal masking/RoPE.
+            const uint32_t queryBand = header_.attention_query_band;
             const uint32_t queryLocalTile =
                 (queryRow % header_.attention_rows_per_band) / header_.block_m;
             const uint32_t keyRow = n_tile * header_.block_n;
@@ -5049,6 +5163,7 @@ private:
     uint32_t prefetchWindowDepth_ = 1;
     bool crossMacroPrefetch_ = false;
     bool attentionPvPanelPrefetch_ = false;
+    bool fusionRopePanels_ = false;
     uint32_t windowKtiles_ = 4;
     uint64_t cBufferBytes_ = 0;
     uint64_t cBufferReadBytesPerCycle_ = 256;

@@ -1,0 +1,2036 @@
+{
+  "status": "PASS",
+  "scope": "synthetic two-layer prefill from token IDs through timed embedding and last-token LM head; host greedy selection",
+  "comparisons": {
+    "formal": {
+      "status": "PASS",
+      "identical_input_preloads": true,
+      "identical_guest_and_library": true,
+      "source_differences": [],
+      "rank4_wall_seconds": 1566.425133,
+      "rank8_wall_seconds": 1377.198749,
+      "wall_speedup": 1.1373994742134348,
+      "wall_reduction_percent": 12.080142230455394,
+      "rank4_cycles": 20167497.75,
+      "rank8_cycles": 20167497.75,
+      "logits_max_abs_difference": 0.0,
+      "logits_exactly_equal": true,
+      "next_token_id": 99037
+    },
+    "small": {
+      "status": "PASS",
+      "identical_input_preloads": true,
+      "identical_guest_and_library": true,
+      "source_differences": [
+        "src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh"
+      ],
+      "rank4_wall_seconds": 48.166472,
+      "rank8_wall_seconds": 46.140689,
+      "wall_speedup": 1.043904480923551,
+      "wall_reduction_percent": 4.2057948524857665,
+      "rank4_cycles": 1101944.75,
+      "rank8_cycles": 1101944.75,
+      "logits_max_abs_difference": 0.0,
+      "logits_exactly_equal": true,
+      "next_token_id": 5313
+    }
+  },
+  "cases": {
+    "formal_rank4": {
+      "result": {
+        "status": "PASS",
+        "shape": {
+          "S": 1024,
+          "hidden": 2048,
+          "intermediate": 8192,
+          "layers": 2
+        },
+        "numerics": {
+          "layer1_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.0009765625,
+            "tolerance": 0.004,
+            "elements": 2097152
+          },
+          "layer2_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.0009765625,
+            "tolerance": 0.004,
+            "elements": 2097152
+          },
+          "final_norm_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.00390625,
+            "tolerance": 0.006,
+            "elements": 2097152
+          },
+          "final_norm_local": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0.002,
+            "elements": 2097152
+          },
+          "last_attention": {
+            "status": "PASS",
+            "max_abs_error": 0.0001220703125,
+            "tolerance": 0.0003,
+            "elements": 2097152
+          },
+          "last_wo": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 2097152
+          },
+          "last_h1": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 2097152
+          },
+          "last_norm2": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0.002,
+            "elements": 2097152
+          },
+          "last_gate": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 8388608
+          },
+          "last_up": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 8388608
+          },
+          "last_act": {
+            "status": "PASS",
+            "max_abs_error": 0.0001220703125,
+            "tolerance": 0.0005,
+            "elements": 8388608
+          },
+          "last_gated": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 8388608
+          },
+          "last_down": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 2097152
+          },
+          "last_residual2": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 2097152
+          }
+        },
+        "lifecycle": {
+          "status": "PASS",
+          "projection_jobs": 32,
+          "decoder_ops": 288,
+          "reset_ack_count": 64,
+          "layers": 2,
+          "scratch_retire_count": 64,
+          "distinct_attention_tags": true,
+          "all_attention_jobs_checked": 128,
+          "stage_spans": {
+            "1": {
+              "1": {
+                "start_tick": 867683000,
+                "end_tick": 1527013000,
+                "span_cycles": 659330.0,
+                "workers": 16,
+                "hbm_read_bytes": 138412032,
+                "hbm_write_bytes": 4194304
+              },
+              "2": {
+                "start_tick": 1422179000,
+                "end_tick": 1564277000,
+                "span_cycles": 142098.0,
+                "workers": 16,
+                "hbm_read_bytes": 8388608,
+                "hbm_write_bytes": 4194304
+              },
+              "3": {
+                "start_tick": 1451586000,
+                "end_tick": 1620073000,
+                "span_cycles": 168487.0,
+                "workers": 16,
+                "hbm_read_bytes": 5242880,
+                "hbm_write_bytes": 4194304
+              },
+              "4": {
+                "start_tick": 1498264000,
+                "end_tick": 4311910000,
+                "span_cycles": 2813646.0,
+                "workers": 16,
+                "hbm_read_bytes": 541065216,
+                "hbm_write_bytes": 16777216
+              },
+              "5": {
+                "start_tick": 3851323000,
+                "end_tick": 6905874000,
+                "span_cycles": 3054551.0,
+                "workers": 16,
+                "hbm_read_bytes": 541065216,
+                "hbm_write_bytes": 16777216
+              },
+              "6": {
+                "start_tick": 6222364000,
+                "end_tick": 7529008000,
+                "span_cycles": 1306644.0,
+                "workers": 16,
+                "hbm_read_bytes": 16777216,
+                "hbm_write_bytes": 16777216
+              },
+              "7": {
+                "start_tick": 6812015000,
+                "end_tick": 7709671000,
+                "span_cycles": 897656.0,
+                "workers": 16,
+                "hbm_read_bytes": 33554432,
+                "hbm_write_bytes": 16777216
+              },
+              "8": {
+                "start_tick": 6912900000,
+                "end_tick": 9609586000,
+                "span_cycles": 2696686.0,
+                "workers": 16,
+                "hbm_read_bytes": 553648128,
+                "hbm_write_bytes": 4194304
+              },
+              "9": {
+                "start_tick": 8791945000,
+                "end_tick": 9640000000,
+                "span_cycles": 848055.0,
+                "workers": 16,
+                "hbm_read_bytes": 8388608,
+                "hbm_write_bytes": 4194432
+              }
+            },
+            "2": {
+              "1": {
+                "start_tick": 10222034000,
+                "end_tick": 10881185000,
+                "span_cycles": 659151.0,
+                "workers": 16,
+                "hbm_read_bytes": 138412032,
+                "hbm_write_bytes": 4194304
+              },
+              "2": {
+                "start_tick": 10776645000,
+                "end_tick": 10917886000,
+                "span_cycles": 141241.0,
+                "workers": 16,
+                "hbm_read_bytes": 8388608,
+                "hbm_write_bytes": 4194304
+              },
+              "3": {
+                "start_tick": 10804678000,
+                "end_tick": 10975295000,
+                "span_cycles": 170617.0,
+                "workers": 16,
+                "hbm_read_bytes": 5242880,
+                "hbm_write_bytes": 4194304
+              },
+              "4": {
+                "start_tick": 10852183000,
+                "end_tick": 13656620000,
+                "span_cycles": 2804437.0,
+                "workers": 16,
+                "hbm_read_bytes": 541065216,
+                "hbm_write_bytes": 16777216
+              },
+              "5": {
+                "start_tick": 13206409000,
+                "end_tick": 16247421000,
+                "span_cycles": 3041012.0,
+                "workers": 16,
+                "hbm_read_bytes": 541065216,
+                "hbm_write_bytes": 16777216
+              },
+              "6": {
+                "start_tick": 15537807000,
+                "end_tick": 16871979000,
+                "span_cycles": 1334172.0,
+                "workers": 16,
+                "hbm_read_bytes": 16777216,
+                "hbm_write_bytes": 16777216
+              },
+              "7": {
+                "start_tick": 16123658000,
+                "end_tick": 17054133000,
+                "span_cycles": 930475.0,
+                "workers": 16,
+                "hbm_read_bytes": 33554432,
+                "hbm_write_bytes": 16777216
+              },
+              "8": {
+                "start_tick": 16224208000,
+                "end_tick": 18962331000,
+                "span_cycles": 2738123.0,
+                "workers": 16,
+                "hbm_read_bytes": 553648128,
+                "hbm_write_bytes": 4194304
+              },
+              "9": {
+                "start_tick": 18121541000,
+                "end_tick": 18992858000,
+                "span_cycles": 871317.0,
+                "workers": 16,
+                "hbm_read_bytes": 8388608,
+                "hbm_write_bytes": 4194432
+              }
+            }
+          }
+        },
+        "dma_timing": {
+          "contract": "first layer X input DMA send to second layer Y final DMA ACK",
+          "ticks_per_cycle": 1000,
+          "layers": {
+            "1": {
+              "first_input_dma_tick": 324439000,
+              "last_attention_o_ack_tick": 844365250,
+              "last_y_ack_tick": 9639937750,
+              "attention_cycles": 519926.25,
+              "post_attention_cycles": 8795572.5,
+              "layer_cycles": 9315498.75,
+              "output_ack_bytes": 4194304
+            },
+            "2": {
+              "first_input_dma_tick": 9689178000,
+              "last_attention_o_ack_tick": 10199147750,
+              "last_y_ack_tick": 18992805750,
+              "attention_cycles": 509969.75,
+              "post_attention_cycles": 8793658.0,
+              "layer_cycles": 9303627.75,
+              "output_ack_bytes": 4194304
+            }
+          },
+          "layer_handoff_cycles": 49240.25,
+          "end_to_end_cycles": 18668366.75,
+          "note": "Stage spans overlap; cannot be summed. Includes handoff/reset between layers; excludes host preload/startup and final exit."
+        },
+        "memory": {
+          "per_node_used_bytes": 373198880,
+          "per_node_capacity_bytes": 2147483648,
+          "activation_slots": 2,
+          "shared_scratch": true,
+          "weight_sets": 2
+        },
+        "final_norm": {
+          "status": "PASS",
+          "workers": 16,
+          "epoch": 3,
+          "reset_ack_count": 16,
+          "first_input_dma_tick": 19008390000,
+          "last_output_ack_tick": 19057130750,
+          "last_completion_ack_tick": 19057190750,
+          "output_ack_bytes": 4194304,
+          "rmsnorm_cycles": 48740.75,
+          "handoff_cycles": 15584.25,
+          "tail_cycles": 64325.0,
+          "end_to_end_cycles": 18732691.75,
+          "contract": "first layer X input DMA send to final RMSNorm output DMA ACK",
+          "epsilon": 1e-06,
+          "io_dtype": "fp16",
+          "internal_dtype": "fp32"
+        },
+        "lm_head": {
+          "status": "PASS",
+          "token_index": 1023,
+          "M": 1,
+          "vocab": 128256,
+          "padded_vocab": 128256,
+          "vocabulary_chunk_columns": 8192,
+          "chunks": 16,
+          "tail_chunk_columns": 5376,
+          "worker_jobs": 256,
+          "reset_ack_count": 16,
+          "last_epoch": 19,
+          "next_token": {
+            "method": "greedy_argmax",
+            "token_id": 99037,
+            "logit": 0.6982421875,
+            "vocab": 128256,
+            "tie_break": "lowest token ID",
+            "host_selection_seconds": 0.000761203,
+            "status": "PASS",
+            "local_reference_token_id": 99037,
+            "composed_reference_token_id": 99037,
+            "composed_reference_agrees": true,
+            "timing_scope": "host argmax only; excluded from accelerator cycles"
+          },
+          "local_reference": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 128256
+          },
+          "composed_reference": {
+            "status": "PASS",
+            "max_abs_error": 0.000244140625,
+            "tolerance": 0.006,
+            "elements": 128256
+          },
+          "first_input_dma_tick": 19067094000,
+          "last_logits_ack_tick": 20408519750,
+          "last_completion_ack_tick": 20408586750,
+          "input_and_weight_dma_bytes": 526385152,
+          "output_ack_bytes": 256512,
+          "lm_head_cycles": 1341425.75,
+          "handoff_cycles": 9963.25,
+          "tail_cycles": 1351389.0,
+          "end_to_end_cycles": 20084080.75,
+          "contract": "first layer X input DMA send to last-token logits final DMA ACK"
+        },
+        "embedding": {
+          "status": "PASS",
+          "tokens": 1024,
+          "hidden": 2048,
+          "vocab": 128256,
+          "numerics": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 2097152
+          },
+          "workers": 16,
+          "reset_ack_count": 16,
+          "first_token_ids_dma_tick": 241022000,
+          "last_embedding_output_ack_tick": 272530625,
+          "last_worker_completion_tick": 272563000,
+          "first_decoder_input_dma_tick": 324439000,
+          "input_token_bytes": 4096,
+          "table_read_bytes": 4194304,
+          "output_ack_bytes": 4194304,
+          "embedding_cycles": 31508.625,
+          "handoff_cycles": 51908.375,
+          "end_to_end_cycles": 20167497.75,
+          "contract": "first token-ID DMA send to last-token logits final output DMA ACK"
+        }
+      },
+      "wall": {
+        "status": "PASS",
+        "mpi_ranks": 4,
+        "cpu_set": "0-3",
+        "sst_wall_seconds": 1566.425133,
+        "driver_wall_seconds": 1628.9845804999932,
+        "timing_scope": "SST wall excludes input generation and host validation; driver wall covers run_sst and validation, excluding prepare before launch"
+      },
+      "provenance": {
+        "command": [
+          "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+          "--projection",
+          "--query-length",
+          "1024",
+          "--kv-length",
+          "1024",
+          "--num-query-heads",
+          "32",
+          "--num-kv-heads",
+          "8",
+          "--head-dim",
+          "64",
+          "--causal",
+          "--rope",
+          "--artifact-root",
+          "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/formal_rank4"
+        ],
+        "source_sha256": {
+          "src/sst/elements/golem/sfu/sfu.cc": "2959142a0a718ed176bfc56343e4ea11675f6010751a4662647c46432561ce37",
+          "src/sst/elements/golem/sfu/sfu.h": "aea6610f6398a294df90794f165837f539cc5e9346e12dca2969e0d4c88eadc5",
+          "src/sst/elements/golem/sfu/vector_math.h": "7ba2167e7ac48d65ceb939bbafb8306ab970c898525ebe63e3b83a4cb87ec548",
+          "src/sst/elements/golem/sfu/hardware_pipeline.h": "163c4e9c0ae0d9862ed0d9233533b053d9d0ff7bcfdcf0897f772ddaf4795a26",
+          "src/sst/elements/golem/sfu/vector_pipeline.h": "80c3e3a1edf311a7ab0f0e20d76918dbb5d226ca517676e28d9cb65c54d55f91",
+          "src/sst/elements/golem/tests/architecture/cpu_builder.py": "6a5f55f8ed8e8d11b1d5357e84b00b24fb70b4a5f8f52cb08a180550d9681f32",
+          "src/sst/elements/golem/attention/decoderMemoryLayout.h": "2ffc7c781c076dd9142624498d615abd41e8a36ba12ffae2e4a495da181f44dd",
+          "src/sst/elements/golem/attention/projectionJobAbi.h": "385557026058436c816b0f50074d26d77ae5f905d6b20906098ab3aaa796b1e1",
+          "src/sst/elements/golem/attention/projectionJob.h": "46075a47695f52e4e2ed45bbd9db10b12ee8c916acedb194955411c5018a54d4",
+          "src/sst/elements/golem/attention/decoderOpAbi.h": "ac9e5984b3d3b73b3c9796155ddc0a07bce0a12fe2e69a415e1649b852843be7",
+          "src/sst/elements/golem/attention/decoderOpJob.h": "8169bb3cabcbddbca25f444ef6082ebc73c3176c6d35cabf2959540890437afa",
+          "src/sst/elements/golem/rocc/roccAnalog.h": "3a4c5413ee8843b61450fd06cc62741e0f70a69a82bb1587b631d5b70e65ff85",
+          "src/sst/elements/golem/workercmdproc/workercmdproc.h": "4b0d305d0ef076b01460eea3f6ff9d07857db18bd4e27ebe1ff31bd00fc958f6",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h": "e128f46b41b9f492cf89b8ba21dce0eec2f6a33f1da8ab46c390f9bf296877a9",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_decoder_runtime.h": "17c90baa77cc6618249c12d6ff2132b53312e236d8d6e64c22486b128990f1cb",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "a428e23e024154157eedca9b6fb988e15edb3af81bc0ef3aecff26556e884da0",
+          "src/sst/elements/golem/tests/small/muticore_attention/dump_decoder_layout.cpp": "b121f6f39018f037bd70a41b23cefcac2de63f3c2e406939f656ada60ca6b951",
+          "src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh": "ea5b001ee4b846b0f9353f981cc9bddf57e625cec8b4c5cff6858c0f8ccde743",
+          "src/sst/elements/golem/tests/tools/gen_hbm_init.py": "aa8f8c8c8f07424ee993e7153b5f0ddd014a0d94facf859eb1267b42db21d809",
+          "src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py": "6f389c402414733fe73bc7d4b6bca0f147732f1c08d208e2dd74a0e0b18a2d0b",
+          "baseline/attention_cluster_8qk_8pv/run_decoder_stack.py": "197c5ad1487568552eaa544faa50809a51b108a56d0ed86d163491cd866c738e",
+          "baseline/attention_cluster_8qk_8pv/run_sst.sh": "d160c34290a4b7845099d204e403342f23c503904ca8575cfe45adeb577cdbe6",
+          "baseline/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py": "4a311ee6e3e600f9c01a608b7f23735afd9dec13306d5c1073e8f00bfce75f07",
+          "src/sst/elements/golem/tests/architecture/partition_planner.py": "3bc27ee1d63f6cd4396ca5bb79afc0fd438fdc716d16cbea6b13e4e76c244f9a",
+          "baseline/attention_cluster_8qk_8pv/verify_lm_head.py": "8ee0fe34f0b34f4aa98aedd0f50276b4afc11a6ec39698a691fe9e84f4c2b3a8",
+          "baseline/attention_cluster_8qk_8pv/select_next_token.py": "39c699df08a371c9f640042c5eda386d0e38b107dabbb0be2a39a08e86552ee2",
+          "baseline/attention_cluster_8qk_8pv/verify_embedding.py": "5f3ba79d069be50ca4563e68167e17d179bd4742c85f904ffd1da34083ee1d34"
+        },
+        "guest_sha256": "9e0fb9052cb2e05ad9cd944662d060c2727ccda6bb565bcedbff5a7f93ceecd4",
+        "sst_library_sha256": "8ba680cac28bdb107430a6592b48c6a176d564047f15364db81102b05db82383",
+        "environment": {
+          "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+          "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+          "GOLEM_LOCAL_GM_READ_PORTS": "1",
+          "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+          "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+          "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+          "GOLEM_MPI_RANKS": "4",
+          "VANADIS_CPU_CLOCK": "1.0GHz",
+          "GOLEM_ARRAY_CLOCK": "1.0GHz",
+          "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+          "GOLEM_ARRAY_PIPELINE_DEPTH": "2",
+          "GOLEM_PROJECTION_CBUFFER_PARTIAL": "1",
+          "GOLEM_PROJECTION_WRAP_PREFETCH": "1",
+          "GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD": "1",
+          "GOLEM_FUSION_NORM_PROJECTION": "1",
+          "GOLEM_FUSION_PROJECTION_ROPE": "0",
+          "GOLEM_FUSION_SKIP_AUDIT_OUTPUT": "1",
+          "GOLEM_PROJECTION_PACKED_NORM_INPUT": "1",
+          "GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET": "0",
+          "GOLEM_PROJECTION_ARRAYS": "64",
+          "GOLEM_PROJECTION_RETAIN_OUTPUT": "1",
+          "GOLEM_PROJECTION_PIPELINE": "1",
+          "GOLEM_PROJECTION_SHARED_INPUT": "1",
+          "GOLEM_PROJECTION_WEIGHT_PREFETCH": "1",
+          "GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH": "4",
+          "GOLEM_ARRAY_OPERAND_CONTEXT_BANKS": "1",
+          "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE": "0",
+          "GOLEM_ATTENTION_CAUSAL_BALANCE": "1",
+          "GOLEM_PROJECTION_ROW_FIRST": "0",
+          "GOLEM_PROJECTION_INPUT_PAIR_PREFETCH": "1",
+          "GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH": "1",
+          "GOLEM_PROJECTION_ARRAY_GROUPS": "1",
+          "GOLEM_PROJECTION_OVERLAP_TRACE": "0",
+          "GOLEM_CRITICAL_PATH_TRACE": "1",
+          "GOLEM_RESOURCE_TRACE_DOMAINS": "gm",
+          "GOLEM_DIAGNOSTIC_ORACLE": "none",
+          "GOLEM_MPI_RANK_LOG_ROOT": "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/formal_rank4/mpi_rank_output",
+          "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 0-3 --output-filename /data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/formal_rank4/mpi_rank_output",
+          "GOLEM_DECODER_LAYERS": "2",
+          "GOLEM_DECODER_STACK_MANIFEST": "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/formal_rank4/decoder_stack_inputs.json",
+          "GOLEM_ATTENTION_GUEST_EXECUTABLE": "/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/small/muticore_attention/riscv64/decoder-embedding/fused_attention",
+          "GOLEM_DECODER_NODE_BYTES": "2147483648",
+          "GOLEM_DECODER_VOCAB": "128256"
+        }
+      },
+      "cycle_breakdown": {
+        "embedding": 31508.625,
+        "embedding_handoff": 51908.375,
+        "layer1_norm_qkv_attention": 519926.25,
+        "layer1_post_attention": 8795572.5,
+        "layer_handoff": 49240.25,
+        "layer2_norm_qkv_attention": 509969.75,
+        "layer2_post_attention": 8793658.0,
+        "final_norm_handoff": 15584.25,
+        "final_norm": 48740.75,
+        "lm_head_handoff": 9963.25,
+        "lm_head": 1341425.75
+      }
+    },
+    "formal_rank8": {
+      "result": {
+        "status": "PASS",
+        "shape": {
+          "S": 1024,
+          "hidden": 2048,
+          "intermediate": 8192,
+          "layers": 2
+        },
+        "numerics": {
+          "layer1_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.0009765625,
+            "tolerance": 0.004,
+            "elements": 2097152
+          },
+          "layer2_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.0009765625,
+            "tolerance": 0.004,
+            "elements": 2097152
+          },
+          "final_norm_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.00390625,
+            "tolerance": 0.006,
+            "elements": 2097152
+          },
+          "final_norm_local": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0.002,
+            "elements": 2097152
+          },
+          "last_attention": {
+            "status": "PASS",
+            "max_abs_error": 0.0001220703125,
+            "tolerance": 0.0003,
+            "elements": 2097152
+          },
+          "last_wo": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 2097152
+          },
+          "last_h1": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 2097152
+          },
+          "last_norm2": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0.002,
+            "elements": 2097152
+          },
+          "last_gate": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 8388608
+          },
+          "last_up": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 8388608
+          },
+          "last_act": {
+            "status": "PASS",
+            "max_abs_error": 0.0001220703125,
+            "tolerance": 0.0005,
+            "elements": 8388608
+          },
+          "last_gated": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 8388608
+          },
+          "last_down": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 2097152
+          },
+          "last_residual2": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 2097152
+          }
+        },
+        "lifecycle": {
+          "status": "PASS",
+          "projection_jobs": 32,
+          "decoder_ops": 288,
+          "reset_ack_count": 64,
+          "layers": 2,
+          "scratch_retire_count": 64,
+          "distinct_attention_tags": true,
+          "all_attention_jobs_checked": 128,
+          "stage_spans": {
+            "1": {
+              "1": {
+                "start_tick": 867683000,
+                "end_tick": 1527013000,
+                "span_cycles": 659330.0,
+                "workers": 16,
+                "hbm_read_bytes": 138412032,
+                "hbm_write_bytes": 4194304
+              },
+              "2": {
+                "start_tick": 1422179000,
+                "end_tick": 1564277000,
+                "span_cycles": 142098.0,
+                "workers": 16,
+                "hbm_read_bytes": 8388608,
+                "hbm_write_bytes": 4194304
+              },
+              "3": {
+                "start_tick": 1451586000,
+                "end_tick": 1620073000,
+                "span_cycles": 168487.0,
+                "workers": 16,
+                "hbm_read_bytes": 5242880,
+                "hbm_write_bytes": 4194304
+              },
+              "4": {
+                "start_tick": 1498264000,
+                "end_tick": 4311910000,
+                "span_cycles": 2813646.0,
+                "workers": 16,
+                "hbm_read_bytes": 541065216,
+                "hbm_write_bytes": 16777216
+              },
+              "5": {
+                "start_tick": 3851323000,
+                "end_tick": 6905874000,
+                "span_cycles": 3054551.0,
+                "workers": 16,
+                "hbm_read_bytes": 541065216,
+                "hbm_write_bytes": 16777216
+              },
+              "6": {
+                "start_tick": 6222364000,
+                "end_tick": 7529008000,
+                "span_cycles": 1306644.0,
+                "workers": 16,
+                "hbm_read_bytes": 16777216,
+                "hbm_write_bytes": 16777216
+              },
+              "7": {
+                "start_tick": 6812015000,
+                "end_tick": 7709671000,
+                "span_cycles": 897656.0,
+                "workers": 16,
+                "hbm_read_bytes": 33554432,
+                "hbm_write_bytes": 16777216
+              },
+              "8": {
+                "start_tick": 6912900000,
+                "end_tick": 9609586000,
+                "span_cycles": 2696686.0,
+                "workers": 16,
+                "hbm_read_bytes": 553648128,
+                "hbm_write_bytes": 4194304
+              },
+              "9": {
+                "start_tick": 8791945000,
+                "end_tick": 9640000000,
+                "span_cycles": 848055.0,
+                "workers": 16,
+                "hbm_read_bytes": 8388608,
+                "hbm_write_bytes": 4194432
+              }
+            },
+            "2": {
+              "1": {
+                "start_tick": 10222034000,
+                "end_tick": 10881185000,
+                "span_cycles": 659151.0,
+                "workers": 16,
+                "hbm_read_bytes": 138412032,
+                "hbm_write_bytes": 4194304
+              },
+              "2": {
+                "start_tick": 10776645000,
+                "end_tick": 10917886000,
+                "span_cycles": 141241.0,
+                "workers": 16,
+                "hbm_read_bytes": 8388608,
+                "hbm_write_bytes": 4194304
+              },
+              "3": {
+                "start_tick": 10804678000,
+                "end_tick": 10975295000,
+                "span_cycles": 170617.0,
+                "workers": 16,
+                "hbm_read_bytes": 5242880,
+                "hbm_write_bytes": 4194304
+              },
+              "4": {
+                "start_tick": 10852183000,
+                "end_tick": 13656620000,
+                "span_cycles": 2804437.0,
+                "workers": 16,
+                "hbm_read_bytes": 541065216,
+                "hbm_write_bytes": 16777216
+              },
+              "5": {
+                "start_tick": 13206409000,
+                "end_tick": 16247421000,
+                "span_cycles": 3041012.0,
+                "workers": 16,
+                "hbm_read_bytes": 541065216,
+                "hbm_write_bytes": 16777216
+              },
+              "6": {
+                "start_tick": 15537807000,
+                "end_tick": 16871979000,
+                "span_cycles": 1334172.0,
+                "workers": 16,
+                "hbm_read_bytes": 16777216,
+                "hbm_write_bytes": 16777216
+              },
+              "7": {
+                "start_tick": 16123658000,
+                "end_tick": 17054133000,
+                "span_cycles": 930475.0,
+                "workers": 16,
+                "hbm_read_bytes": 33554432,
+                "hbm_write_bytes": 16777216
+              },
+              "8": {
+                "start_tick": 16224208000,
+                "end_tick": 18962331000,
+                "span_cycles": 2738123.0,
+                "workers": 16,
+                "hbm_read_bytes": 553648128,
+                "hbm_write_bytes": 4194304
+              },
+              "9": {
+                "start_tick": 18121541000,
+                "end_tick": 18992858000,
+                "span_cycles": 871317.0,
+                "workers": 16,
+                "hbm_read_bytes": 8388608,
+                "hbm_write_bytes": 4194432
+              }
+            }
+          }
+        },
+        "dma_timing": {
+          "contract": "first layer X input DMA send to second layer Y final DMA ACK",
+          "ticks_per_cycle": 1000,
+          "layers": {
+            "1": {
+              "first_input_dma_tick": 324439000,
+              "last_attention_o_ack_tick": 844365250,
+              "last_y_ack_tick": 9639937750,
+              "attention_cycles": 519926.25,
+              "post_attention_cycles": 8795572.5,
+              "layer_cycles": 9315498.75,
+              "output_ack_bytes": 4194304
+            },
+            "2": {
+              "first_input_dma_tick": 9689178000,
+              "last_attention_o_ack_tick": 10199147750,
+              "last_y_ack_tick": 18992805750,
+              "attention_cycles": 509969.75,
+              "post_attention_cycles": 8793658.0,
+              "layer_cycles": 9303627.75,
+              "output_ack_bytes": 4194304
+            }
+          },
+          "layer_handoff_cycles": 49240.25,
+          "end_to_end_cycles": 18668366.75,
+          "note": "Stage spans overlap; cannot be summed. Includes handoff/reset between layers; excludes host preload/startup and final exit."
+        },
+        "memory": {
+          "per_node_used_bytes": 373198880,
+          "per_node_capacity_bytes": 2147483648,
+          "activation_slots": 2,
+          "shared_scratch": true,
+          "weight_sets": 2
+        },
+        "final_norm": {
+          "status": "PASS",
+          "workers": 16,
+          "epoch": 3,
+          "reset_ack_count": 16,
+          "first_input_dma_tick": 19008390000,
+          "last_output_ack_tick": 19057130750,
+          "last_completion_ack_tick": 19057190750,
+          "output_ack_bytes": 4194304,
+          "rmsnorm_cycles": 48740.75,
+          "handoff_cycles": 15584.25,
+          "tail_cycles": 64325.0,
+          "end_to_end_cycles": 18732691.75,
+          "contract": "first layer X input DMA send to final RMSNorm output DMA ACK",
+          "epsilon": 1e-06,
+          "io_dtype": "fp16",
+          "internal_dtype": "fp32"
+        },
+        "lm_head": {
+          "status": "PASS",
+          "token_index": 1023,
+          "M": 1,
+          "vocab": 128256,
+          "padded_vocab": 128256,
+          "vocabulary_chunk_columns": 8192,
+          "chunks": 16,
+          "tail_chunk_columns": 5376,
+          "worker_jobs": 256,
+          "reset_ack_count": 16,
+          "last_epoch": 19,
+          "next_token": {
+            "method": "greedy_argmax",
+            "token_id": 99037,
+            "logit": 0.6982421875,
+            "vocab": 128256,
+            "tie_break": "lowest token ID",
+            "host_selection_seconds": 0.000763892,
+            "status": "PASS",
+            "local_reference_token_id": 99037,
+            "composed_reference_token_id": 99037,
+            "composed_reference_agrees": true,
+            "timing_scope": "host argmax only; excluded from accelerator cycles"
+          },
+          "local_reference": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 128256
+          },
+          "composed_reference": {
+            "status": "PASS",
+            "max_abs_error": 0.000244140625,
+            "tolerance": 0.006,
+            "elements": 128256
+          },
+          "first_input_dma_tick": 19067094000,
+          "last_logits_ack_tick": 20408519750,
+          "last_completion_ack_tick": 20408586750,
+          "input_and_weight_dma_bytes": 526385152,
+          "output_ack_bytes": 256512,
+          "lm_head_cycles": 1341425.75,
+          "handoff_cycles": 9963.25,
+          "tail_cycles": 1351389.0,
+          "end_to_end_cycles": 20084080.75,
+          "contract": "first layer X input DMA send to last-token logits final DMA ACK"
+        },
+        "embedding": {
+          "status": "PASS",
+          "tokens": 1024,
+          "hidden": 2048,
+          "vocab": 128256,
+          "numerics": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 2097152
+          },
+          "workers": 16,
+          "reset_ack_count": 16,
+          "first_token_ids_dma_tick": 241022000,
+          "last_embedding_output_ack_tick": 272530625,
+          "last_worker_completion_tick": 272563000,
+          "first_decoder_input_dma_tick": 324439000,
+          "input_token_bytes": 4096,
+          "table_read_bytes": 4194304,
+          "output_ack_bytes": 4194304,
+          "embedding_cycles": 31508.625,
+          "handoff_cycles": 51908.375,
+          "end_to_end_cycles": 20167497.75,
+          "contract": "first token-ID DMA send to last-token logits final output DMA ACK"
+        }
+      },
+      "wall": {
+        "status": "PASS",
+        "mpi_ranks": 8,
+        "cpu_set": "0-7",
+        "sst_wall_seconds": 1377.198749,
+        "driver_wall_seconds": 1440.1944780320046,
+        "timing_scope": "SST wall excludes input generation and host validation; driver wall covers run_sst and validation, excluding prepare before launch"
+      },
+      "provenance": {
+        "command": [
+          "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+          "--projection",
+          "--query-length",
+          "1024",
+          "--kv-length",
+          "1024",
+          "--num-query-heads",
+          "32",
+          "--num-kv-heads",
+          "8",
+          "--head-dim",
+          "64",
+          "--causal",
+          "--rope",
+          "--artifact-root",
+          "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/formal_rank8"
+        ],
+        "source_sha256": {
+          "src/sst/elements/golem/sfu/sfu.cc": "2959142a0a718ed176bfc56343e4ea11675f6010751a4662647c46432561ce37",
+          "src/sst/elements/golem/sfu/sfu.h": "aea6610f6398a294df90794f165837f539cc5e9346e12dca2969e0d4c88eadc5",
+          "src/sst/elements/golem/sfu/vector_math.h": "7ba2167e7ac48d65ceb939bbafb8306ab970c898525ebe63e3b83a4cb87ec548",
+          "src/sst/elements/golem/sfu/hardware_pipeline.h": "163c4e9c0ae0d9862ed0d9233533b053d9d0ff7bcfdcf0897f772ddaf4795a26",
+          "src/sst/elements/golem/sfu/vector_pipeline.h": "80c3e3a1edf311a7ab0f0e20d76918dbb5d226ca517676e28d9cb65c54d55f91",
+          "src/sst/elements/golem/tests/architecture/cpu_builder.py": "6a5f55f8ed8e8d11b1d5357e84b00b24fb70b4a5f8f52cb08a180550d9681f32",
+          "src/sst/elements/golem/attention/decoderMemoryLayout.h": "2ffc7c781c076dd9142624498d615abd41e8a36ba12ffae2e4a495da181f44dd",
+          "src/sst/elements/golem/attention/projectionJobAbi.h": "385557026058436c816b0f50074d26d77ae5f905d6b20906098ab3aaa796b1e1",
+          "src/sst/elements/golem/attention/projectionJob.h": "46075a47695f52e4e2ed45bbd9db10b12ee8c916acedb194955411c5018a54d4",
+          "src/sst/elements/golem/attention/decoderOpAbi.h": "ac9e5984b3d3b73b3c9796155ddc0a07bce0a12fe2e69a415e1649b852843be7",
+          "src/sst/elements/golem/attention/decoderOpJob.h": "8169bb3cabcbddbca25f444ef6082ebc73c3176c6d35cabf2959540890437afa",
+          "src/sst/elements/golem/rocc/roccAnalog.h": "3a4c5413ee8843b61450fd06cc62741e0f70a69a82bb1587b631d5b70e65ff85",
+          "src/sst/elements/golem/workercmdproc/workercmdproc.h": "4b0d305d0ef076b01460eea3f6ff9d07857db18bd4e27ebe1ff31bd00fc958f6",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h": "e128f46b41b9f492cf89b8ba21dce0eec2f6a33f1da8ab46c390f9bf296877a9",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_decoder_runtime.h": "17c90baa77cc6618249c12d6ff2132b53312e236d8d6e64c22486b128990f1cb",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "a428e23e024154157eedca9b6fb988e15edb3af81bc0ef3aecff26556e884da0",
+          "src/sst/elements/golem/tests/small/muticore_attention/dump_decoder_layout.cpp": "b121f6f39018f037bd70a41b23cefcac2de63f3c2e406939f656ada60ca6b951",
+          "src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh": "ea5b001ee4b846b0f9353f981cc9bddf57e625cec8b4c5cff6858c0f8ccde743",
+          "src/sst/elements/golem/tests/tools/gen_hbm_init.py": "aa8f8c8c8f07424ee993e7153b5f0ddd014a0d94facf859eb1267b42db21d809",
+          "src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py": "6f389c402414733fe73bc7d4b6bca0f147732f1c08d208e2dd74a0e0b18a2d0b",
+          "baseline/attention_cluster_8qk_8pv/run_decoder_stack.py": "197c5ad1487568552eaa544faa50809a51b108a56d0ed86d163491cd866c738e",
+          "baseline/attention_cluster_8qk_8pv/run_sst.sh": "d160c34290a4b7845099d204e403342f23c503904ca8575cfe45adeb577cdbe6",
+          "baseline/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py": "4a311ee6e3e600f9c01a608b7f23735afd9dec13306d5c1073e8f00bfce75f07",
+          "src/sst/elements/golem/tests/architecture/partition_planner.py": "3bc27ee1d63f6cd4396ca5bb79afc0fd438fdc716d16cbea6b13e4e76c244f9a",
+          "baseline/attention_cluster_8qk_8pv/verify_lm_head.py": "8ee0fe34f0b34f4aa98aedd0f50276b4afc11a6ec39698a691fe9e84f4c2b3a8",
+          "baseline/attention_cluster_8qk_8pv/select_next_token.py": "39c699df08a371c9f640042c5eda386d0e38b107dabbb0be2a39a08e86552ee2",
+          "baseline/attention_cluster_8qk_8pv/verify_embedding.py": "5f3ba79d069be50ca4563e68167e17d179bd4742c85f904ffd1da34083ee1d34"
+        },
+        "guest_sha256": "9e0fb9052cb2e05ad9cd944662d060c2727ccda6bb565bcedbff5a7f93ceecd4",
+        "sst_library_sha256": "8ba680cac28bdb107430a6592b48c6a176d564047f15364db81102b05db82383",
+        "environment": {
+          "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+          "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+          "GOLEM_LOCAL_GM_READ_PORTS": "1",
+          "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+          "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+          "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+          "GOLEM_MPI_RANKS": "8",
+          "VANADIS_CPU_CLOCK": "1.0GHz",
+          "GOLEM_ARRAY_CLOCK": "1.0GHz",
+          "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+          "GOLEM_ARRAY_PIPELINE_DEPTH": "2",
+          "GOLEM_PROJECTION_CBUFFER_PARTIAL": "1",
+          "GOLEM_PROJECTION_WRAP_PREFETCH": "1",
+          "GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD": "1",
+          "GOLEM_FUSION_NORM_PROJECTION": "1",
+          "GOLEM_FUSION_PROJECTION_ROPE": "0",
+          "GOLEM_FUSION_SKIP_AUDIT_OUTPUT": "1",
+          "GOLEM_PROJECTION_PACKED_NORM_INPUT": "1",
+          "GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET": "0",
+          "GOLEM_PROJECTION_ARRAYS": "64",
+          "GOLEM_PROJECTION_RETAIN_OUTPUT": "1",
+          "GOLEM_PROJECTION_PIPELINE": "1",
+          "GOLEM_PROJECTION_SHARED_INPUT": "1",
+          "GOLEM_PROJECTION_WEIGHT_PREFETCH": "1",
+          "GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH": "4",
+          "GOLEM_ARRAY_OPERAND_CONTEXT_BANKS": "1",
+          "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE": "0",
+          "GOLEM_ATTENTION_CAUSAL_BALANCE": "1",
+          "GOLEM_PROJECTION_ROW_FIRST": "0",
+          "GOLEM_PROJECTION_INPUT_PAIR_PREFETCH": "1",
+          "GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH": "1",
+          "GOLEM_PROJECTION_ARRAY_GROUPS": "1",
+          "GOLEM_PROJECTION_OVERLAP_TRACE": "0",
+          "GOLEM_CRITICAL_PATH_TRACE": "1",
+          "GOLEM_RESOURCE_TRACE_DOMAINS": "gm",
+          "GOLEM_DIAGNOSTIC_ORACLE": "none",
+          "GOLEM_MPI_RANK_LOG_ROOT": "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/formal_rank8/mpi_rank_output",
+          "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 0-7 --output-filename /data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/formal_rank8/mpi_rank_output",
+          "GOLEM_DECODER_LAYERS": "2",
+          "GOLEM_DECODER_STACK_MANIFEST": "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/formal_rank8/decoder_stack_inputs.json",
+          "GOLEM_ATTENTION_GUEST_EXECUTABLE": "/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/small/muticore_attention/riscv64/decoder-embedding/fused_attention",
+          "GOLEM_DECODER_NODE_BYTES": "2147483648",
+          "GOLEM_DECODER_VOCAB": "128256"
+        }
+      },
+      "cycle_breakdown": {
+        "embedding": 31508.625,
+        "embedding_handoff": 51908.375,
+        "layer1_norm_qkv_attention": 519926.25,
+        "layer1_post_attention": 8795572.5,
+        "layer_handoff": 49240.25,
+        "layer2_norm_qkv_attention": 509969.75,
+        "layer2_post_attention": 8793658.0,
+        "final_norm_handoff": 15584.25,
+        "final_norm": 48740.75,
+        "lm_head_handoff": 9963.25,
+        "lm_head": 1341425.75
+      }
+    },
+    "small_rank4": {
+      "result": {
+        "status": "PASS",
+        "shape": {
+          "S": 1024,
+          "hidden": 256,
+          "intermediate": 1024,
+          "layers": 2
+        },
+        "numerics": {
+          "layer1_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.00048828125,
+            "tolerance": 0.004,
+            "elements": 262144
+          },
+          "layer2_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.00048828125,
+            "tolerance": 0.004,
+            "elements": 262144
+          },
+          "final_norm_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.00390625,
+            "tolerance": 0.006,
+            "elements": 262144
+          },
+          "final_norm_local": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0.002,
+            "elements": 262144
+          },
+          "last_attention": {
+            "status": "PASS",
+            "max_abs_error": 6.103515625e-05,
+            "tolerance": 0.0003,
+            "elements": 262144
+          },
+          "last_wo": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 262144
+          },
+          "last_h1": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 262144
+          },
+          "last_norm2": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0.002,
+            "elements": 262144
+          },
+          "last_gate": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 1048576
+          },
+          "last_up": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 1048576
+          },
+          "last_act": {
+            "status": "PASS",
+            "max_abs_error": 0.0001220703125,
+            "tolerance": 0.0005,
+            "elements": 1048576
+          },
+          "last_gated": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 1048576
+          },
+          "last_down": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 262144
+          },
+          "last_residual2": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 262144
+          }
+        },
+        "lifecycle": {
+          "status": "PASS",
+          "projection_jobs": 32,
+          "decoder_ops": 288,
+          "reset_ack_count": 64,
+          "layers": 2,
+          "scratch_retire_count": 64,
+          "distinct_attention_tags": true,
+          "all_attention_jobs_checked": 32,
+          "stage_spans": {
+            "1": {
+              "1": {
+                "start_tick": 387634000,
+                "end_tick": 414867000,
+                "span_cycles": 27233.0,
+                "workers": 16,
+                "hbm_read_bytes": 2621440,
+                "hbm_write_bytes": 524288
+              },
+              "2": {
+                "start_tick": 405565000,
+                "end_tick": 418709000,
+                "span_cycles": 13144.0,
+                "workers": 16,
+                "hbm_read_bytes": 1048576,
+                "hbm_write_bytes": 524288
+              },
+              "3": {
+                "start_tick": 409540000,
+                "end_tick": 426896000,
+                "span_cycles": 17356.0,
+                "workers": 16,
+                "hbm_read_bytes": 540672,
+                "hbm_write_bytes": 524288
+              },
+              "4": {
+                "start_tick": 417845000,
+                "end_tick": 541267000,
+                "span_cycles": 123422.0,
+                "workers": 16,
+                "hbm_read_bytes": 8912896,
+                "hbm_write_bytes": 2097152
+              },
+              "5": {
+                "start_tick": 498287000,
+                "end_tick": 644700000,
+                "span_cycles": 146413.0,
+                "workers": 16,
+                "hbm_read_bytes": 8912896,
+                "hbm_write_bytes": 2097152
+              },
+              "6": {
+                "start_tick": 583283000,
+                "end_tick": 720958000,
+                "span_cycles": 137675.0,
+                "workers": 16,
+                "hbm_read_bytes": 2097152,
+                "hbm_write_bytes": 2097152
+              },
+              "7": {
+                "start_tick": 655834000,
+                "end_tick": 736844000,
+                "span_cycles": 81010.0,
+                "workers": 16,
+                "hbm_read_bytes": 4194304,
+                "hbm_write_bytes": 2097152
+              },
+              "8": {
+                "start_tick": 668715000,
+                "end_tick": 780056000,
+                "span_cycles": 111341.0,
+                "workers": 16,
+                "hbm_read_bytes": 10485760,
+                "hbm_write_bytes": 524288
+              },
+              "9": {
+                "start_tick": 712555000,
+                "end_tick": 784132000,
+                "span_cycles": 71577.0,
+                "workers": 16,
+                "hbm_read_bytes": 1048576,
+                "hbm_write_bytes": 524416
+              }
+            },
+            "2": {
+              "1": {
+                "start_tick": 898796000,
+                "end_tick": 925723000,
+                "span_cycles": 26927.0,
+                "workers": 16,
+                "hbm_read_bytes": 2621440,
+                "hbm_write_bytes": 524288
+              },
+              "2": {
+                "start_tick": 916444000,
+                "end_tick": 929282000,
+                "span_cycles": 12838.0,
+                "workers": 16,
+                "hbm_read_bytes": 1048576,
+                "hbm_write_bytes": 524288
+              },
+              "3": {
+                "start_tick": 920151000,
+                "end_tick": 937368000,
+                "span_cycles": 17217.0,
+                "workers": 16,
+                "hbm_read_bytes": 540672,
+                "hbm_write_bytes": 524288
+              },
+              "4": {
+                "start_tick": 928418000,
+                "end_tick": 1049108000,
+                "span_cycles": 120690.0,
+                "workers": 16,
+                "hbm_read_bytes": 8912896,
+                "hbm_write_bytes": 2097152
+              },
+              "5": {
+                "start_tick": 1010490000,
+                "end_tick": 1156168000,
+                "span_cycles": 145678.0,
+                "workers": 16,
+                "hbm_read_bytes": 8912896,
+                "hbm_write_bytes": 2097152
+              },
+              "6": {
+                "start_tick": 1095119000,
+                "end_tick": 1233130000,
+                "span_cycles": 138011.0,
+                "workers": 16,
+                "hbm_read_bytes": 2097152,
+                "hbm_write_bytes": 2097152
+              },
+              "7": {
+                "start_tick": 1167702000,
+                "end_tick": 1251475000,
+                "span_cycles": 83773.0,
+                "workers": 16,
+                "hbm_read_bytes": 4194304,
+                "hbm_write_bytes": 2097152
+              },
+              "8": {
+                "start_tick": 1180191000,
+                "end_tick": 1293847000,
+                "span_cycles": 113656.0,
+                "workers": 16,
+                "hbm_read_bytes": 10485760,
+                "hbm_write_bytes": 524288
+              },
+              "9": {
+                "start_tick": 1223358000,
+                "end_tick": 1297754000,
+                "span_cycles": 74396.0,
+                "workers": 16,
+                "hbm_read_bytes": 1048576,
+                "hbm_write_bytes": 524416
+              }
+            }
+          }
+        },
+        "dma_timing": {
+          "contract": "first layer X input DMA send to second layer Y final DMA ACK",
+          "ticks_per_cycle": 1000,
+          "layers": {
+            "1": {
+              "first_input_dma_tick": 312618000,
+              "last_attention_o_ack_tick": 364355125,
+              "last_y_ack_tick": 784079750,
+              "attention_cycles": 51737.125,
+              "post_attention_cycles": 419724.625,
+              "layer_cycles": 471461.75,
+              "output_ack_bytes": 524288
+            },
+            "2": {
+              "first_input_dma_tick": 833335000,
+              "last_attention_o_ack_tick": 876028750,
+              "last_y_ack_tick": 1297697750,
+              "attention_cycles": 42693.75,
+              "post_attention_cycles": 421669.0,
+              "layer_cycles": 464362.75,
+              "output_ack_bytes": 524288
+            }
+          },
+          "layer_handoff_cycles": 49255.25,
+          "end_to_end_cycles": 985079.75,
+          "note": "Stage spans overlap; cannot be summed. Includes handoff/reset between layers; excludes host preload/startup and final exit."
+        },
+        "memory": {
+          "per_node_used_bytes": 7634976,
+          "per_node_capacity_bytes": 2147483648,
+          "activation_slots": 2,
+          "shared_scratch": true,
+          "weight_sets": 2
+        },
+        "final_norm": {
+          "status": "PASS",
+          "workers": 16,
+          "epoch": 3,
+          "reset_ack_count": 16,
+          "first_input_dma_tick": 1313228000,
+          "last_output_ack_tick": 1321153625,
+          "last_completion_ack_tick": 1321185625,
+          "output_ack_bytes": 524288,
+          "rmsnorm_cycles": 7925.625,
+          "handoff_cycles": 15530.25,
+          "tail_cycles": 23455.875,
+          "end_to_end_cycles": 1008535.625,
+          "contract": "first layer X input DMA send to final RMSNorm output DMA ACK",
+          "epsilon": 1e-06,
+          "io_dtype": "fp16",
+          "internal_dtype": "fp32"
+        },
+        "lm_head": {
+          "status": "PASS",
+          "token_index": 1023,
+          "M": 1,
+          "vocab": 8201,
+          "padded_vocab": 8256,
+          "vocabulary_chunk_columns": 8192,
+          "chunks": 2,
+          "tail_chunk_columns": 64,
+          "worker_jobs": 32,
+          "reset_ack_count": 16,
+          "last_epoch": 5,
+          "next_token": {
+            "method": "greedy_argmax",
+            "token_id": 5313,
+            "logit": 0.86328125,
+            "vocab": 8201,
+            "tie_break": "lowest token ID",
+            "host_selection_seconds": 6.2729e-05,
+            "status": "PASS",
+            "local_reference_token_id": 5313,
+            "composed_reference_token_id": 5313,
+            "composed_reference_agrees": true,
+            "timing_scope": "host argmax only; excluded from accelerator cycles"
+          },
+          "local_reference": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 8256
+          },
+          "composed_reference": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0.006,
+            "elements": 8201
+          },
+          "first_input_dma_tick": 1331281000,
+          "last_logits_ack_tick": 1343281750,
+          "last_completion_ack_tick": 1343841750,
+          "input_and_weight_dma_bytes": 4235776,
+          "output_ack_bytes": 16512,
+          "lm_head_cycles": 12000.75,
+          "handoff_cycles": 10127.375,
+          "tail_cycles": 22128.125,
+          "end_to_end_cycles": 1030663.75,
+          "contract": "first layer X input DMA send to last-token logits final DMA ACK"
+        },
+        "embedding": {
+          "status": "PASS",
+          "tokens": 1024,
+          "hidden": 256,
+          "vocab": 8201,
+          "numerics": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 262144
+          },
+          "workers": 16,
+          "reset_ack_count": 16,
+          "first_token_ids_dma_tick": 241337000,
+          "last_embedding_output_ack_tick": 261065625,
+          "last_worker_completion_tick": 261098000,
+          "first_decoder_input_dma_tick": 312618000,
+          "input_token_bytes": 4096,
+          "table_read_bytes": 524288,
+          "output_ack_bytes": 524288,
+          "embedding_cycles": 19728.625,
+          "handoff_cycles": 51552.375,
+          "end_to_end_cycles": 1101944.75,
+          "contract": "first token-ID DMA send to last-token logits final output DMA ACK"
+        }
+      },
+      "wall": {
+        "status": "PASS",
+        "mpi_ranks": 4,
+        "cpu_set": "0-3",
+        "sst_wall_seconds": 48.166472,
+        "driver_wall_seconds": 52.8536266220035,
+        "timing_scope": "SST wall excludes input generation and host validation; driver wall includes both"
+      },
+      "provenance": {
+        "command": [
+          "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+          "--projection",
+          "--query-length",
+          "1024",
+          "--kv-length",
+          "1024",
+          "--num-query-heads",
+          "4",
+          "--num-kv-heads",
+          "2",
+          "--head-dim",
+          "64",
+          "--causal",
+          "--rope",
+          "--artifact-root",
+          "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/small_rank4"
+        ],
+        "source_sha256": {
+          "src/sst/elements/golem/sfu/sfu.cc": "2959142a0a718ed176bfc56343e4ea11675f6010751a4662647c46432561ce37",
+          "src/sst/elements/golem/sfu/sfu.h": "aea6610f6398a294df90794f165837f539cc5e9346e12dca2969e0d4c88eadc5",
+          "src/sst/elements/golem/sfu/vector_math.h": "7ba2167e7ac48d65ceb939bbafb8306ab970c898525ebe63e3b83a4cb87ec548",
+          "src/sst/elements/golem/sfu/hardware_pipeline.h": "163c4e9c0ae0d9862ed0d9233533b053d9d0ff7bcfdcf0897f772ddaf4795a26",
+          "src/sst/elements/golem/sfu/vector_pipeline.h": "80c3e3a1edf311a7ab0f0e20d76918dbb5d226ca517676e28d9cb65c54d55f91",
+          "src/sst/elements/golem/tests/architecture/cpu_builder.py": "6a5f55f8ed8e8d11b1d5357e84b00b24fb70b4a5f8f52cb08a180550d9681f32",
+          "src/sst/elements/golem/attention/decoderMemoryLayout.h": "2ffc7c781c076dd9142624498d615abd41e8a36ba12ffae2e4a495da181f44dd",
+          "src/sst/elements/golem/attention/projectionJobAbi.h": "385557026058436c816b0f50074d26d77ae5f905d6b20906098ab3aaa796b1e1",
+          "src/sst/elements/golem/attention/projectionJob.h": "46075a47695f52e4e2ed45bbd9db10b12ee8c916acedb194955411c5018a54d4",
+          "src/sst/elements/golem/attention/decoderOpAbi.h": "ac9e5984b3d3b73b3c9796155ddc0a07bce0a12fe2e69a415e1649b852843be7",
+          "src/sst/elements/golem/attention/decoderOpJob.h": "8169bb3cabcbddbca25f444ef6082ebc73c3176c6d35cabf2959540890437afa",
+          "src/sst/elements/golem/rocc/roccAnalog.h": "3a4c5413ee8843b61450fd06cc62741e0f70a69a82bb1587b631d5b70e65ff85",
+          "src/sst/elements/golem/workercmdproc/workercmdproc.h": "4b0d305d0ef076b01460eea3f6ff9d07857db18bd4e27ebe1ff31bd00fc958f6",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h": "e128f46b41b9f492cf89b8ba21dce0eec2f6a33f1da8ab46c390f9bf296877a9",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_decoder_runtime.h": "17c90baa77cc6618249c12d6ff2132b53312e236d8d6e64c22486b128990f1cb",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "a428e23e024154157eedca9b6fb988e15edb3af81bc0ef3aecff26556e884da0",
+          "src/sst/elements/golem/tests/small/muticore_attention/dump_decoder_layout.cpp": "b121f6f39018f037bd70a41b23cefcac2de63f3c2e406939f656ada60ca6b951",
+          "src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh": "6810fa00c63cebb8411d2292844aa970256c2d10ecdb5c1a9488f2d3c8a498e8",
+          "src/sst/elements/golem/tests/tools/gen_hbm_init.py": "aa8f8c8c8f07424ee993e7153b5f0ddd014a0d94facf859eb1267b42db21d809",
+          "src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py": "6f389c402414733fe73bc7d4b6bca0f147732f1c08d208e2dd74a0e0b18a2d0b",
+          "baseline/attention_cluster_8qk_8pv/run_decoder_stack.py": "d1406c7dfafcf254cfdf126c46a4698dff7e65eec656d826fa9835205dec987e",
+          "baseline/attention_cluster_8qk_8pv/run_sst.sh": "d160c34290a4b7845099d204e403342f23c503904ca8575cfe45adeb577cdbe6",
+          "baseline/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py": "4a311ee6e3e600f9c01a608b7f23735afd9dec13306d5c1073e8f00bfce75f07",
+          "src/sst/elements/golem/tests/architecture/partition_planner.py": "3bc27ee1d63f6cd4396ca5bb79afc0fd438fdc716d16cbea6b13e4e76c244f9a",
+          "baseline/attention_cluster_8qk_8pv/verify_lm_head.py": "8ee0fe34f0b34f4aa98aedd0f50276b4afc11a6ec39698a691fe9e84f4c2b3a8",
+          "baseline/attention_cluster_8qk_8pv/select_next_token.py": "39c699df08a371c9f640042c5eda386d0e38b107dabbb0be2a39a08e86552ee2",
+          "baseline/attention_cluster_8qk_8pv/verify_embedding.py": "5f3ba79d069be50ca4563e68167e17d179bd4742c85f904ffd1da34083ee1d34"
+        },
+        "guest_sha256": "9e0fb9052cb2e05ad9cd944662d060c2727ccda6bb565bcedbff5a7f93ceecd4",
+        "sst_library_sha256": "8ba680cac28bdb107430a6592b48c6a176d564047f15364db81102b05db82383",
+        "environment": {
+          "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+          "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+          "GOLEM_LOCAL_GM_READ_PORTS": "1",
+          "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+          "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+          "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+          "GOLEM_MPI_RANKS": "4",
+          "VANADIS_CPU_CLOCK": "1.0GHz",
+          "GOLEM_ARRAY_CLOCK": "1.0GHz",
+          "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+          "GOLEM_ARRAY_PIPELINE_DEPTH": "2",
+          "GOLEM_PROJECTION_CBUFFER_PARTIAL": "1",
+          "GOLEM_PROJECTION_WRAP_PREFETCH": "1",
+          "GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD": "1",
+          "GOLEM_FUSION_NORM_PROJECTION": "1",
+          "GOLEM_FUSION_PROJECTION_ROPE": "0",
+          "GOLEM_FUSION_SKIP_AUDIT_OUTPUT": "1",
+          "GOLEM_PROJECTION_PACKED_NORM_INPUT": "1",
+          "GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET": "0",
+          "GOLEM_PROJECTION_ARRAYS": "64",
+          "GOLEM_PROJECTION_RETAIN_OUTPUT": "1",
+          "GOLEM_PROJECTION_PIPELINE": "1",
+          "GOLEM_PROJECTION_SHARED_INPUT": "1",
+          "GOLEM_PROJECTION_WEIGHT_PREFETCH": "1",
+          "GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH": "4",
+          "GOLEM_ARRAY_OPERAND_CONTEXT_BANKS": "1",
+          "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE": "0",
+          "GOLEM_ATTENTION_CAUSAL_BALANCE": "1",
+          "GOLEM_PROJECTION_ROW_FIRST": "0",
+          "GOLEM_PROJECTION_INPUT_PAIR_PREFETCH": "1",
+          "GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH": "1",
+          "GOLEM_PROJECTION_ARRAY_GROUPS": "1",
+          "GOLEM_PROJECTION_OVERLAP_TRACE": "0",
+          "GOLEM_CRITICAL_PATH_TRACE": "1",
+          "GOLEM_RESOURCE_TRACE_DOMAINS": "gm",
+          "GOLEM_DIAGNOSTIC_ORACLE": "none",
+          "GOLEM_MPI_RANK_LOG_ROOT": "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/small_rank4/mpi_rank_output",
+          "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 0-3 --output-filename /data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/small_rank4/mpi_rank_output",
+          "GOLEM_DECODER_LAYERS": "2",
+          "GOLEM_DECODER_STACK_MANIFEST": "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/small_rank4/decoder_stack_inputs.json",
+          "GOLEM_ATTENTION_GUEST_EXECUTABLE": "/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/small/muticore_attention/riscv64/decoder-embedding/fused_attention",
+          "GOLEM_DECODER_NODE_BYTES": "2147483648",
+          "GOLEM_DECODER_VOCAB": "8201"
+        }
+      },
+      "cycle_breakdown": {
+        "embedding": 19728.625,
+        "embedding_handoff": 51552.375,
+        "layer1_norm_qkv_attention": 51737.125,
+        "layer1_post_attention": 419724.625,
+        "layer_handoff": 49255.25,
+        "layer2_norm_qkv_attention": 42693.75,
+        "layer2_post_attention": 421669.0,
+        "final_norm_handoff": 15530.25,
+        "final_norm": 7925.625,
+        "lm_head_handoff": 10127.375,
+        "lm_head": 12000.75
+      }
+    },
+    "small_rank8": {
+      "result": {
+        "status": "PASS",
+        "shape": {
+          "S": 1024,
+          "hidden": 256,
+          "intermediate": 1024,
+          "layers": 2
+        },
+        "numerics": {
+          "layer1_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.00048828125,
+            "tolerance": 0.004,
+            "elements": 262144
+          },
+          "layer2_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.00048828125,
+            "tolerance": 0.004,
+            "elements": 262144
+          },
+          "final_norm_composed": {
+            "status": "PASS",
+            "max_abs_error": 0.00390625,
+            "tolerance": 0.006,
+            "elements": 262144
+          },
+          "final_norm_local": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0.002,
+            "elements": 262144
+          },
+          "last_attention": {
+            "status": "PASS",
+            "max_abs_error": 6.103515625e-05,
+            "tolerance": 0.0003,
+            "elements": 262144
+          },
+          "last_wo": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 262144
+          },
+          "last_h1": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 262144
+          },
+          "last_norm2": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0.002,
+            "elements": 262144
+          },
+          "last_gate": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 1048576
+          },
+          "last_up": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 1048576
+          },
+          "last_act": {
+            "status": "PASS",
+            "max_abs_error": 0.0001220703125,
+            "tolerance": 0.0005,
+            "elements": 1048576
+          },
+          "last_gated": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 1048576
+          },
+          "last_down": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 262144
+          },
+          "last_residual2": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 262144
+          }
+        },
+        "lifecycle": {
+          "status": "PASS",
+          "projection_jobs": 32,
+          "decoder_ops": 288,
+          "reset_ack_count": 64,
+          "layers": 2,
+          "scratch_retire_count": 64,
+          "distinct_attention_tags": true,
+          "all_attention_jobs_checked": 32,
+          "stage_spans": {
+            "1": {
+              "1": {
+                "start_tick": 387634000,
+                "end_tick": 414867000,
+                "span_cycles": 27233.0,
+                "workers": 16,
+                "hbm_read_bytes": 2621440,
+                "hbm_write_bytes": 524288
+              },
+              "2": {
+                "start_tick": 405565000,
+                "end_tick": 418709000,
+                "span_cycles": 13144.0,
+                "workers": 16,
+                "hbm_read_bytes": 1048576,
+                "hbm_write_bytes": 524288
+              },
+              "3": {
+                "start_tick": 409540000,
+                "end_tick": 426896000,
+                "span_cycles": 17356.0,
+                "workers": 16,
+                "hbm_read_bytes": 540672,
+                "hbm_write_bytes": 524288
+              },
+              "4": {
+                "start_tick": 417845000,
+                "end_tick": 541267000,
+                "span_cycles": 123422.0,
+                "workers": 16,
+                "hbm_read_bytes": 8912896,
+                "hbm_write_bytes": 2097152
+              },
+              "5": {
+                "start_tick": 498287000,
+                "end_tick": 644700000,
+                "span_cycles": 146413.0,
+                "workers": 16,
+                "hbm_read_bytes": 8912896,
+                "hbm_write_bytes": 2097152
+              },
+              "6": {
+                "start_tick": 583283000,
+                "end_tick": 720958000,
+                "span_cycles": 137675.0,
+                "workers": 16,
+                "hbm_read_bytes": 2097152,
+                "hbm_write_bytes": 2097152
+              },
+              "7": {
+                "start_tick": 655834000,
+                "end_tick": 736844000,
+                "span_cycles": 81010.0,
+                "workers": 16,
+                "hbm_read_bytes": 4194304,
+                "hbm_write_bytes": 2097152
+              },
+              "8": {
+                "start_tick": 668715000,
+                "end_tick": 780056000,
+                "span_cycles": 111341.0,
+                "workers": 16,
+                "hbm_read_bytes": 10485760,
+                "hbm_write_bytes": 524288
+              },
+              "9": {
+                "start_tick": 712555000,
+                "end_tick": 784132000,
+                "span_cycles": 71577.0,
+                "workers": 16,
+                "hbm_read_bytes": 1048576,
+                "hbm_write_bytes": 524416
+              }
+            },
+            "2": {
+              "1": {
+                "start_tick": 898796000,
+                "end_tick": 925723000,
+                "span_cycles": 26927.0,
+                "workers": 16,
+                "hbm_read_bytes": 2621440,
+                "hbm_write_bytes": 524288
+              },
+              "2": {
+                "start_tick": 916444000,
+                "end_tick": 929282000,
+                "span_cycles": 12838.0,
+                "workers": 16,
+                "hbm_read_bytes": 1048576,
+                "hbm_write_bytes": 524288
+              },
+              "3": {
+                "start_tick": 920151000,
+                "end_tick": 937368000,
+                "span_cycles": 17217.0,
+                "workers": 16,
+                "hbm_read_bytes": 540672,
+                "hbm_write_bytes": 524288
+              },
+              "4": {
+                "start_tick": 928418000,
+                "end_tick": 1049108000,
+                "span_cycles": 120690.0,
+                "workers": 16,
+                "hbm_read_bytes": 8912896,
+                "hbm_write_bytes": 2097152
+              },
+              "5": {
+                "start_tick": 1010490000,
+                "end_tick": 1156168000,
+                "span_cycles": 145678.0,
+                "workers": 16,
+                "hbm_read_bytes": 8912896,
+                "hbm_write_bytes": 2097152
+              },
+              "6": {
+                "start_tick": 1095119000,
+                "end_tick": 1233130000,
+                "span_cycles": 138011.0,
+                "workers": 16,
+                "hbm_read_bytes": 2097152,
+                "hbm_write_bytes": 2097152
+              },
+              "7": {
+                "start_tick": 1167702000,
+                "end_tick": 1251475000,
+                "span_cycles": 83773.0,
+                "workers": 16,
+                "hbm_read_bytes": 4194304,
+                "hbm_write_bytes": 2097152
+              },
+              "8": {
+                "start_tick": 1180191000,
+                "end_tick": 1293847000,
+                "span_cycles": 113656.0,
+                "workers": 16,
+                "hbm_read_bytes": 10485760,
+                "hbm_write_bytes": 524288
+              },
+              "9": {
+                "start_tick": 1223358000,
+                "end_tick": 1297754000,
+                "span_cycles": 74396.0,
+                "workers": 16,
+                "hbm_read_bytes": 1048576,
+                "hbm_write_bytes": 524416
+              }
+            }
+          }
+        },
+        "dma_timing": {
+          "contract": "first layer X input DMA send to second layer Y final DMA ACK",
+          "ticks_per_cycle": 1000,
+          "layers": {
+            "1": {
+              "first_input_dma_tick": 312618000,
+              "last_attention_o_ack_tick": 364355125,
+              "last_y_ack_tick": 784079750,
+              "attention_cycles": 51737.125,
+              "post_attention_cycles": 419724.625,
+              "layer_cycles": 471461.75,
+              "output_ack_bytes": 524288
+            },
+            "2": {
+              "first_input_dma_tick": 833335000,
+              "last_attention_o_ack_tick": 876028750,
+              "last_y_ack_tick": 1297697750,
+              "attention_cycles": 42693.75,
+              "post_attention_cycles": 421669.0,
+              "layer_cycles": 464362.75,
+              "output_ack_bytes": 524288
+            }
+          },
+          "layer_handoff_cycles": 49255.25,
+          "end_to_end_cycles": 985079.75,
+          "note": "Stage spans overlap; cannot be summed. Includes handoff/reset between layers; excludes host preload/startup and final exit."
+        },
+        "memory": {
+          "per_node_used_bytes": 7634976,
+          "per_node_capacity_bytes": 2147483648,
+          "activation_slots": 2,
+          "shared_scratch": true,
+          "weight_sets": 2
+        },
+        "final_norm": {
+          "status": "PASS",
+          "workers": 16,
+          "epoch": 3,
+          "reset_ack_count": 16,
+          "first_input_dma_tick": 1313228000,
+          "last_output_ack_tick": 1321153625,
+          "last_completion_ack_tick": 1321185625,
+          "output_ack_bytes": 524288,
+          "rmsnorm_cycles": 7925.625,
+          "handoff_cycles": 15530.25,
+          "tail_cycles": 23455.875,
+          "end_to_end_cycles": 1008535.625,
+          "contract": "first layer X input DMA send to final RMSNorm output DMA ACK",
+          "epsilon": 1e-06,
+          "io_dtype": "fp16",
+          "internal_dtype": "fp32"
+        },
+        "lm_head": {
+          "status": "PASS",
+          "token_index": 1023,
+          "M": 1,
+          "vocab": 8201,
+          "padded_vocab": 8256,
+          "vocabulary_chunk_columns": 8192,
+          "chunks": 2,
+          "tail_chunk_columns": 64,
+          "worker_jobs": 32,
+          "reset_ack_count": 16,
+          "last_epoch": 5,
+          "next_token": {
+            "method": "greedy_argmax",
+            "token_id": 5313,
+            "logit": 0.86328125,
+            "vocab": 8201,
+            "tie_break": "lowest token ID",
+            "host_selection_seconds": 6.3529e-05,
+            "status": "PASS",
+            "local_reference_token_id": 5313,
+            "composed_reference_token_id": 5313,
+            "composed_reference_agrees": true,
+            "timing_scope": "host argmax only; excluded from accelerator cycles"
+          },
+          "local_reference": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 8256
+          },
+          "composed_reference": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0.006,
+            "elements": 8201
+          },
+          "first_input_dma_tick": 1331281000,
+          "last_logits_ack_tick": 1343281750,
+          "last_completion_ack_tick": 1343841750,
+          "input_and_weight_dma_bytes": 4235776,
+          "output_ack_bytes": 16512,
+          "lm_head_cycles": 12000.75,
+          "handoff_cycles": 10127.375,
+          "tail_cycles": 22128.125,
+          "end_to_end_cycles": 1030663.75,
+          "contract": "first layer X input DMA send to last-token logits final DMA ACK"
+        },
+        "embedding": {
+          "status": "PASS",
+          "tokens": 1024,
+          "hidden": 256,
+          "vocab": 8201,
+          "numerics": {
+            "status": "PASS",
+            "max_abs_error": 0.0,
+            "tolerance": 0,
+            "elements": 262144
+          },
+          "workers": 16,
+          "reset_ack_count": 16,
+          "first_token_ids_dma_tick": 241337000,
+          "last_embedding_output_ack_tick": 261065625,
+          "last_worker_completion_tick": 261098000,
+          "first_decoder_input_dma_tick": 312618000,
+          "input_token_bytes": 4096,
+          "table_read_bytes": 524288,
+          "output_ack_bytes": 524288,
+          "embedding_cycles": 19728.625,
+          "handoff_cycles": 51552.375,
+          "end_to_end_cycles": 1101944.75,
+          "contract": "first token-ID DMA send to last-token logits final output DMA ACK"
+        }
+      },
+      "wall": {
+        "status": "PASS",
+        "mpi_ranks": 8,
+        "cpu_set": "0-7",
+        "sst_wall_seconds": 46.140689,
+        "driver_wall_seconds": 50.896964959974866,
+        "timing_scope": "SST wall excludes input generation and host validation; driver wall includes both"
+      },
+      "provenance": {
+        "command": [
+          "/data/jjgong/LLM/Muticore-Attention/baseline/attention_cluster_8qk_8pv/run_sst.sh",
+          "--projection",
+          "--query-length",
+          "1024",
+          "--kv-length",
+          "1024",
+          "--num-query-heads",
+          "4",
+          "--num-kv-heads",
+          "2",
+          "--head-dim",
+          "64",
+          "--causal",
+          "--rope",
+          "--artifact-root",
+          "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/small_rank8"
+        ],
+        "source_sha256": {
+          "src/sst/elements/golem/sfu/sfu.cc": "2959142a0a718ed176bfc56343e4ea11675f6010751a4662647c46432561ce37",
+          "src/sst/elements/golem/sfu/sfu.h": "aea6610f6398a294df90794f165837f539cc5e9346e12dca2969e0d4c88eadc5",
+          "src/sst/elements/golem/sfu/vector_math.h": "7ba2167e7ac48d65ceb939bbafb8306ab970c898525ebe63e3b83a4cb87ec548",
+          "src/sst/elements/golem/sfu/hardware_pipeline.h": "163c4e9c0ae0d9862ed0d9233533b053d9d0ff7bcfdcf0897f772ddaf4795a26",
+          "src/sst/elements/golem/sfu/vector_pipeline.h": "80c3e3a1edf311a7ab0f0e20d76918dbb5d226ca517676e28d9cb65c54d55f91",
+          "src/sst/elements/golem/tests/architecture/cpu_builder.py": "6a5f55f8ed8e8d11b1d5357e84b00b24fb70b4a5f8f52cb08a180550d9681f32",
+          "src/sst/elements/golem/attention/decoderMemoryLayout.h": "2ffc7c781c076dd9142624498d615abd41e8a36ba12ffae2e4a495da181f44dd",
+          "src/sst/elements/golem/attention/projectionJobAbi.h": "385557026058436c816b0f50074d26d77ae5f905d6b20906098ab3aaa796b1e1",
+          "src/sst/elements/golem/attention/projectionJob.h": "46075a47695f52e4e2ed45bbd9db10b12ee8c916acedb194955411c5018a54d4",
+          "src/sst/elements/golem/attention/decoderOpAbi.h": "ac9e5984b3d3b73b3c9796155ddc0a07bce0a12fe2e69a415e1649b852843be7",
+          "src/sst/elements/golem/attention/decoderOpJob.h": "8169bb3cabcbddbca25f444ef6082ebc73c3176c6d35cabf2959540890437afa",
+          "src/sst/elements/golem/rocc/roccAnalog.h": "3a4c5413ee8843b61450fd06cc62741e0f70a69a82bb1587b631d5b70e65ff85",
+          "src/sst/elements/golem/workercmdproc/workercmdproc.h": "4b0d305d0ef076b01460eea3f6ff9d07857db18bd4e27ebe1ff31bd00fc958f6",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h": "e128f46b41b9f492cf89b8ba21dce0eec2f6a33f1da8ab46c390f9bf296877a9",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_decoder_runtime.h": "17c90baa77cc6618249c12d6ff2132b53312e236d8d6e64c22486b128990f1cb",
+          "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "a428e23e024154157eedca9b6fb988e15edb3af81bc0ef3aecff26556e884da0",
+          "src/sst/elements/golem/tests/small/muticore_attention/dump_decoder_layout.cpp": "b121f6f39018f037bd70a41b23cefcac2de63f3c2e406939f656ada60ca6b951",
+          "src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh": "ea5b001ee4b846b0f9353f981cc9bddf57e625cec8b4c5cff6858c0f8ccde743",
+          "src/sst/elements/golem/tests/tools/gen_hbm_init.py": "aa8f8c8c8f07424ee993e7153b5f0ddd014a0d94facf859eb1267b42db21d809",
+          "src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py": "6f389c402414733fe73bc7d4b6bca0f147732f1c08d208e2dd74a0e0b18a2d0b",
+          "baseline/attention_cluster_8qk_8pv/run_decoder_stack.py": "d1406c7dfafcf254cfdf126c46a4698dff7e65eec656d826fa9835205dec987e",
+          "baseline/attention_cluster_8qk_8pv/run_sst.sh": "d160c34290a4b7845099d204e403342f23c503904ca8575cfe45adeb577cdbe6",
+          "baseline/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py": "4a311ee6e3e600f9c01a608b7f23735afd9dec13306d5c1073e8f00bfce75f07",
+          "src/sst/elements/golem/tests/architecture/partition_planner.py": "3bc27ee1d63f6cd4396ca5bb79afc0fd438fdc716d16cbea6b13e4e76c244f9a",
+          "baseline/attention_cluster_8qk_8pv/verify_lm_head.py": "8ee0fe34f0b34f4aa98aedd0f50276b4afc11a6ec39698a691fe9e84f4c2b3a8",
+          "baseline/attention_cluster_8qk_8pv/select_next_token.py": "39c699df08a371c9f640042c5eda386d0e38b107dabbb0be2a39a08e86552ee2",
+          "baseline/attention_cluster_8qk_8pv/verify_embedding.py": "5f3ba79d069be50ca4563e68167e17d179bd4742c85f904ffd1da34083ee1d34"
+        },
+        "guest_sha256": "9e0fb9052cb2e05ad9cd944662d060c2727ccda6bb565bcedbff5a7f93ceecd4",
+        "sst_library_sha256": "8ba680cac28bdb107430a6592b48c6a176d564047f15364db81102b05db82383",
+        "environment": {
+          "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
+          "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
+          "GOLEM_LOCAL_GM_READ_PORTS": "1",
+          "GOLEM_LOCAL_GM_WRITE_PORTS": "1",
+          "GOLEM_LOCAL_GM_MAX_REQUEST_BYTES": "4096",
+          "GOLEM_LOCAL_GM_QUEUE_DEPTH": "256",
+          "GOLEM_MPI_RANKS": "8",
+          "VANADIS_CPU_CLOCK": "1.0GHz",
+          "GOLEM_ARRAY_CLOCK": "1.0GHz",
+          "GOLEM_ARRAY_MAC_PER_CU_PER_CYCLE": "1",
+          "GOLEM_ARRAY_PIPELINE_DEPTH": "2",
+          "GOLEM_PROJECTION_CBUFFER_PARTIAL": "1",
+          "GOLEM_PROJECTION_WRAP_PREFETCH": "1",
+          "GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD": "1",
+          "GOLEM_FUSION_NORM_PROJECTION": "1",
+          "GOLEM_FUSION_PROJECTION_ROPE": "0",
+          "GOLEM_FUSION_SKIP_AUDIT_OUTPUT": "1",
+          "GOLEM_PROJECTION_PACKED_NORM_INPUT": "1",
+          "GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET": "0",
+          "GOLEM_PROJECTION_ARRAYS": "64",
+          "GOLEM_PROJECTION_RETAIN_OUTPUT": "1",
+          "GOLEM_PROJECTION_PIPELINE": "1",
+          "GOLEM_PROJECTION_SHARED_INPUT": "1",
+          "GOLEM_PROJECTION_WEIGHT_PREFETCH": "1",
+          "GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH": "4",
+          "GOLEM_ARRAY_OPERAND_CONTEXT_BANKS": "1",
+          "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE": "0",
+          "GOLEM_ATTENTION_CAUSAL_BALANCE": "1",
+          "GOLEM_PROJECTION_ROW_FIRST": "0",
+          "GOLEM_PROJECTION_INPUT_PAIR_PREFETCH": "1",
+          "GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH": "1",
+          "GOLEM_PROJECTION_ARRAY_GROUPS": "1",
+          "GOLEM_PROJECTION_OVERLAP_TRACE": "0",
+          "GOLEM_CRITICAL_PATH_TRACE": "1",
+          "GOLEM_RESOURCE_TRACE_DOMAINS": "gm",
+          "GOLEM_DIAGNOSTIC_ORACLE": "none",
+          "GOLEM_MPI_RANK_LOG_ROOT": "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/small_rank8/mpi_rank_output",
+          "GOLEM_MPI_ARGS": "--bind-to core --cpu-set 0-7 --output-filename /data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/small_rank8/mpi_rank_output",
+          "GOLEM_DECODER_LAYERS": "2",
+          "GOLEM_DECODER_STACK_MANIFEST": "/data/jjgong/LLM/Muticore-Attention/results/embedding_token_20261014/small_rank8/decoder_stack_inputs.json",
+          "GOLEM_ATTENTION_GUEST_EXECUTABLE": "/data/jjgong/LLM/Muticore-Attention/src/sst/elements/golem/tests/small/muticore_attention/riscv64/decoder-embedding/fused_attention",
+          "GOLEM_DECODER_NODE_BYTES": "2147483648",
+          "GOLEM_DECODER_VOCAB": "8201"
+        }
+      },
+      "cycle_breakdown": {
+        "embedding": 19728.625,
+        "embedding_handoff": 51552.375,
+        "layer1_norm_qkv_attention": 51737.125,
+        "layer1_post_attention": 419724.625,
+        "layer_handoff": 49255.25,
+        "layer2_norm_qkv_attention": 42693.75,
+        "layer2_post_attention": 421669.0,
+        "final_norm_handoff": 15530.25,
+        "final_norm": 7925.625,
+        "lm_head_handoff": 10127.375,
+        "lm_head": 12000.75
+      }
+    }
+  }
+}

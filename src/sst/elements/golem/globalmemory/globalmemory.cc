@@ -1,5 +1,7 @@
 #include "sst_config.h"
 #include "globalmemory.h"
+#include <sst/elements/golem/attention/resourceTrace.h>
+#include <sst/elements/golem/attention/diagnosticOracle.h>
 
 #include <inttypes.h>
 #include <typeinfo>
@@ -618,6 +620,7 @@ bool GlobalMemoryImplement::localReadAsync(uint64_t addr,
     request.client = client;
     request.tag = tag;
     request.submitCycle = getCurrentSimCycle();
+    request.traceDepth = localAccessPending_.size() + 1;
     request.ownerGeneration = attentionClusterEnable_
         ? attentionGenerationFence_.active() : 0;
     request.readCallback = std::move(cb);
@@ -654,6 +657,7 @@ bool GlobalMemoryImplement::localWriteAsync(uint64_t addr,
     request.client = client;
     request.tag = tag;
     request.submitCycle = getCurrentSimCycle();
+    request.traceDepth = localAccessPending_.size() + 1;
     request.ownerGeneration = attentionClusterEnable_
         ? attentionGenerationFence_.active() : 0;
     request.writeData = data;
@@ -685,14 +689,18 @@ void GlobalMemoryImplement::issueLocalAccess(uint64_t requestId)
     }
     PendingLocalAccess& request = it->second;
     request.issued = true;
+    request.serviceStartTick = getCurrentSimCycle();
     const uint64_t queueCycles = getCurrentSimCycle() - request.submitCycle;
     if (request.kind == PendingLocalAccess::Kind::Read) {
         localReadQueueCycles_ += queueCycles;
     } else {
         localWriteQueueCycles_ += queueCycles;
     }
-    const uint64_t serviceCycles = localAccessDelayCycles(request.length);
-    if (attentionClusterEnable_) {
+    const uint64_t serviceCycles = oracleServiceCycles("gm_read",
+        request.kind == PendingLocalAccess::Kind::Read &&
+        request.client == LocalMemoryClient::ProjectionOracleOperand,
+        localAccessDelayCycles(request.length));
+    if (serviceCycles != 0 && attentionClusterEnable_) {
         BusyIntervalUnion& intervals =
             request.kind == PendingLocalAccess::Kind::Read
                 ? attentionClusterLocalReadIntervals_
@@ -747,6 +755,12 @@ void GlobalMemoryImplement::handleLocalAccessEvent(Event* ev)
     PendingLocalAccess request = std::move(it->second);
     localAccessPending_.erase(it);
 
+    traceResourceInterval("gm", request.kind == PendingLocalAccess::Kind::Read ? "local_read" : "local_write",
+        core_id, request.requestId, request.tag, request.ownerGeneration,
+        request.submitCycle, request.serviceStartTick, getCurrentSimCycle(), getCurrentSimCycle(),
+        request.length, request.traceDepth, request.addr, static_cast<int64_t>(request.client), -1,
+        !request.cancelled && (request.ownerGeneration == 0 || attentionGenerationFence_.matches(request.ownerGeneration)));
+
     const bool generationValid = request.ownerGeneration == 0 ||
         attentionGenerationFence_.matches(request.ownerGeneration);
 
@@ -792,6 +806,10 @@ void GlobalMemoryImplement::completeDmaReadToLocalMemory(
         !attentionGenerationFence_.matches(op.ownerGeneration)) {
         return;
     }
+    op.traceArrivalTick = getCurrentSimCycle();
+    traceResourceInterval("gm", "dma_read_transport", core_id, op.traceRequest, op.request_id, op.ownerGeneration,
+        op.traceSubmitTick, op.first_send_cycle, op.traceArrivalTick, op.traceArrivalTick,
+        op.length, op.traceDepth, op.host_addr, -1, static_cast<int64_t>(op.dmaRequestKind));
     const uint64_t landingTag = nextLocalDmaTag_++;
     PendingDmaLanding landing;
     landing.op = std::move(op);
@@ -874,6 +892,9 @@ void GlobalMemoryImplement::retryDmaLandingChunks()
 
 void GlobalMemoryImplement::finishDmaReadLanding(PendingDmaOp& op, bool ok)
 {
+    traceResourceInterval("gm", "dma_read_landing", core_id, op.traceRequest, op.request_id, op.ownerGeneration,
+        op.traceArrivalTick, op.traceArrivalTick, getCurrentSimCycle(), getCurrentSimCycle(),
+        op.length, 0, op.gm_dst_addr, -1, static_cast<int64_t>(op.dmaRequestKind), ok);
     ++dma_read_completion_count;
     if (op.ctx) {
         op.ctx->ok = op.ctx->ok && ok;
@@ -1018,6 +1039,12 @@ void GlobalMemoryImplement::schedule_dma_retry_event() {
 }
 
 bool GlobalMemoryImplement::mark_dma_read_sent(SST::Interfaces::SimpleNetwork::Request* req) {
+    const auto write = traceWriteSendKeys_.find(req);
+    if (write != traceWriteSendKeys_.end()) {
+        const auto pending = dma_pending.find(write->second);
+        if (pending != dma_pending.end()) pending->second.traceSendTick = getCurrentSimCycle();
+        traceWriteSendKeys_.erase(write);
+    }
     auto req_it = dma_read_req_to_key.find(req);
     if (req_it == dma_read_req_to_key.end()) {
         return false;
@@ -1742,6 +1769,9 @@ void GlobalMemoryImplement::dma_write_to_host_impl(uint64_t dst_pa, size_t lengt
 
         // 记录 pending 操作（使用 host_addr 作为 key，用于 DMA_WRITE_COMPLETE 查找）
         PendingDmaOp op;
+        op.traceRequest = nextTraceDmaRequest_++;
+        op.traceSubmitTick = getCurrentSimCycle();
+        op.traceDepth = send_retry_queue.size();
         op.kind = PendingDmaOp::WRITE_TO_HOST;
         op.host_addr = dst_pa + offset;
         op.gm_dst_addr = 0;
@@ -1784,6 +1814,8 @@ void GlobalMemoryImplement::dma_write_to_host_impl(uint64_t dst_pa, size_t lengt
             inserted.first->second = op;
         }
 
+        // Trace the actual NIC injection, including queued sends.
+        if (resourceTraceEnabled()) traceWriteSendKeys_[req] = pending_key;
         // 发送请求
         try_send_or_queue(req, "dma_write_to_host");
 
@@ -1858,6 +1890,9 @@ void GlobalMemoryImplement::dma_read_from_host_to_globalmem_impl(uint64_t src_pa
 
         // 记录 pending 操作
         PendingDmaOp op;
+        op.traceRequest = nextTraceDmaRequest_++;
+        op.traceSubmitTick = getCurrentSimCycle();
+        op.traceDepth = dma_pending.size() + 1;
         op.kind = PendingDmaOp::READ_TO_GM;
         op.request_id = next_dma_request_id++;
         op.host_addr = src_pa + offset;
@@ -2205,6 +2240,9 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
                 dma_pending.erase(it);
 
                 if (op.kind == PendingDmaOp::WRITE_TO_HOST) {
+                    traceResourceInterval("gm", "dma_write_transport", core_id, op.traceRequest, 0, op.ownerGeneration,
+                        op.traceSubmitTick, op.traceSendTick, getCurrentSimCycle(), getCurrentSimCycle(),
+                        op.length, op.traceDepth, op.host_addr, -1, static_cast<int64_t>(op.dmaRequestKind));
                     dma_write_completion_count++;
                     const uint64_t complete_cycle = getCurrentSimTimeNano();
                     const uint64_t rtt_cycles = complete_cycle >= op.issue_cycle

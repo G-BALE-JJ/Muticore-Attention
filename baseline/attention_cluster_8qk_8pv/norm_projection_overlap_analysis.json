@@ -1,0 +1,381 @@
+{
+  "kind": "analysis_only",
+  "timebase": "1GHz; 1000 SST ticks per cycle",
+  "assumptions": [
+    "same 256-row weight reuse and per-row arithmetic order",
+    "one existing Norm batch and unchanged projection snapshots",
+    "spare GM regions require D64, hidden2048, fused Norm, packed input, no fused RoPE",
+    "estimates exclude extra shared-port/DMA contention and controller overhead"
+  ],
+  "cases": [
+    {
+      "sequence": 1024,
+      "measured_e2e_cycles": 1066757,
+      "by_manager": {
+        "0": {
+          "blocks": [
+            {
+              "first_row": 0,
+              "start_cycle": 115405,
+              "ready_prefix_cycles": {
+                "64": 33956,
+                "128": 68004,
+                "192": 102052,
+                "256": 136100
+              },
+              "vector_cycles": 111808
+            }
+          ],
+          "norm_total_span_cycles": 136100,
+          "norm_vector_cycles": 111808,
+          "norm_nonvector_span_cycles": 24292,
+          "projection_controller_cycles_per_pair_average": 251.94303385416666,
+          "extra_weight_setup_if_128row_reuse_blocks_current_schedule": 119808,
+          "cross_block_prefix_estimates": {
+            "64": {
+              "hidden_norm_cycles_estimate": 0,
+              "e2e_cycles_if_no_new_contention": 1066757,
+              "e2e_reduction_percent_estimate": 0.0
+            },
+            "128": {
+              "hidden_norm_cycles_estimate": 0,
+              "e2e_cycles_if_no_new_contention": 1066757,
+              "e2e_reduction_percent_estimate": 0.0
+            }
+          }
+        },
+        "1": {
+          "blocks": [
+            {
+              "first_row": 0,
+              "start_cycle": 114772,
+              "ready_prefix_cycles": {
+                "64": 33940,
+                "128": 67975,
+                "192": 102028,
+                "256": 136084
+              },
+              "vector_cycles": 111808
+            }
+          ],
+          "norm_total_span_cycles": 136084,
+          "norm_vector_cycles": 111808,
+          "norm_nonvector_span_cycles": 24276,
+          "projection_controller_cycles_per_pair_average": 251.77571614583334,
+          "extra_weight_setup_if_128row_reuse_blocks_current_schedule": 119808,
+          "cross_block_prefix_estimates": {
+            "64": {
+              "hidden_norm_cycles_estimate": 0,
+              "e2e_cycles_if_no_new_contention": 1066757,
+              "e2e_reduction_percent_estimate": 0.0
+            },
+            "128": {
+              "hidden_norm_cycles_estimate": 0,
+              "e2e_cycles_if_no_new_contention": 1066757,
+              "e2e_reduction_percent_estimate": 0.0
+            }
+          }
+        },
+        "2": {
+          "blocks": [
+            {
+              "first_row": 0,
+              "start_cycle": 115413,
+              "ready_prefix_cycles": {
+                "64": 33948,
+                "128": 67996,
+                "192": 102044,
+                "256": 136092
+              },
+              "vector_cycles": 111808
+            }
+          ],
+          "norm_total_span_cycles": 136092,
+          "norm_vector_cycles": 111808,
+          "norm_nonvector_span_cycles": 24284,
+          "projection_controller_cycles_per_pair_average": 251.9375,
+          "extra_weight_setup_if_128row_reuse_blocks_current_schedule": 119808,
+          "cross_block_prefix_estimates": {
+            "64": {
+              "hidden_norm_cycles_estimate": 0,
+              "e2e_cycles_if_no_new_contention": 1066757,
+              "e2e_reduction_percent_estimate": 0.0
+            },
+            "128": {
+              "hidden_norm_cycles_estimate": 0,
+              "e2e_cycles_if_no_new_contention": 1066757,
+              "e2e_reduction_percent_estimate": 0.0
+            }
+          }
+        },
+        "3": {
+          "blocks": [
+            {
+              "first_row": 0,
+              "start_cycle": 115417,
+              "ready_prefix_cycles": {
+                "64": 33944,
+                "128": 67992,
+                "192": 102040,
+                "256": 136088
+              },
+              "vector_cycles": 111808
+            }
+          ],
+          "norm_total_span_cycles": 136088,
+          "norm_vector_cycles": 111808,
+          "norm_nonvector_span_cycles": 24280,
+          "projection_controller_cycles_per_pair_average": 251.9375,
+          "extra_weight_setup_if_128row_reuse_blocks_current_schedule": 119808,
+          "cross_block_prefix_estimates": {
+            "64": {
+              "hidden_norm_cycles_estimate": 0,
+              "e2e_cycles_if_no_new_contention": 1066757,
+              "e2e_reduction_percent_estimate": 0.0
+            },
+            "128": {
+              "hidden_norm_cycles_estimate": 0,
+              "e2e_cycles_if_no_new_contention": 1066757,
+              "e2e_reduction_percent_estimate": 0.0
+            }
+          }
+        }
+      }
+    },
+    {
+      "sequence": 2048,
+      "measured_e2e_cycles": 2373527,
+      "by_manager": {
+        "0": {
+          "blocks": [
+            {
+              "first_row": 0,
+              "start_cycle": 115405,
+              "ready_prefix_cycles": {
+                "64": 33956,
+                "128": 68004,
+                "192": 102052,
+                "256": 136100
+              },
+              "vector_cycles": 111808
+            },
+            {
+              "first_row": 256,
+              "start_cycle": 1025263,
+              "ready_prefix_cycles": {
+                "64": 33990,
+                "128": 68025,
+                "192": 102076,
+                "256": 136134
+              },
+              "vector_cycles": 111808
+            }
+          ],
+          "norm_total_span_cycles": 272234,
+          "norm_vector_cycles": 223616,
+          "norm_nonvector_span_cycles": 48618,
+          "projection_controller_cycles_per_pair_average": 251.88460286458334,
+          "extra_weight_setup_if_128row_reuse_blocks_current_schedule": 239616,
+          "cross_block_prefix_estimates": {
+            "64": {
+              "hidden_norm_cycles_estimate": 33990,
+              "e2e_cycles_if_no_new_contention": 2339537,
+              "e2e_reduction_percent_estimate": 1.432046064780388
+            },
+            "128": {
+              "hidden_norm_cycles_estimate": 68025,
+              "e2e_cycles_if_no_new_contention": 2305502,
+              "e2e_reduction_percent_estimate": 2.865988042267899
+            }
+          }
+        },
+        "1": {
+          "blocks": [
+            {
+              "first_row": 0,
+              "start_cycle": 114772,
+              "ready_prefix_cycles": {
+                "64": 33940,
+                "128": 67975,
+                "192": 102028,
+                "256": 136084
+              },
+              "vector_cycles": 111808
+            },
+            {
+              "first_row": 256,
+              "start_cycle": 1024768,
+              "ready_prefix_cycles": {
+                "64": 34161,
+                "128": 68209,
+                "192": 102257,
+                "256": 136305
+              },
+              "vector_cycles": 111808
+            }
+          ],
+          "norm_total_span_cycles": 272389,
+          "norm_vector_cycles": 223616,
+          "norm_nonvector_span_cycles": 48773,
+          "projection_controller_cycles_per_pair_average": 251.90755208333334,
+          "extra_weight_setup_if_128row_reuse_blocks_current_schedule": 239616,
+          "cross_block_prefix_estimates": {
+            "64": {
+              "hidden_norm_cycles_estimate": 34161,
+              "e2e_cycles_if_no_new_contention": 2339366,
+              "e2e_reduction_percent_estimate": 1.439250533067456
+            },
+            "128": {
+              "hidden_norm_cycles_estimate": 68209,
+              "e2e_cycles_if_no_new_contention": 2305318,
+              "e2e_reduction_percent_estimate": 2.8737402186703584
+            }
+          }
+        },
+        "2": {
+          "blocks": [
+            {
+              "first_row": 0,
+              "start_cycle": 115413,
+              "ready_prefix_cycles": {
+                "64": 33948,
+                "128": 67996,
+                "192": 102044,
+                "256": 136092
+              },
+              "vector_cycles": 111808
+            },
+            {
+              "first_row": 256,
+              "start_cycle": 1025263,
+              "ready_prefix_cycles": {
+                "64": 33990,
+                "128": 68025,
+                "192": 102076,
+                "256": 136134
+              },
+              "vector_cycles": 111808
+            }
+          ],
+          "norm_total_span_cycles": 272226,
+          "norm_vector_cycles": 223616,
+          "norm_nonvector_span_cycles": 48610,
+          "projection_controller_cycles_per_pair_average": 251.88037109375,
+          "extra_weight_setup_if_128row_reuse_blocks_current_schedule": 239616,
+          "cross_block_prefix_estimates": {
+            "64": {
+              "hidden_norm_cycles_estimate": 33990,
+              "e2e_cycles_if_no_new_contention": 2339537,
+              "e2e_reduction_percent_estimate": 1.432046064780388
+            },
+            "128": {
+              "hidden_norm_cycles_estimate": 68025,
+              "e2e_cycles_if_no_new_contention": 2305502,
+              "e2e_reduction_percent_estimate": 2.865988042267899
+            }
+          }
+        },
+        "3": {
+          "blocks": [
+            {
+              "first_row": 0,
+              "start_cycle": 115417,
+              "ready_prefix_cycles": {
+                "64": 33944,
+                "128": 67992,
+                "192": 102040,
+                "256": 136088
+              },
+              "vector_cycles": 111808
+            },
+            {
+              "first_row": 256,
+              "start_cycle": 1025263,
+              "ready_prefix_cycles": {
+                "64": 33990,
+                "128": 68025,
+                "192": 102076,
+                "256": 136134
+              },
+              "vector_cycles": 111808
+            }
+          ],
+          "norm_total_span_cycles": 272222,
+          "norm_vector_cycles": 223616,
+          "norm_nonvector_span_cycles": 48606,
+          "projection_controller_cycles_per_pair_average": 251.88037109375,
+          "extra_weight_setup_if_128row_reuse_blocks_current_schedule": 239616,
+          "cross_block_prefix_estimates": {
+            "64": {
+              "hidden_norm_cycles_estimate": 33990,
+              "e2e_cycles_if_no_new_contention": 2339537,
+              "e2e_reduction_percent_estimate": 1.432046064780388
+            },
+            "128": {
+              "hidden_norm_cycles_estimate": 68025,
+              "e2e_cycles_if_no_new_contention": 2305502,
+              "e2e_reduction_percent_estimate": 2.865988042267899
+            }
+          }
+        }
+      }
+    }
+  ],
+  "proposed_GM_intervals": [
+    {
+      "name": "metadata",
+      "begin": "0x0",
+      "end_exclusive": "0x8000",
+      "bytes": 32768
+    },
+    {
+      "name": "future_prefix_A",
+      "begin": "0x8000",
+      "end_exclusive": "0x48000",
+      "bytes": 262144
+    },
+    {
+      "name": "norm_raw",
+      "begin": "0x48000",
+      "end_exclusive": "0x4c000",
+      "bytes": 16384
+    },
+    {
+      "name": "gamma",
+      "begin": "0x58000",
+      "end_exclusive": "0x59000",
+      "bytes": 4096
+    },
+    {
+      "name": "D64_weight_cache",
+      "begin": "0x68000",
+      "end_exclusive": "0xa8000",
+      "bytes": 262144
+    },
+    {
+      "name": "future_prefix_B",
+      "begin": "0xa8000",
+      "end_exclusive": "0xe8000",
+      "bytes": 262144
+    },
+    {
+      "name": "reserved_partial_region",
+      "begin": "0xe8000",
+      "end_exclusive": "0xf0000",
+      "bytes": 32768
+    },
+    {
+      "name": "current_norm_input",
+      "begin": "0xf0000",
+      "end_exclusive": "0x1f0000",
+      "bytes": 1048576
+    },
+    {
+      "name": "existing_snapshot_budget",
+      "begin": "0x1f0000",
+      "end_exclusive": "0x1f8000",
+      "bytes": 32768
+    }
+  ],
+  "allocation_scope": "static selected-path check, not an implemented dynamic lifetime verifier"
+}

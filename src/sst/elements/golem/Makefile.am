@@ -26,9 +26,14 @@ libgolem_la_SOURCES = \
 	requestscheduler/requestscheduler.cc \
 	sfu/sfu.h \
 	sfu/vector_math.h \
+	sfu/hardware_pipeline.h \
+	sfu/vector_pipeline.h \
 	sfu/sfu.cc \
 	workercmdproc/workercmdproc.h \
 	attention/attentionCluster.h \
+	attention/decoderMemoryLayout.h \
+	attention/decoderOpAbi.h \
+	attention/decoderOpJob.h \
 	rocc/roccAnalog.h \
 	rocc/roccAnalogFloat.h \
 	rocc/roccAnalogInt.h \

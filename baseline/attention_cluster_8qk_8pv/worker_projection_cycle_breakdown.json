@@ -1,0 +1,99 @@
+{
+  "scope": "Corrected manager-control-only, 16-worker projection; Hq32/Hkv8/D64/hidden2048 causal RoPE. Compute floor is conditional on current tiling and stage ordering; it excludes memory/control/RoPE/reduction work.",
+  "cases": [
+    {
+      "sequence": 1024,
+      "critical_projection_worker": 16,
+      "additive_end_to_end_breakdown": {
+        "worker_start_skew": 30701,
+        "rmsnorm_compute_io_control": 34949,
+        "gm_weight_input_reads": 110592,
+        "weight_program_submit_wait": 64512,
+        "input_scatter_submit_wait": 55296,
+        "array_compute_and_launch": 104448,
+        "partial_output_read_restore_store": 76560,
+        "other_dma_control_output": 11122,
+        "projection_attention_handoff": 2081,
+        "attention_pipeline": 155209
+      },
+      "total_cycles": 645470,
+      "compute_floor_cycles": 268592,
+      "floor_components_cycles": {
+        "rmsnorm_vector": 27952,
+        "projection_array": 101376,
+        "attention_sfu_exp": 139264
+      },
+      "gap_cycles": 376878,
+      "actual_over_floor": 2.4031616727229403,
+      "excess_over_floor_percent": 140.31616727229402,
+      "attention_overlapping_stage_spans": {
+        "qk": {
+          "start_cycle": 600535,
+          "end_cycle": 747183,
+          "elapsed_cycles": 146648,
+          "count": 64
+        },
+        "sfu": {
+          "start_cycle": 603291,
+          "end_cycle": 755097,
+          "elapsed_cycles": 151806,
+          "count": 64
+        },
+        "pv": {
+          "start_cycle": 604670,
+          "end_cycle": 755543,
+          "elapsed_cycles": 150873,
+          "count": 1280
+        }
+      },
+      "global_rmsnorm_span_cycles": 65648
+    },
+    {
+      "sequence": 2048,
+      "critical_projection_worker": 16,
+      "additive_end_to_end_breakdown": {
+        "worker_start_skew": 30701,
+        "rmsnorm_compute_io_control": 70028,
+        "gm_weight_input_reads": 221184,
+        "weight_program_submit_wait": 129024,
+        "input_scatter_submit_wait": 110592,
+        "array_compute_and_launch": 208896,
+        "partial_output_read_restore_store": 153120,
+        "other_dma_control_output": 22455,
+        "projection_attention_handoff": 3193,
+        "attention_pipeline": 550540
+      },
+      "total_cycles": 1499733,
+      "compute_floor_cycles": 799328,
+      "floor_components_cycles": {
+        "rmsnorm_vector": 55904,
+        "projection_array": 202752,
+        "attention_sfu_exp": 540672
+      },
+      "gap_cycles": 700405,
+      "actual_over_floor": 1.8762422935265624,
+      "excess_over_floor_percent": 87.62422935265623,
+      "attention_overlapping_stage_spans": {
+        "qk": {
+          "start_cycle": 1059467,
+          "end_cycle": 1584274,
+          "elapsed_cycles": 524807,
+          "count": 64
+        },
+        "sfu": {
+          "start_cycle": 1064664,
+          "end_cycle": 1609096,
+          "elapsed_cycles": 544432,
+          "count": 64
+        },
+        "pv": {
+          "start_cycle": 1065894,
+          "end_cycle": 1609798,
+          "elapsed_cycles": 543904,
+          "count": 4608
+        }
+      },
+      "global_rmsnorm_span_cycles": 523434
+    }
+  ]
+}

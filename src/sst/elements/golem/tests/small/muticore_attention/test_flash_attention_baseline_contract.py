@@ -194,6 +194,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
     def test_sfu_uses_mac_equivalent_physical_operator_pipelines(self):
         source = SFU_SOURCE.read_text(encoding="utf-8")
         header = SFU_HEADER.read_text(encoding="utf-8")
+        pipeline = (SFU_HEADER.parent / "hardware_pipeline.h").read_text(encoding="utf-8")
         builder = CPU_BUILDER.read_text(encoding="utf-8")
 
         for unit in (
@@ -205,9 +206,12 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
             "normalizePipeline_",
         ):
             self.assertIn(unit, header + source)
-        self.assertIn("struct TensorHardwarePipeline", header)
-        self.assertIn("initiationInterval", header)
-        self.assertIn("completionCycles", header)
+        self.assertIn("sfu/vector_pipeline.h", header)
+        vector_header = (SFU_HEADER.parent / "vector_pipeline.h").read_text(encoding="utf-8")
+        self.assertIn("sfu/hardware_pipeline.h", vector_header)
+        self.assertIn("struct TensorHardwarePipeline", pipeline)
+        self.assertIn("initiationInterval", pipeline)
+        self.assertIn("completionCycles", pipeline)
         self.assertIn("TensorRowEngineEventKind::HardwareRetry", source)
         self.assertIn("TensorRowEngineEventKind::OnlineAddDone", source)
         self.assertIn("TensorRowEngineEventKind::ReciprocalDone", source)

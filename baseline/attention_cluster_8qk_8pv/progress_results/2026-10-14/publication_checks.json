@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-14",
+  "status": "PASS",
+  "total_tests": 266,
+  "checks": [
+    {
+      "command": "python3 -m unittest discover -s baseline/attention_cluster_8qk_8pv -p 'test_*.py'",
+      "tests": 113,
+      "status": "PASS"
+    },
+    {
+      "command": "python3 -m unittest discover -s src/sst/elements/golem/tests/small/muticore_attention -p 'test_*.py'",
+      "tests": 147,
+      "status": "PASS"
+    },
+    {
+      "command": "python3 -m unittest discover -s src/sst/elements/golem/tests/architecture -p 'test_*.py'",
+      "tests": 6,
+      "status": "PASS"
+    }
+  ],
+  "git_diff_check": "PASS",
+  "existing_e2e": "small/formal rank4/rank8 all PASS; no simulator implementation changes during publication",
+  "regression_fix": "legacy SFU contract test now follows sfu.h -> vector_pipeline.h -> hardware_pipeline.h after shared pipeline extraction"
+}

@@ -12,6 +12,7 @@ E2E = re.compile(r"\[ATTENTION_WORKER_CLUSTER_E2E\] core=(\d+) start=(\d+) end=(
 V_RESIDENCY = re.compile(r"\[Core (\d+)\] \[wcp\] PV_V_RESIDENCY hit=([01])")
 WCP_LATENCY = re.compile(r"\[Core (\d+)\] \[wcp\] LATENCY\(cycles\): ([^\n]+)")
 SFU_PIPELINE = re.compile(r"GOLEM_SFU_HW_PIPELINE core=(\d+) unit=(exp|scale|sum_reduction) lanes=(\d+).*?accepted_tokens=(\d+)")
+SFU_VECTOR = re.compile(r"\[SFU_VECTOR_OP\] core=(\d+) op=(\d+) job=(\d+) elements=(\d+) cycles=(\d+) submit_tick=(\d+) done_tick=(\d+)")
 
 
 def stage_span(events, start_index, end_index):
@@ -73,12 +74,35 @@ def main():
     observed_sfu_cores = sorted({int(x[0]) for x in sfu})
     observed_pv_cores = sorted({int(x[0]) for x in pv})
     pipeline_tokens = {}
+    exp_lanes = {}
     for core, unit, lanes, tokens in SFU_PIPELINE.findall(text):
         core = int(core)
         if core in observed_qk_cores:
             pipeline_tokens.setdefault(core, {})[unit] = int(lanes) * int(tokens)
+            if unit == "exp":
+                exp_lanes[core] = int(lanes)
+    # EXP is shared with FFN SiLU. Exclude its actual completed requests from
+    # this Attention-only report; retain padded lane work and strict totals.
+    excluded_silu_exp_elements = 0
+    shared_work_valid = True
+    seen_silu = set()
+    for core, op, job, elements, cycles, submit, done in SFU_VECTOR.findall(text):
+        core, op, job, elements = map(int, (core, op, job, elements))
+        if op != 5 or core not in observed_qk_cores:
+            continue
+        key = (core, job)
+        lanes = exp_lanes.get(core, 0)
+        if key in seen_silu or not lanes or not elements or not int(cycles) or int(done) <= int(submit):
+            shared_work_valid = False
+            continue
+        seen_silu.add(key)
+        work = ((elements + lanes - 1) // lanes) * lanes
+        pipeline_tokens[core]["exp"] -= work
+        excluded_silu_exp_elements += work
+        if pipeline_tokens[core]["exp"] < 0:
+            shared_work_valid = False
     corroborated_cores = []
-    exp_complete = True
+    exp_complete = shared_work_valid
     for core in observed_qk_cores:
         counters = pipeline_tokens.get(core, {})
         if "exp" in counters:
@@ -170,6 +194,7 @@ def main():
                          "logically_valid_elements": valid_exp_elements,
                          "masked_elements": expected_exp_elements - valid_exp_elements,
                          "observed_elements": exp_elements if pipeline_tokens else None,
+                         "excluded_silu_exp_elements": excluded_silu_exp_elements,
                          "complete": exp_complete and exp_elements == expected_exp_elements
                          if pipeline_tokens else None,
                          "corroborated_cores": corroborated_cores},

@@ -28,6 +28,8 @@
 #include <sst/elements/golem/workercmdproc/workercmdproc.h>
 #include <sst/elements/golem/attention/attentionCluster.h>
 #include <sst/elements/golem/attention/projectionJob.h>
+#include <sst/elements/golem/attention/decoderOpJob.h>
+#include <sst/elements/golem/attention/decoderMemoryLayout.h>
 #include <sst/elements/vanadis/rocc/vroccinterface.h>
 #include <sst/elements/golem/globalmemory/globalmemory.h>
 #include <sst/elements/golem/fp16.h>
@@ -46,6 +48,7 @@
 #include <map>
 #include <numeric>
 #include <queue>
+#include <set>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -596,7 +599,10 @@ public:
             "array", ComponentInfo::SHARE_NONE, getTimeConverter("1ps"),
             new SST::Event::Handler2<RoCCAnalog<T>, &RoCCAnalog<T>::handleArrayEvent>(this));
 
-        if ( nullptr == array ) {
+        if (params.find<int>("managerOnly", 0) != 0 && array != nullptr) {
+            output->fatal(CALL_INFO, -1, "Dedicated manager must not own an array\n");
+        }
+        if ( nullptr == array && params.find<int>("managerOnly", 0) == 0 ) {
             output->fatal(
                 CALL_INFO, -1,
                 "Error: Unable to load array model subcomponent for RoCCAnalog.\n");
@@ -693,6 +699,8 @@ public:
             }
             workerCommandProcessor->bindResources(static_cast<uint32_t>(coreID), output, globalMem, array, requestScheduler, sfu);
         }
+        std::printf("[CORE_RESOURCE_OWNERSHIP] core=%llu array_present=%u sfu_present=%u\n",
+            (unsigned long long)coreID, array != nullptr, sfu != nullptr);
         if (attentionGenericGemmEnable_ && workerCommandProcessor == nullptr) {
             output->fatal(
                 CALL_INFO, -1,
@@ -711,15 +719,12 @@ public:
                 CALL_INFO, -1,
                 "Error: attention_qk_input_pipeline requires non-transposed QK.\n");
         }
-        if (attentionCrossTileOperandPipeline_ &&
-            (!attentionGenericGemmEnable_ || attentionQkDataflowTranspose_ ||
-             !attentionQkMatrixBroadcast_ || !attentionKvPairReuse_ ||
-             !attentionKvDoubleBuffer_ || attentionOperandContextBanks_ != 2)) {
+        if (attentionOperandContextBanks_ != 1 || attentionCrossTileOperandPipeline_ ||
+            attentionClusterQkMatrixLookahead_) {
             output->fatal(
                 CALL_INFO, -1,
-                "Error: attention_cross_tile_operand_pipeline requires generic "
-                "GEMM/WCP, grouped K/V reuse, non-transposed broadcast QK, "
-                "and exactly two operand banks.\n");
+                "Extra array operand banks were removed: use one operand context, "
+                "disable cross-tile operand pipeline and cluster matrix lookahead.\n");
         }
         if ((attentionPvInputResidency_ || attentionOAccumulatorCBuffer_) &&
             !attentionGenericGemmEnable_) {
@@ -759,7 +764,8 @@ public:
             const std::string error = attentionClusterConfig_.validate();
             if (!error.empty() || (outputOperandSize != 2 && outputOperandSize != 4) ||
                 !attentionGenericGemmEnable_ || workerCommandProcessor == nullptr ||
-                sfu == nullptr || !attentionKvPairReuse_ || !attentionPvActiveK_) {
+                (sfu == nullptr && params.find<int>("managerOnly", 0) == 0) ||
+                !attentionKvPairReuse_ || !attentionPvActiveK_) {
                 output->fatal(
                     CALL_INFO, -1,
                     "Error: attention_cluster_enable configuration rejected: %s; "
@@ -852,7 +858,7 @@ public:
         //映射给内存接口，便于后续数据传输
     memInterface->setMemoryMappedAddressRegion(mmioStartAddr, inputTotalSize);
     memInterface->init(phase);
-    array->init(phase);
+    if (array) array->init(phase);
     globalMem->init(phase);
     if (groupCtrl) {
         groupCtrl->init(phase);
@@ -908,6 +914,10 @@ public:
     }
 
     void finish() override {
+        if (diagnosticOracle() != "none") std::printf(
+            "[ORACLE_SUMMARY] oracle=%s core=%llu scheduler_progress_passes=%llu producer_ready_mask=%u\n",
+            diagnosticOracle().c_str(), (unsigned long long)coreID,
+            (unsigned long long)oracleAttentionProgressPasses_, oracleProjectionReadyMask_);
         maybeReportMvmProgress(true);
         if (attentionClusterEnable_) {
             const uint64_t now = getCurrentSimCycle();
@@ -987,17 +997,39 @@ public:
     void tick(uint64_t cycle) override {
         output->verbose(CALL_INFO, 16, 0, "[Core %" PRIu64 "] -> tick RoCC at cycle %" PRIu64 "\n", coreID, cycle);
         LastTickCycle = cycle;
+        if (oracleEnabled("worker_start") && coreID >= 4 && coreID < 20 &&
+            !oracleProjectionStarted_ && cycle >= oracleStartCycle()) {
+            if (cycle != oracleStartCycle()) output->fatal(CALL_INFO, -1, "oracle start missed its baseline origin\n");
+            oracleProjectionDesc_ = oracleProjectionDescriptor(coreID);
+            if (projectionJob_ == nullptr) projectionJob_.reset(new ProjectionJob(globalMem, workerCommandProcessor, sfu));
+            if (!projectionJob_->start(oracleProjectionDesc_)) output->fatal(CALL_INFO, -1, "oracle projection rejected\n");
+            oracleProjectionStarted_ = true;
+            std::printf("[ORACLE_EVENT] oracle=worker_start core=%llu cycle=%llu action=projection_start\n",
+                (unsigned long long)coreID, (unsigned long long)cycle);
+        }
         // Keep draining async array-load commands even while a synchronous command is in flight.
         tryIssueAsyncArrayLoadCommand(cycle);
         tryCompleteAsyncArrayLoads(cycle);
+        progressOracleProjectionBarrier();
         progressManagerTensorJobs();
         progressManagerAttentionJobs();
         progressAttentionWorker();
+        if (oracleEnabled("attention_barrier")) {
+            // Eliminate ONLY polling-cadence gaps between ready scheduler
+            // transitions. Every normal producer/owner/credit guard remains.
+            for (unsigned pass = 0; pass < 32 && attentionWorker_; ++pass) {
+                const auto before = oracleAttentionProgressKey();
+                progressAttentionWorker();
+                if (!attentionWorker_ || before == oracleAttentionProgressKey()) break;
+                ++oracleAttentionProgressPasses_;
+            }
+        }
         progressAttentionWorkerClusterVBroadcast();
         if (workerCommandProcessor != nullptr && workerCommandProcessor->isBusy()) {
             workerCommandProcessor->tick(cycle);
         }
-        if (projectionJob_ != nullptr) projectionJob_->tick(cycle);
+        if (projectionJob_ != nullptr) projectionJob_->tick(cycle, getCurrentSimCycle());
+        if (decoderOpJob_ != nullptr) decoderOpJob_->tick(cycle, getCurrentSimCycle());
 
         if (roccCmd_q.empty() && !busy) {
             output->verbose(CALL_INFO, 16, 0, "--> nothing to do in RoCC\n");
@@ -1177,15 +1209,68 @@ public:
                 return;
             }
             if (next_cmd->inst->func7 == GOLEM_ROCC_FUNC7_PROJECTION_JOB) {
+                if (coreID>=4 && coreID<20 && !prepareAttentionScratchReuse()) return;
                 roccCmd_q.pop_front();
                 issueProjectionJob(next_cmd);
                 return;
             }
             if (next_cmd->inst->func7 == GOLEM_ROCC_FUNC7_PROJECTION_WAIT) {
+                if (oracleEnabled("worker_start") && !oracleProjectionStarted_) return;
                 if (projectionJob_ == nullptr || !projectionJob_->active()) {
                     roccCmd_q.pop_front();
                     waitProjectionJob(next_cmd);
                 }
+                return;
+            }
+            if (next_cmd->inst->func7 == 0x28) {
+                roccCmd_q.pop_front();
+                std::vector<uint8_t> bytes(8);
+                std::memcpy(bytes.data(),&next_cmd->rs2,8);
+                if (!globalMem) {
+                    enqueueResponse(new SST::Vanadis::RoCCResponse(next_cmd->inst->rd,1,
+                        next_cmd->cmd_id,next_cmd->hw_thread)); delete next_cmd; return;
+                }
+                globalMem->dma_write_to_host(next_cmd->rs1,8,bytes,[this,next_cmd](bool ok) {
+                    std::printf("[DECODER_SYNC] event=flag_write_ack core=%llu address=%llu value=%llu tick=%llu status=%u\n",
+                        (unsigned long long)coreID,(unsigned long long)next_cmd->rs1,
+                        (unsigned long long)next_cmd->rs2,(unsigned long long)getCurrentSimCycle(),ok?0:1);
+                    enqueueResponse(new SST::Vanadis::RoCCResponse(next_cmd->inst->rd,ok?0:1,
+                        next_cmd->cmd_id,next_cmd->hw_thread)); delete next_cmd;
+                });
+                return;
+            }
+            if (next_cmd->inst->func7 == 0x26) {
+                if (globalMem && coreID>=4 && coreID<20) {
+                    std::vector<uint8_t> raw;
+                    globalMem->rd_from_globalmem(next_cmd->rs1,sizeof(DecoderOpDesc),raw);
+                    if (raw.size()==sizeof(DecoderOpDesc)) {
+                        DecoderOpDesc d{}; std::memcpy(&d,raw.data(),sizeof(d));
+                        if (d.stage==1 && !prepareAttentionScratchReuse()) return;
+                    }
+                }
+                roccCmd_q.pop_front();
+                uint64_t status = 1;
+                if (coreID >= 4 && coreID < 20 && array && globalMem && workerCommandProcessor &&
+                    (!projectionJob_ || !projectionJob_->active())) {
+                    if (!decoderOpJob_) decoderOpJob_.reset(new DecoderOpJob(globalMem, workerCommandProcessor, sfu));
+                    std::vector<uint8_t> raw;
+                    globalMem->rd_from_globalmem(next_cmd->rs1, sizeof(DecoderOpDesc), raw);
+                    if (raw.size() == sizeof(DecoderOpDesc)) {
+                        DecoderOpDesc d{}; std::memcpy(&d, raw.data(), sizeof(d));
+                        if (d.manager == (coreID - 4) % 4 && d.lane == (coreID - 4) / 4 && decoderOpJob_->start(d)) status = 0;
+                    }
+                }
+                enqueueResponse(new SST::Vanadis::RoCCResponse(next_cmd->inst->rd, status, next_cmd->cmd_id, next_cmd->hw_thread));
+                delete next_cmd;
+                return;
+            }
+            if (next_cmd->inst->func7 == 0x27) {
+                if (decoderOpJob_ && decoderOpJob_->active()) return;
+                roccCmd_q.pop_front();
+                const uint64_t status = decoderOpJob_ && decoderOpJob_->complete() ? decoderOpJob_->status() : 1;
+                if (decoderOpJob_) decoderOpJob_->retire();
+                enqueueResponse(new SST::Vanadis::RoCCResponse(next_cmd->inst->rd, status, next_cmd->cmd_id, next_cmd->hw_thread));
+                delete next_cmd;
                 return;
             }
             if (next_cmd->inst->func7 == GOLEM_ROCC_FUNC7_HBM_FLAG_WAIT) {
@@ -1789,15 +1874,29 @@ public:
 
     void issueProjectionJob(SST::Vanadis::RoCCCommand* cmd) {
         uint64_t result = 1;
-        if (workerCommandProcessor != nullptr && globalMem != nullptr) {
+        if (coreID >= 4 && coreID < 20 && array != nullptr &&
+            workerCommandProcessor != nullptr && globalMem != nullptr) {
             if (projectionJob_ == nullptr)
-                projectionJob_.reset(new ProjectionJob(globalMem, workerCommandProcessor));
+                projectionJob_.reset(new ProjectionJob(globalMem, workerCommandProcessor, sfu));
             std::vector<uint8_t> raw;
             globalMem->rd_from_globalmem(cmd->rs1, sizeof(ProjectionJobDesc), raw);
             if (raw.size() == sizeof(ProjectionJobDesc)) {
                 ProjectionJobDesc desc{};
                 std::memcpy(&desc, raw.data(), sizeof(desc));
-                if (desc.manager_slot == coreID && projectionJob_->start(desc)) result = 0;
+                const ProjectionJobDesc expected = oracleEnabled("worker_start") ?
+                    oracleProjectionDescriptor(coreID) : ProjectionJobDesc{};
+                if (desc.manager_slot == (coreID - 4) % 4 &&
+                    desc.reserved == (coreID - 4) / 4 + 1 &&
+                    (oracleEnabled("worker_start") ?
+                        std::memcmp(&desc, &expected, sizeof(desc)) == 0 : projectionJob_->start(desc))) {
+                    result = 0;
+                    if (resourceTraceEnabled()) std::printf("[RESOURCE_TIMEBASE] core=%llu ticks_per_cycle=%llu\n",
+                        (unsigned long long)coreID, (unsigned long long)getTimeConverter("1GHz")->convertToCoreTime(1));
+                    if (resourceTraceEnabled()) std::printf("[CONTROL_EVENT] stage=projection_accept core=%llu target=%llu tick=%llu job=%llu address=%llu epoch=%llu input=%llu weights=%llu\n",
+                        (unsigned long long)coreID, (unsigned long long)coreID, (unsigned long long)getCurrentSimCycle(),
+                        (unsigned long long)desc.completion_addr, (unsigned long long)cmd->rs1,
+                        (unsigned long long)desc.completion_value,(unsigned long long)desc.input_addr,(unsigned long long)desc.weights_addr);
+                }
             }
         }
         enqueueResponse(new SST::Vanadis::RoCCResponse(
@@ -9398,7 +9497,7 @@ public:
                 ControlTransportMessage pv = state.dispatch;
                 pv.kind = ControlTransportMessageKind::AttentionClusterPvDispatch;
                 pv.ownerCore = static_cast<uint32_t>(coreID);
-                const uint32_t manager = state.dispatch.ownerCore;
+                const uint32_t manager = (static_cast<uint32_t>(coreID) - 4u) % 4u;
                 pv.workerCore = 4 +
                     (attentionWorkerClusterQkWorkersPerManager_ + lane) * 4 +
                     manager;
@@ -9484,7 +9583,7 @@ public:
                 const uint32_t lane = context.rowBlock % pvLaneCount;
                 const uint32_t workerCore = 4 +
                     (attentionWorkerClusterQkWorkersPerManager_ + lane) * 4 +
-                    state.dispatch.ownerCore;
+                    (static_cast<uint32_t>(coreID) - 4u) % 4u;
                 sendAttentionWorkerClusterVHint(
                     state, context.rowBlock, window, workerCore);
             }
@@ -10193,7 +10292,7 @@ public:
                                         ControlTransportMessage pv = attentionWorker_->dispatch;
                                         pv.kind = ControlTransportMessageKind::AttentionClusterPvDispatch;
                                         pv.ownerCore = static_cast<uint32_t>(coreID);
-                                        const uint32_t manager = attentionWorker_->dispatch.ownerCore;
+                                        const uint32_t manager = (static_cast<uint32_t>(coreID) - 4u) % 4u;
                                         const uint32_t totalKvTiles =
                                             attentionWorker_->dispatch.expectedCols / 64;
                                         const uint32_t rowBlock =
@@ -10246,6 +10345,34 @@ public:
             });
     }
 
+    bool prepareAttentionScratchReuse() {
+        if (!workerCommandProcessor || attentionWorkerClusterPv_.busy ||
+            !attentionWorkerClusterPvQueue_.empty() || !attentionWorkerClusterPvDraining_.empty() ||
+            !attentionWorkerClusterPvOutputs_.empty() || attentionWorkerClusterVLoad_.active ||
+            !attentionWorkerClusterVLoadQueue_.empty() || attentionWorkerClusterPv_.nextPrefetchPending ||
+            !workerCommandProcessor->invalidateAttentionOperandCaches()) return false;
+        // V broadcast history is keyed by HBM address; that address will hold
+        // another layer's tensor. It must expire along with the GM cache tags.
+        attentionWorkerClusterVEntries_.clear(); attentionWorkerClusterVResident_.clear();
+        const uint64_t generation=attentionWorkerClusterPv_.nextPrefetchGeneration+1;
+        attentionWorkerClusterPv_=AttentionWorkerClusterPvState{};
+        attentionWorkerClusterPv_.nextPrefetchGeneration=generation;
+        attentionWorkerClusterPvAssignedRows_.fill(0); attentionWorkerClusterPvAssignCursor_=0;
+        std::printf("[DECODER_SYNC] event=scratch_retire core=%llu tick=%llu\n",
+            (unsigned long long)coreID,(unsigned long long)getCurrentSimCycle());
+        return true;
+    }
+
+    DecoderMemoryLayout decoderStackLayout(const ControlTransportMessage& message) const {
+        const char* value=std::getenv("GOLEM_DECODER_LAYERS");
+        const uint32_t count=value ? std::strtoul(value,nullptr,10) : 0;
+        if (!count) return {};
+        auto layout=makeDecoderMemoryLayout(message.kvLength ? message.kvLength : message.expectedCols,message.numQueryHeads,
+            message.numKvHeads,message.headDim,count,false,0,message.nodeStrideBytes ? message.nodeStrideBytes : DecoderMemoryLayout::node_stride);
+        if (!layout.valid) output->fatal(CALL_INFO,-1,"invalid decoder stack layout\n");
+        return layout;
+    }
+
     void startAttentionReuseWindowPv() {
         if (!attentionWorker_ || workerCommandProcessor == nullptr) {
             finishAttentionWorker(false);
@@ -10253,7 +10380,8 @@ public:
         }
         AttentionWorkerState& state = *attentionWorker_;
         constexpr uint32_t block = 64;
-        constexpr uint64_t panelVOffset = 0x06000000;
+        const auto stackLayout=decoderStackLayout(state.dispatch);
+        const uint64_t panelVOffset = stackLayout.valid ? stackLayout.v_panel : 0x06000000;
         const uint32_t totalKvTiles = state.dispatch.expectedCols / 64;
         const uint32_t keyWindow =
             (state.reuseWindowAttentionTile % totalKvTiles) / 4;
@@ -10387,7 +10515,8 @@ public:
         if ((state.dispatch.flags & GOLEM_ATTENTION_FLAG_ROPE) != 0 &&
             !state.ropeTableReady) {
             if (state.ropeTableLoading) return true;
-            constexpr uint64_t tableOffset = 0x07000000;
+            const auto stackLayout=decoderStackLayout(state.dispatch);
+            const uint64_t tableOffset = stackLayout.valid ? stackLayout.rope : 0x07000000;
             constexpr uint64_t localOffset = 0x100000;
             const uint64_t tableBytes = static_cast<uint64_t>(
                 std::max(state.dispatch.queryLength * 4u,
@@ -10505,8 +10634,9 @@ public:
         header.mat_stride_bytes =
             static_cast<uint64_t>(blockM) * blockK * inputOperandSize;
         header.vec_stride_bytes = static_cast<uint64_t>(blockK) * inputOperandSize;
-        constexpr uint64_t panelQOffset = 0x04000000;
-        constexpr uint64_t panelKOffset = 0x05000000;
+        const auto stackLayout=decoderStackLayout(state.dispatch);
+        const uint64_t panelQOffset = stackLayout.valid ? stackLayout.q_panel : 0x04000000;
+        const uint64_t panelKOffset = stackLayout.valid ? stackLayout.k_panel : 0x05000000;
         header.off_gemm_mat_base = panelQOffset +
             static_cast<uint64_t>(state.dispatch.kvHeadIndex) * groupSize *
                 (state.dispatch.rowsPerBand / blockM) *
@@ -11076,6 +11206,65 @@ public:
         Complete,
     };
 
+    std::tuple<AttentionWorkerPhase, uint32_t, uint32_t, uint32_t, uint32_t, size_t, bool, uint32_t, uint32_t>
+    oracleAttentionProgressKey() const {
+        const auto& s = *attentionWorker_;
+        return std::make_tuple(s.phase, s.index, s.phaseSliceIndex,
+            s.clusterOwnerLaunchNext, s.clusterOwnerLaunchEnd,
+            s.clusterOwnerRetryQueue.size(), bool(s.clusterOwnerRetry),
+            s.queryTileIndex, s.kvTileIndex);
+    }
+
+    void progressOracleProjectionBarrier() {
+        if (!oracleEnabled("projection_barrier") || globalMem == nullptr) return;
+        if (coreID >= 4 && coreID < 20) {
+            if (projectionJob_ && projectionJob_->complete()) {
+                if (projectionJob_->status()) output->fatal(CALL_INFO, -1, "diagnostic projection producer failed\n");
+                oracleProjectionCompleted_ = true;
+            }
+            if (!oracleProjectionCompleted_) return;
+            for (uint32_t manager = 0; manager < 4; ++manager) {
+                if (oracleProjectionNotificationMask_ & (1u << manager)) continue;
+                ControlTransportMessage ready{};
+                ready.kind = ControlTransportMessageKind::DiagnosticProjectionReady;
+                ready.ownerCore = manager;
+                ready.workerCore = coreID;
+                ready.value = 1.0;
+                ready.sendCycle = getCurrentSimCycle();
+                if (globalMem->sendControlMessage(manager, ready))
+                    oracleProjectionNotificationMask_ |= 1u << manager;
+            }
+            return;
+        }
+        if (coreID >= 4 || oracleProjectionReadyMask_ != 0xffffu || oracleBarrierDispatched_) return;
+        const uint32_t sequence = oracleEnvInteger("GOLEM_ATTENTION_QUERY_LENGTH");
+        const uint32_t heads = oracleEnvInteger("GOLEM_ATTENTION_NUM_KV_HEADS");
+        for (uint32_t head = 0; head < heads; ++head) {
+            const uint64_t address = coreID * 0x00200000ull + 0x2000 + head * sizeof(GolemAttentionDescV2);
+            std::vector<uint8_t> raw;
+            globalMem->rd_from_globalmem(address, sizeof(GolemAttentionDescV2), raw);
+            GolemAttentionDescV2 desc{};
+            if (raw.size() != sizeof(desc)) output->fatal(CALL_INFO, -1, "diagnostic descriptor absent\n");
+            std::memcpy(&desc, raw.data(), sizeof(desc));
+            if (!validateManagerAttentionDescriptor(desc) || desc.kv_head_index != head)
+                output->fatal(CALL_INFO, -1, "diagnostic descriptor not ready\n");
+            const uint64_t tag = 0xD1000101ull + sequence + (uint64_t(head) << 32);
+            ManagerAttentionJobState state;
+            state.tag = tag;
+            state.descAddr = address;
+            if (!managerAttentionJobs_.emplace(tag, std::move(state)).second)
+                output->fatal(CALL_INFO, -1, "diagnostic duplicate manager submission\n");
+            oracleManagerJobs_.insert(tag);
+            statAttentionManagerJobsIssued_->addData(1);
+            statAttentionManagerDescriptorAcceptTick_->addData(getCurrentSimCycle());
+            traceAttentionMilestone("manager", coreID == 0 ? "root_descriptor_accept" :
+                "manager_descriptor_accept", "done", 0, tag);
+        }
+        oracleBarrierDispatched_ = true;
+        std::printf("[ORACLE_EVENT] oracle=projection_barrier core=%llu cycle=%llu action=all_producers_ready mask=%u\n",
+            (unsigned long long)coreID, (unsigned long long)LastTickCycle, oracleProjectionReadyMask_);
+    }
+
     struct ManagerAttentionJobState {
         uint64_t tag = 0;
         uint64_t descAddr = 0;
@@ -11114,7 +11303,11 @@ public:
         if (cmd == nullptr || cmd->inst == nullptr) return true;
         const uint64_t tag = cmd->rs2;
         uint64_t response = 0;
-        if (globalMem == nullptr || managerAttentionJobs_.count(tag) != 0) {
+        if (oracleEnabled("projection_barrier") && oracleManagerJobs_.count(tag) &&
+            managerAttentionJobs_.count(tag) && managerAttentionJobs_.at(tag).descAddr == cmd->rs1) {
+            // The diagnostic event-driven submission already accepted the
+            // exact descriptor. A later guest command acknowledges it once.
+        } else if (globalMem == nullptr || managerAttentionJobs_.count(tag) != 0) {
             response = static_cast<uint64_t>(SFUStatus::InvalidDescriptor);
         } else {
             ManagerAttentionJobState state;
@@ -11338,6 +11531,10 @@ public:
                 if (!globalMem->sendControlMessage(workerCore, message)) {
                     failManagerAttentionJob(state, SFUStatus::GlobalMemoryUnavailable);
                 } else {
+                    output->output("[ATTENTION_TASK_ROUTE] manager=%" PRIu64
+                        " head=%u slot=%u worker=%u row=%u rows=%u query_length=%u\n",
+                        coreID, message.kvHeadIndex, workerSlot, workerCore,
+                        message.row, workerRows, message.queryLength);
                     state.workersDispatched += 1;
                     if (state.workersDispatched == dispatchedWorkers) {
                         state.phase = ManagerAttentionJobPhase::Running;
@@ -11777,7 +11974,8 @@ public:
         header.elem_bytes = inputOperandSize;
         header.mat_stride_bytes = panelBytes;
         header.vec_stride_bytes = block * inputOperandSize;
-        constexpr uint64_t panelVOffset = 0x06000000;
+        const auto stackLayout=decoderStackLayout(msg);
+        const uint64_t panelVOffset = stackLayout.valid ? stackLayout.v_panel : 0x06000000;
         const uint32_t windowsPerNode = (msg.kvLength / 256 + 3) / 4;
         const uint32_t panelsPerWindow = 4 * (msg.headDim / block);
         const uint64_t vHeadOffset =
@@ -11975,6 +12173,8 @@ public:
         if (!load.dmaIssued) {
             load.dmaIssued = true;
             const uint64_t source = load.source;
+            output->output("[ATTENTION_V_TRANSFER] core=%" PRIu64
+                " source=%" PRIu64 " bytes=%zu\n", coreID, load.source, load.bytes);
             globalMem->dma_read_from_host_to_globalmem(
                 load.source, load.bytes, load.scratch,
                 [this, source](bool ok) {
@@ -12332,9 +12532,12 @@ public:
                         state.active.kvTileRows, cycles, start, end,
                         state.active.pReadyCycle, state.active.pvDispatchCycle,
                         state.active.pvReceiveCycle, state.startCycle);
-                    const uint32_t manager = (state.active.ownerCore - 4) % 4;
                     const uint32_t groupSize =
                         state.active.numQueryHeads / state.active.numKvHeads;
+                    // row carries the original query band even when the QK
+                    // executor (ownerCore here) is in another worker group.
+                    const uint32_t manager = state.active.row /
+                        (state.active.queryLength * groupSize);
                     const uint32_t localBegin =
                         state.active.row - manager * state.active.queryLength * groupSize +
                         state.active.groupQueryRowBegin;
@@ -12502,6 +12705,15 @@ public:
     }
 
     void handleControlTransportMessage(const ControlTransportMessage& message) {
+        if (message.kind == ControlTransportMessageKind::DiagnosticProjectionReady) {
+            if (!oracleEnabled("projection_barrier") || coreID >= 4 || message.workerCore < 4 ||
+                message.workerCore >= 20 || message.value != 1.0 || message.ownerCore != coreID)
+                output->fatal(CALL_INFO, -1, "invalid diagnostic projection completion\n");
+            const uint32_t bit = 1u << (message.workerCore - 4);
+            if (oracleProjectionReadyMask_ & bit) output->fatal(CALL_INFO, -1, "duplicate diagnostic producer completion\n");
+            oracleProjectionReadyMask_ |= bit;
+            return;
+        }
         if (message.kind ==
                 ControlTransportMessageKind::AttentionClusterPvAllocationRequest) {
             handleAttentionWorkerClusterPvAllocationRequest(message);
@@ -12862,6 +13074,11 @@ public:
 
         std::vector<uint8_t> data(length);
         globalMem->rd_from_globalmem(local_addr, length, data);   // 先读本地
+        if (resourceTraceEnabled() && remote_addr % 0x00200000ull == 0x1008 && length >= 8) {
+            std::printf("[CONTROL_EVENT] stage=projection_release_issue core=%llu target=%llu tick=%llu job=0 address=%llu\n",
+                (unsigned long long)coreID, (unsigned long long)(remote_addr / 0x00200000ull),
+                (unsigned long long)getCurrentSimCycle(), (unsigned long long)remote_addr);
+        }
         globalMem->wr_to_network(remote_addr, length, data);      // 再经 NoC 写对端
         completeRoCC(0);  // 发送后即可返回（若需 ACK，可扩展为等待网络回包）
     }
@@ -13033,6 +13250,12 @@ public:
         globalMem->rd_from_globalmem(src_addr, data_size, read_buffer);
         uint64_t val = 0;
         memcpy(&val, read_buffer.data(), data_size);
+        if (resourceTraceEnabled() && coreID >= 4 && coreID < 20 &&
+            src_addr % 0x00200000ull == 0x1008 && val == 1 && !traceProjectionReleaseObserved_) {
+            traceProjectionReleaseObserved_ = true;
+            std::printf("[CONTROL_EVENT] stage=projection_release_observed core=%llu target=%llu tick=%llu job=0 address=%llu\n",
+                (unsigned long long)coreID, (unsigned long long)coreID, (unsigned long long)getCurrentSimCycle(), (unsigned long long)src_addr);
+        }
 
         output->verbose(CALL_INFO, 1, 0, 
             "gm2reg: Read value 0x%" PRIx64 " from GlobalMemory Address 0x%" PRIx64 "\n", 
@@ -13807,7 +14030,17 @@ private:
     SST::Golem::SFUAPI *sfu;
     std::unordered_map<uint64_t, ManagerTensorJobState> managerTensorJobs_;
     std::unordered_map<uint64_t, ManagerAttentionJobState> managerAttentionJobs_;
+    bool traceProjectionReleaseObserved_ = false;
     std::unique_ptr<ProjectionJob> projectionJob_;
+    std::unique_ptr<DecoderOpJob> decoderOpJob_;
+    bool oracleProjectionStarted_ = false;
+    ProjectionJobDesc oracleProjectionDesc_{};
+    uint32_t oracleProjectionNotificationMask_ = 0;
+    uint32_t oracleProjectionReadyMask_ = 0;
+    bool oracleProjectionCompleted_ = false;
+    bool oracleBarrierDispatched_ = false;
+    std::set<uint64_t> oracleManagerJobs_;
+    uint64_t oracleAttentionProgressPasses_ = 0;
     bool projectionFlagPending_ = false;
     bool projectionFlagReady_ = false;
     bool projectionFlagOk_ = false;

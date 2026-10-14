@@ -1,0 +1,89 @@
+{
+  "status": "PASS",
+  "cases": [
+    {
+      "interval_count": 24704286,
+      "dma_arrival_landing_pairs": 38802,
+      "attention_output_ack_count": 32768,
+      "attention_output_ack_bytes": 4194304,
+      "last_attention_output_ack_cycle": 684033.25,
+      "last_root_tensor_complete_cycle": 684057.0,
+      "output_ack_to_root_cycles": 23.75,
+      "e2e_cycles": 573772,
+      "reconstructed_e2e_cycles": 573772,
+      "critical_worker": 16,
+      "worker_start_span": 30701,
+      "reported_projection_cycles": 416538,
+      "critical_projection_resources": {
+        "worker_elapsed_cycles": 385776,
+        "compute_busy_cycles": 101376.0,
+        "gm_read_busy_cycles": 105808.0,
+        "matrix_program_busy_cycles": 59904.0,
+        "input_scatter_busy_cycles": 50688.0,
+        "gm_read_compute_overlap_cycles": 0.0,
+        "matrix_program_compute_overlap_cycles": 0.0,
+        "input_scatter_compute_overlap_cycles": 0.0
+      },
+      "control_ranges": {
+        "release_issue_cycle": [
+          69614.0,
+          100822.0
+        ],
+        "job_accept_cycle": [
+          110272.0,
+          140973.0
+        ],
+        "release_to_observed_cycles": [
+          9.0,
+          25.0
+        ],
+        "observed_to_accept_cycles": [
+          40132.0,
+          40933.0
+        ]
+      }
+    },
+    {
+      "interval_count": 71106341,
+      "dma_arrival_landing_pairs": 84009,
+      "attention_output_ack_count": 65536,
+      "attention_output_ack_bytes": 8388608,
+      "last_attention_output_ack_cycle": 1465147.75,
+      "last_root_tensor_complete_cycle": 1465171.5,
+      "output_ack_to_root_cycles": 23.75,
+      "e2e_cycles": 1354890,
+      "reconstructed_e2e_cycles": 1354890,
+      "critical_worker": 18,
+      "worker_start_span": 30701,
+      "reported_projection_cycles": 801164,
+      "critical_projection_resources": {
+        "worker_elapsed_cycles": 770901,
+        "compute_busy_cycles": 202752.0,
+        "gm_read_busy_cycles": 211616.0,
+        "matrix_program_busy_cycles": 119808.0,
+        "input_scatter_busy_cycles": 101376.0,
+        "gm_read_compute_overlap_cycles": 0.0,
+        "matrix_program_compute_overlap_cycles": 0.0,
+        "input_scatter_compute_overlap_cycles": 0.0
+      },
+      "control_ranges": {
+        "release_issue_cycle": [
+          69614.0,
+          100822.0
+        ],
+        "job_accept_cycle": [
+          110272.0,
+          140973.0
+        ],
+        "release_to_observed_cycles": [
+          9.0,
+          25.0
+        ],
+        "observed_to_accept_cycles": [
+          40132.0,
+          40933.0
+        ]
+      }
+    }
+  ]
+}

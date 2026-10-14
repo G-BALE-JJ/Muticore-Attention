@@ -2,6 +2,9 @@
 """Generate FP16 RMSNorm and tiled Q/K/V projection inputs and reference tensors."""
 
 import argparse
+import hashlib
+import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -49,6 +52,27 @@ def generate(sequence, hq, hkv, dim, root):
     generate_rope_table(root / f"rope_{dim}.bin", sequence, dim)
 
 
+def reuse_verified_inputs(reference, sequence, hq, hkv, dim, root):
+    """Reuse immutable golden inputs; does not reuse HBM state or simulator output."""
+    reference, root = Path(reference), Path(root)
+    report = json.loads((reference / "projection_e2e_result.json").read_text())
+    shape = report["shape"]
+    if report["status"] != "PASS" or (shape["query_length"], shape["Hq"], shape["Hkv"], shape["head_dim"]) != (sequence, hq, hkv, dim):
+        raise ValueError("cached projection input shape/status mismatch")
+    hashes = json.loads((reference / "baseline_provenance.json").read_text())["input_sha256"]
+    names = ["projection_x.bin", "projection_gamma.bin", "projection_norm.bin",
+             "projection_weights.bin", f"rope_{dim}.bin",
+             f"q_{hq}x{sequence}x{dim}.bin", f"k_{hkv}x{sequence}x{dim}.bin",
+             f"v_{hkv}x{sequence}x{dim}.bin"]
+    for name in names:
+        source = reference / name
+        if hashlib.sha256(source.read_bytes()).hexdigest() != hashes.get(name):
+            raise ValueError(f"cached projection input hash mismatch: {name}")
+    root.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        shutil.copyfile(reference / name, root / name)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sequence", type=int, required=True)
@@ -56,7 +80,11 @@ def main():
     parser.add_argument("--kv-heads", type=int, required=True)
     parser.add_argument("--head-dim", type=int, required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--reuse-from", type=Path)
     args = parser.parse_args()
+    if args.reuse_from:
+        reuse_verified_inputs(args.reuse_from, args.sequence, args.query_heads, args.kv_heads, args.head_dim, args.output_dir)
+        return
     generate(args.sequence, args.query_heads, args.kv_heads,
              args.head_dim, args.output_dir)
 

@@ -223,7 +223,7 @@ struct AttentionClusterConfig {
     uint32_t pvArrays = 48;
     uint32_t arrayInputs = 64;
     uint32_t arrayOutputs = 64;
-    uint32_t operandBanks = 2;
+    uint32_t operandBanks = 1;
     uint32_t scoreSlots = 4;
     uint32_t pSlots = 4;
     uint32_t oContexts = 4;
@@ -246,7 +246,7 @@ struct AttentionClusterConfig {
             return "cluster D128 ownership must contain complete D64 array pairs";
         if (arrayInputs != 64 || arrayOutputs != 64)
             return "cluster requires 64x64 arrays";
-        if (operandBanks != 2) return "cluster requires two operand banks";
+        if (operandBanks != 1) return "cluster requires one operand context per array";
         if (scoreSlots != 4 || pSlots != 4 || oContexts != 4)
             return "cluster requires four score/P/O contexts";
         if (headDim != 128 || queryTileRows != 16 ||
@@ -874,7 +874,7 @@ public:
     static constexpr uint32_t kArrayCount = 64;
     static constexpr uint32_t kQkArrayCount = 16;
     static constexpr uint32_t kPvArrayCount = 48;
-    static constexpr uint32_t kOperandBanks = 2;
+    static constexpr uint32_t kOperandBanks = 1;
     static constexpr uint32_t kScoreSlots = 4;
     static constexpr uint32_t kPSlots = 4;
     static constexpr uint32_t kOContexts = 4;

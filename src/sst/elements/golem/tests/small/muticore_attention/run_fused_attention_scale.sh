@@ -39,7 +39,7 @@ if [[ -n "${GOLEM_ATTENTION_QK_SCORE_ROW_BURST+x}" ||
       -n "${GOLEM_ATTENTION_QK_PANEL_ROW_BURST+x}" ]]; then
   QK_SCORE_ROW_BURST_EXPLICIT=1
 fi
-CROSS_TILE_OPERAND_PIPELINE="${GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE:-1}"
+CROSS_TILE_OPERAND_PIPELINE="${GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE:-0}"
 CROSS_TILE_OPERAND_PIPELINE_EXPLICIT=0
 if [[ -n "${GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE+x}" ]]; then
   CROSS_TILE_OPERAND_PIPELINE_EXPLICIT=1
@@ -133,8 +133,62 @@ fi
 export GOLEM_PROJECTION_PIPELINE="${GOLEM_PROJECTION_PIPELINE:-1}"
 export GOLEM_PROJECTION_SHARED_INPUT="${GOLEM_PROJECTION_SHARED_INPUT:-1}"
 export GOLEM_PROJECTION_WEIGHT_PREFETCH="${GOLEM_PROJECTION_WEIGHT_PREFETCH:-1}"
+if [[ "$GOLEM_PROJECTION_ARRAYS" == 32 && -z "${GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH+x}" ]]; then
+  export GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH=8
+else
+  export GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH="${GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH:-4}"
+fi
+if [[ ! "$GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH" =~ ^[1-8]$ ]]; then echo "GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH must be 1..8" >&2; exit 2; fi
 export GOLEM_PROJECTION_ROW_FIRST="${GOLEM_PROJECTION_ROW_FIRST:-0}"
-export GOLEM_PROJECTION_CBUFFER_PARTIAL="${GOLEM_PROJECTION_CBUFFER_PARTIAL:-0}"
+export GOLEM_PROJECTION_RETAIN_OUTPUT="${GOLEM_PROJECTION_RETAIN_OUTPUT:-0}"
+if [[ ! "$GOLEM_PROJECTION_RETAIN_OUTPUT" =~ ^[01]$ ]]; then
+  echo "GOLEM_PROJECTION_RETAIN_OUTPUT must be 0 or 1" >&2
+  exit 2
+fi
+export GOLEM_PROJECTION_WRAP_PREFETCH="${GOLEM_PROJECTION_WRAP_PREFETCH:-0}"
+export GOLEM_PROJECTION_INPUT_PAIR_PREFETCH="${GOLEM_PROJECTION_INPUT_PAIR_PREFETCH:-0}"
+export GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH="${GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH:-0}"
+export GOLEM_PROJECTION_ARRAY_GROUPS="${GOLEM_PROJECTION_ARRAY_GROUPS:-1}"
+case "$GOLEM_PROJECTION_ARRAY_GROUPS" in 1|2) ;; *) echo "GOLEM_PROJECTION_ARRAY_GROUPS must be 1 or 2" >&2; exit 2 ;; esac
+for overlap_flag in "$GOLEM_PROJECTION_INPUT_PAIR_PREFETCH" "$GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH"; do
+  case "$overlap_flag" in 0|1) ;; *) echo "Projection overlap flags must be 0 or 1" >&2; exit 2 ;; esac
+done
+if [[ "$GOLEM_PROJECTION_INPUT_PAIR_PREFETCH" == 1 || "$GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH" == 1 || "$GOLEM_PROJECTION_ARRAY_GROUPS" == 2 ]]; then
+  if [[ "$GOLEM_PROJECTION_ARRAYS" != 64 || "$GOLEM_PROJECTION_RETAIN_OUTPUT" != 1 || "$GOLEM_PROJECTION_PIPELINE" != 1 || "$GOLEM_PROJECTION_SHARED_INPUT" != 1 || "$GOLEM_PROJECTION_ROW_FIRST" != 0 ]]; then
+    echo "Projection overlap requires 64 arrays, retained output, pipeline, shared input, and row_first=0" >&2
+    exit 2
+  fi
+fi
+export GOLEM_ATTENTION_CAUSAL_BALANCE="${GOLEM_ATTENTION_CAUSAL_BALANCE:-0}"
+case "$GOLEM_ATTENTION_CAUSAL_BALANCE" in 0|1) ;; *) echo "GOLEM_ATTENTION_CAUSAL_BALANCE must be 0 or 1" >&2; exit 2 ;; esac
+case "$GOLEM_PROJECTION_WRAP_PREFETCH" in 0|1) ;; *) echo "GOLEM_PROJECTION_WRAP_PREFETCH must be 0 or 1" >&2; exit 2 ;; esac
+export GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD="${GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD:-0}"
+case "$GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD" in 0|1) ;; *) echo "GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD must be 0 or 1" >&2; exit 2 ;; esac
+export GOLEM_PROJECTION_PACKED_NORM_INPUT="${GOLEM_PROJECTION_PACKED_NORM_INPUT:-0}"
+case "$GOLEM_PROJECTION_PACKED_NORM_INPUT" in 0|1) ;; *) echo "GOLEM_PROJECTION_PACKED_NORM_INPUT must be 0 or 1" >&2; exit 2 ;; esac
+export GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET="${GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET:-0}"
+export GOLEM_CRITICAL_PATH_TRACE="${GOLEM_CRITICAL_PATH_TRACE:-0}"
+if [[ ! "$GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET" =~ ^[0-9]+$ ]] || (( 10#$GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET > 64 )); then
+  echo "GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET must be an integer in [0,64]" >&2; exit 2
+fi
+# Fixed dataflow policy: with one operand context, 32-array projection uses
+# the existing C-buffer partial path; 64-array projection keeps output retention.
+# This is a software schedule choice and does not add storage or ports.
+if [[ "$GOLEM_PROJECTION_ARRAYS" == 32 && -z "${GOLEM_PROJECTION_CBUFFER_PARTIAL+x}" ]]; then
+  export GOLEM_PROJECTION_CBUFFER_PARTIAL=1
+else
+  export GOLEM_PROJECTION_CBUFFER_PARTIAL="${GOLEM_PROJECTION_CBUFFER_PARTIAL:-0}"
+fi
+case "${GOLEM_PROJECTION_WEIGHT_STATIONARY:-0}" in
+  0) unset GOLEM_PROJECTION_WEIGHT_STATIONARY ;;
+  *) echo "GOLEM_PROJECTION_WEIGHT_STATIONARY is retired; use the standard paired projection path" >&2; exit 2 ;;
+esac
+export GOLEM_FUSION_NORM_PROJECTION="${GOLEM_FUSION_NORM_PROJECTION:-0}"
+export GOLEM_FUSION_PROJECTION_ROPE="${GOLEM_FUSION_PROJECTION_ROPE:-0}"
+export GOLEM_FUSION_SKIP_AUDIT_OUTPUT="${GOLEM_FUSION_SKIP_AUDIT_OUTPUT:-0}"
+for fusion_flag in "$GOLEM_FUSION_NORM_PROJECTION" "$GOLEM_FUSION_PROJECTION_ROPE" "$GOLEM_FUSION_SKIP_AUDIT_OUTPUT"; do
+  case "$fusion_flag" in 0|1) ;; *) echo "Fusion flags must be 0 or 1" >&2; exit 2 ;; esac
+done
 ARRAY_OUTPUT_READ_CREDITS="${GOLEM_ARRAY_OUTPUT_READ_CREDITS:-1}"
 ARRAY_OUTPUT_READ_BANKS="${GOLEM_ARRAY_OUTPUT_READ_BANKS:-1}"
 ARRAY_BUFFER_PORTS="${GOLEM_ARRAY_BUFFER_PORTS:-1}"
@@ -255,6 +309,14 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+if (( CROSS_TILE_OPERAND_PIPELINE )); then
+  echo "Cross-tile operand pipeline is unavailable: extra array operand banks were removed" >&2
+  exit 2
+fi
+if [[ "${GOLEM_ARRAY_OPERAND_CONTEXT_BANKS:-1}" != 1 ]]; then
+  echo "GOLEM_ARRAY_OPERAND_CONTEXT_BANKS must be 1: extra operand banks were removed" >&2
+  exit 2
+fi
 if [[ "$ATTENTION_DTYPE" != "fp16" && "$ATTENTION_DTYPE" != "fp32" ]]; then
   echo "--dtype must be fp16 or fp32" >&2
   exit 2
@@ -270,6 +332,10 @@ fi
 if (( ATTENTION_PROJECTION )) &&
    { [[ "$ATTENTION_DTYPE" != fp16 ]] || (( QUERY_LENGTH != KV_LENGTH || QUERY_LENGTH % 1024 )); }; then
   echo "projection requires FP16 causal self attention with S divisible by 1024" >&2
+  exit 2
+fi
+if (( GOLEM_FUSION_NORM_PROJECTION || GOLEM_FUSION_PROJECTION_ROPE || GOLEM_FUSION_SKIP_AUDIT_OUTPUT )) && (( ! ATTENTION_PROJECTION )); then
+  echo "Fusion flags require --projection" >&2
   exit 2
 fi
 if (( ATTENTION_ROPE )) && [[ "$ATTENTION_DTYPE" != fp16 ]]; then
@@ -416,8 +482,8 @@ if (( PV_V_TILE_GROUP_RETENTION && !PV_V_TILE_REUSE )); then
   echo "PV V-tile group retention requires PV V-tile reuse" >&2
   exit 2
 fi
-if (( MPI_RANKS > 4 || 4 % MPI_RANKS != 0 )); then
-  echo "GOLEM_MPI_RANKS must divide the four query-manager bands (supported: 1, 2, 4)" >&2
+if (( MPI_RANKS != 1 && MPI_RANKS != 2 && MPI_RANKS != 4 && MPI_RANKS != 8 )); then
+  echo "GOLEM_MPI_RANKS supports 1, 2, 4 or 8 (8 splits QK/PV within each query-manager band)" >&2
   exit 2
 fi
 if ! [[ "$DMA_RESPONSE_VN" =~ ^[0-2]$ ]]; then
@@ -653,7 +719,7 @@ SST_LOG_BASENAME=attention-sst.log
 SST_RUNTIME_LOG="$ARTIFACT_ROOT/logs/${SST_LOG_BASENAME%.log}_${RUN_ID}.log"
 MPI_PARTITION_JSON="$ARTIFACT_ROOT/attention_mpi_partition.json"
 MPI_PLACEMENT_JSON="$ARTIFACT_ROOT/attention_mpi_placement.json"
-GUEST="$SCRIPT_DIR/riscv64/$GUEST_NAME"
+GUEST="${GOLEM_ATTENTION_GUEST_EXECUTABLE:-$SCRIPT_DIR/riscv64/$GUEST_NAME}"
 HBM_DIR="$ARTIFACT_ROOT/hbm"
 STATS_FILE="$ARTIFACT_ROOT/stats/overlap0/$RUN_ID/stats_selfcom.txt"
 RUN_CONFIG_FILE="$ARTIFACT_ROOT/stats/overlap0/$RUN_ID/run_config.env"
@@ -668,6 +734,14 @@ KV_NODE_BYTES=$((NUM_KV_HEADS * (KV_LENGTH / 4) * HEAD_DIM * ELEMENT_BYTES))
 K_OFFSET=$((((Q_OFFSET + Q_NODE_BYTES + TENSOR_ALIGNMENT - 1) / TENSOR_ALIGNMENT) * TENSOR_ALIGNMENT))
 V_OFFSET=$((((K_OFFSET + KV_NODE_BYTES + TENSOR_ALIGNMENT - 1) / TENSOR_ALIGNMENT) * TENSOR_ALIGNMENT))
 O_OFFSET=$((((V_OFFSET + KV_NODE_BYTES + TENSOR_ALIGNMENT - 1) / TENSOR_ALIGNMENT) * TENSOR_ALIGNMENT))
+if [[ -n "${GOLEM_DECODER_STACK_MANIFEST:-}" ]]; then
+  read -r Q_OFFSET K_OFFSET V_OFFSET O_OFFSET MEM_NODE_SIZE < <(python3 - "$GOLEM_DECODER_STACK_MANIFEST" <<'PYLAYOUT'
+import json,sys
+layout=json.load(open(sys.argv[1]))['layout']
+print(*(layout['shared'][n] for n in ('q','k','v','o')),layout['node_stride'])
+PYLAYOUT
+)
+fi
 if (( O_OFFSET + Q_NODE_BYTES > MEM_NODE_SIZE )); then
   echo "Multi-head Q/K/V/O tensors exceed the per-node HBM capacity" >&2
   exit 2
@@ -691,6 +765,14 @@ if (( ATTENTION_PROJECTION )); then
     --sequence "$QUERY_LENGTH" --query-heads "$NUM_QUERY_HEADS"
     --kv-heads "$NUM_KV_HEADS" --head-dim "$HEAD_DIM"
     --output-dir "$ARTIFACT_ROOT")
+  if [[ -n "${GOLEM_PROJECTION_INPUT_REFERENCE:-}" ]]; then
+    GENERATE_CMD+=(--reuse-from "$GOLEM_PROJECTION_INPUT_REFERENCE")
+  fi
+fi
+
+if [[ -n "${GOLEM_DECODER_STACK_MANIFEST:-}" ]]; then
+  GENERATE_CMD=(python3 "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/run_decoder_stack.py"
+    --artifact-root "$ARTIFACT_ROOT" --validate-inputs)
 fi
 
 RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
@@ -764,7 +846,7 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_ATTENTION_QK_SCORE_ROW_BURST=$QK_SCORE_ROW_BURST"
   "GOLEM_ATTENTION_QK_PANEL_ROW_BURST=$QK_SCORE_ROW_BURST"
   "GOLEM_ATTENTION_CROSS_TILE_OPERAND_PIPELINE=$CROSS_TILE_OPERAND_PIPELINE"
-  "GOLEM_ARRAY_OPERAND_CONTEXT_BANKS=$((CROSS_TILE_OPERAND_PIPELINE ? 2 : 1))"
+  "GOLEM_ARRAY_OPERAND_CONTEXT_BANKS=1"
   "GOLEM_ATTENTION_KV_DOUBLE_BUFFER=$KV_DOUBLE_BUFFER"
   "GOLEM_ATTENTION_KV_BUFFER_COUNT=$KV_BUFFER_COUNT_EFFECTIVE"
   "GOLEM_ATTENTION_KV_SHARED_STREAM_ENABLE=$KV_SHARED_STREAM"
@@ -800,8 +882,22 @@ RUN_CMD=(timeout "$TIMEOUT_SECONDS" env
   "GOLEM_PROJECTION_PIPELINE=$GOLEM_PROJECTION_PIPELINE"
   "GOLEM_PROJECTION_SHARED_INPUT=$GOLEM_PROJECTION_SHARED_INPUT"
   "GOLEM_PROJECTION_WEIGHT_PREFETCH=$GOLEM_PROJECTION_WEIGHT_PREFETCH"
+  "GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH=$GOLEM_PROJECTION_WEIGHT_PREFETCH_DEPTH"
   "GOLEM_PROJECTION_ROW_FIRST=$GOLEM_PROJECTION_ROW_FIRST"
+  "GOLEM_PROJECTION_RETAIN_OUTPUT=$GOLEM_PROJECTION_RETAIN_OUTPUT"
+  "GOLEM_PROJECTION_INPUT_PAIR_PREFETCH=$GOLEM_PROJECTION_INPUT_PAIR_PREFETCH"
+  "GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH=$GOLEM_PROJECTION_LOCAL_WEIGHT_PREFETCH"
+  "GOLEM_PROJECTION_ARRAY_GROUPS=$GOLEM_PROJECTION_ARRAY_GROUPS"
+  "GOLEM_PROJECTION_WRAP_PREFETCH=$GOLEM_PROJECTION_WRAP_PREFETCH"
+  "GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD=$GOLEM_PROJECTION_PARTIAL_RESTORE_AHEAD"
+  "GOLEM_PROJECTION_PACKED_NORM_INPUT=$GOLEM_PROJECTION_PACKED_NORM_INPUT"
+  "GOLEM_ATTENTION_CAUSAL_BALANCE=$GOLEM_ATTENTION_CAUSAL_BALANCE"
+  "GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET=$GOLEM_PROJECTION_INPUT_PREFETCH_BUDGET"
+  "GOLEM_CRITICAL_PATH_TRACE=$GOLEM_CRITICAL_PATH_TRACE"
   "GOLEM_PROJECTION_CBUFFER_PARTIAL=$GOLEM_PROJECTION_CBUFFER_PARTIAL"
+  "GOLEM_FUSION_NORM_PROJECTION=$GOLEM_FUSION_NORM_PROJECTION"
+  "GOLEM_FUSION_PROJECTION_ROPE=$GOLEM_FUSION_PROJECTION_ROPE"
+  "GOLEM_FUSION_SKIP_AUDIT_OUTPUT=$GOLEM_FUSION_SKIP_AUDIT_OUTPUT"
   "GOLEM_ARRAY_OUTPUT_READ_CREDITS=$ARRAY_OUTPUT_READ_CREDITS"
   "GOLEM_ARRAY_OUTPUT_READ_BANKS=$ARRAY_OUTPUT_READ_BANKS"
   "GOLEM_ARRAY_BUFFER_PORTS=$ARRAY_BUFFER_PORTS"
@@ -883,7 +979,11 @@ VERIFY_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_output.py"
 if (( ATTENTION_CAUSAL )); then VERIFY_CMD+=(--causal); fi
 if (( ATTENTION_ROPE )); then VERIFY_CMD+=(--rope-table-file "$ROPE_TABLE_FILE"); fi
 LAYOUT_PROJECTION_ARGS=()
-if (( ATTENTION_PROJECTION )); then LAYOUT_PROJECTION_ARGS+=(--projection); fi
+if (( ATTENTION_PROJECTION )); then
+  LAYOUT_PROJECTION_ARGS+=(--projection)
+  if (( GOLEM_FUSION_PROJECTION_ROPE )); then LAYOUT_PROJECTION_ARGS+=(--rotated-panels); fi
+  if (( GOLEM_FUSION_SKIP_AUDIT_OUTPUT )); then LAYOUT_PROJECTION_ARGS+=(--skip-audit-output); fi
+fi
 VERIFY_STATS_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_stats.py"
   --case-id "$RUN_ID"
   --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
@@ -1238,6 +1338,19 @@ done
 run_attention_stage generate "${GENERATE_CMD[@]}"
 run_attention_stage sst "${RUN_CMD[@]}"
 SST_WALL_SECONDS="$ATTENTION_STAGE_SECONDS"
+if [[ -n "${GOLEM_MPI_RANK_LOG_ROOT:-}" ]]; then
+  python3 "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py" \
+    --root "$GOLEM_MPI_RANK_LOG_ROOT" --output "$SST_RUNTIME_LOG" \
+    --ranks "${GOLEM_MPI_RANKS:-4}"
+fi
+if [[ -n "${GOLEM_DECODER_STACK_MANIFEST:-}" ]]; then
+  run_attention_stage backend_verify verify_attention_memory_backend "$SST_RUNTIME_LOG" ramulator2
+  run_attention_stage decoder_stack_verify python3 \
+    "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/run_decoder_stack.py" \
+    --artifact-root "$ARTIFACT_ROOT" --verify-only
+  attention_ui_key_value "Decoder stack result" "$ARTIFACT_ROOT/decoder_stack_result.json"
+  exit 0
+fi
 if (( REUSE_WINDOW_QK_BRIDGE )); then
   QK_BRIDGE_RESULT="$ARTIFACT_ROOT/sst_qk_bridge_result.json"
   if (( WORKER_CLUSTER_BRIDGE )); then
@@ -1274,10 +1387,16 @@ if (( REUSE_WINDOW_QK_BRIDGE )); then
 import json
 import sys
 report = json.load(open(sys.argv[1]))
-print("Projection end-to-end: {:,} cycles, optimistic floor {:,}, ratio {:.2f}x".format(
-    report["end_to_end_cycles"], report["optimistic_resource_floor_cycles"],
-    report["actual_to_floor_ratio"]))
+print("Legacy job-to-worker completion: {:,} cycles (historical boundary)".format(
+    report["end_to_end_cycles"]))
 PY
+      if (( HEAD_DIM == 64 && ATTENTION_CAUSAL )) && [[ "${GOLEM_CRITICAL_PATH_TRACE:-0}" != "0" ]]; then
+        run_attention_stage dma_e2e_report python3 \
+          "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/report_dma_e2e.py" \
+          --case "$ARTIFACT_ROOT"
+      else
+        echo "Canonical DMA E2E unavailable: requires causal D64 workload and resource timing evidence" >&2
+      fi
     fi
     attention_ui_key_value "Artifacts" "$ARTIFACT_ROOT"
     attention_ui_key_value "Worker-cluster result" "$QK_BRIDGE_RESULT"

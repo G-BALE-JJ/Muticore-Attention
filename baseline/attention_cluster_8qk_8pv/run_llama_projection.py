@@ -48,13 +48,13 @@ def summarize(case):
     shape = pipeline["shape"]
     if (shape["Hq"], shape["Hkv"], shape["head_dim"]) != (32, 8, 64):
         raise ValueError(f"{case}: requires Llama 32:8/D64 shape")
-    gm = pipeline["stages"]["projection"].get("local_gm_by_manager", {})
-    if len(gm) != 4 or any(x["timed"] != 1 for x in gm.values()):
+    gm = pipeline["stages"]["projection"].get("local_gm_by_worker", pipeline["stages"]["projection"].get("local_gm_by_manager", {}))
+    if len(gm) != (16 if pipeline.get("resource_topology_valid") else 4) or any(x["timed"] != 1 for x in gm.values()):
         raise ValueError(f"{case}: missing timed GM evidence")
     if any(x["reuse_block"] and not x.get("paired_weights") for x in gm.values()):
         raise ValueError(f"{case}: missing paired-weight reuse evidence")
     rope = pipeline.get("attention_rope_table_first_load_by_worker", {})
-    if len(rope) != 8 or any(x["local_read_cycles"] <= 0 for x in rope.values()):
+    if not any(x["rope"] for x in pipeline.get("fusion_by_worker", pipeline.get("fusion_by_manager", {})).values()) and (len(rope) != 8 or any(x["local_read_cycles"] <= 0 for x in rope.values())):
         raise ValueError(f"{case}: missing timed RoPE table evidence")
     errors = {}
     for node in reports["attention_hbm_layout"]["nodes"]:
@@ -82,19 +82,39 @@ def compare_reference(case, reference):
     current_layout = json.loads((case / "attention_hbm_layout.json").read_text())
     prior_layout = json.loads((reference / "attention_hbm_layout.json").read_text())
     checked = []
-    names = {"RMSNorm", "Q", "K", "V", "Q_panels", "K_panels", "V_panels"}
+    names = {"RMSNorm", "Q", "K", "V", "Q_panels", "K_panels", "V_panels", "O"}
     for node, prior in zip(current_layout["nodes"], prior_layout["nodes"], strict=True):
-        if node["node"] != prior["node"] or node["regions"] != prior["regions"]:
-            raise ValueError("reference HBM layout mismatch")
+        if node["node"] != prior["node"]:
+            raise ValueError("reference HBM node mismatch")
+        prior_regions = {r["name"]: r for r in prior["regions"]}
         filename = f"hbm_out_node{node['node']}.bin"
         with (case / "hbm" / filename).open("rb") as actual, (reference / "hbm" / filename).open("rb") as expected:
             for region in node["regions"]:
                 if region["name"] not in names:
                     continue
                 actual.seek(region["begin"])
-                expected.seek(region["begin"])
+                prior_region = prior_regions[region["name"]]
+                expected.seek(prior_region["begin"])
                 length = region["end"] - region["begin"]
-                if actual.read(length) != expected.read(length):
+                wanted = expected.read(length)
+                if (region["name"] in {"Q_panels", "K_panels"} and
+                        current_layout.get("rotated_panels") and not prior_layout.get("rotated_panels")):
+                    import numpy as np
+                    import sys
+                    sys.path.insert(0, str(ROOT / "src/sst/elements/golem/tests/small/muticore_attention"))
+                    from verify_fused_attention_scale_output import rotate_rope
+                    shape = current["pipeline"]["shape"]
+                    rows, dim = shape["query_length"] // 4, shape["head_dim"]
+                    heads = shape["Hq"] if region["name"] == "Q_panels" else shape["Hkv"]
+                    raw_region = prior_regions[region["name"][0]]
+                    expected.seek(raw_region["begin"])
+                    values = np.frombuffer(expected.read(raw_region["end"] - raw_region["begin"]),
+                                           dtype="<f2").reshape(heads, rows, dim)
+                    table = np.fromfile(reference / f"rope_{dim}.bin", dtype="<f2").reshape(-1, dim)
+                    table = table[(node["node"] - 1) * rows:node["node"] * rows]
+                    rotated = np.asarray([rotate_rope(v, rows, dim, table, simulator_storage=True) for v in values], dtype="<f2")
+                    wanted = rotated.reshape(heads, rows // 64, 64, dim // 64, 64).transpose(0, 1, 3, 2, 4).tobytes()
+                if actual.read(length) != wanted:
                     raise ValueError(f"reference byte mismatch: node {node['node']} {region['name']}")
                 checked.append({"node": node["node"], "region": region["name"], "bytes": length})
     def reduction(old, new):
@@ -102,10 +122,21 @@ def compare_reference(case, reference):
                 "reduction_percent": 100 * (old - new) / old}
     comparison = {
         "status": "PASS", "reference_root": str(reference),
+        "performance_comparable": bool(current["pipeline"].get("resource_topology_valid") and
+                                       previous["pipeline"].get("resource_topology_valid") and
+                                       current["pipeline"].get("array_operand_banks") is not None and
+                                       current["pipeline"].get("array_operand_banks") ==
+                                       previous["pipeline"].get("array_operand_banks")),
+        "reference_resource_topology_valid": bool(previous["pipeline"].get("resource_topology_valid")),
         "byte_exact_regions": checked,
         "end_to_end": reduction(previous["pipeline"]["end_to_end_cycles"], current["pipeline"]["end_to_end_cycles"]),
         "projection": reduction(previous["pipeline"]["stages"]["projection"]["elapsed_cycles"], current["pipeline"]["stages"]["projection"]["elapsed_cycles"]),
     }
+    if not comparison["performance_comparable"]:
+        comparison["comparison_scope"] = "numerical compatibility; resource topology or operand storage differs or is unverified"
+        for stage in ("end_to_end", "projection"):
+            comparison[stage].pop("saved_cycles")
+            comparison[stage].pop("reduction_percent")
     (case / "reference_comparison.json").write_text(json.dumps(comparison, indent=2) + "\n")
     return comparison
 
@@ -116,7 +147,7 @@ def main():
     parser.add_argument("--sequences", type=int, nargs="+", default=[1024, 2048])
     parser.add_argument("--summarize-only", action="store_true")
     parser.add_argument("--reference-root", type=Path,
-                        help="prior artifact root containing s1024/s2048; check exact projection bytes and cycle savings")
+                        help="prior s1024/s2048 artifacts; check exact outputs and compare cycles only for valid resource topologies")
     args = parser.parse_args()
     env = {**os.environ, **GM_PROFILE}
     env.setdefault("GOLEM_PROJECTION_ARRAYS", "64")
@@ -126,6 +157,8 @@ def main():
         if sequence not in (1024, 2048):
             parser.error("supported sequences: 1024, 2048")
         case = args.artifact_root.resolve() / f"s{sequence}"
+        if args.reference_root:
+            env["GOLEM_PROJECTION_INPUT_REFERENCE"] = str(args.reference_root.resolve() / f"s{sequence}")
         if not args.summarize_only:
             case.mkdir(parents=True, exist_ok=True)
             if (case / "baseline_provenance.json").exists():
@@ -135,8 +168,15 @@ def main():
                        "--num-query-heads", "32", "--num-kv-heads", "8",
                        "--head-dim", "64", "--artifact-root", str(case)]
             sources = [ROOT / "src/sst/elements/golem/attention/projectionJob.h",
+                       ROOT / "src/sst/elements/golem/array/computeArray.h",
+                       ROOT / "src/sst/elements/golem/attention/attentionCluster.h",
+                       ROOT / "src/sst/elements/golem/attention/projectionJobAbi.h",
+                       ROOT / "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h",
+                       ROOT / "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp",
                        ROOT / "src/sst/elements/golem/rocc/roccAnalog.h",
                        ROOT / "src/sst/elements/golem/workercmdproc/workercmdproc.h",
+                       ROOT / "src/sst/elements/golem/array/mvmComputeArray.h",
+                       ROOT / "src/sst/elements/golem/tests/architecture/cpu_builder.py",
                        ROOT / "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py"]
             binaries = [ROOT / "install/lib/sst-elements-library/libgolem.so",
                         ROOT / "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention"]
@@ -161,6 +201,10 @@ def main():
             if len(configs) != 1:
                 raise ValueError(f"{case}: missing resolved run config")
             provenance["resolved_run_config"] = configs[0].read_text()
+            # The wrapper rebuilds the guest before SST starts. Archive the
+            # binaries that actually ran rather than the pre-build guest.
+            provenance["sha256"].update({str(p.relative_to(ROOT)): digest(p)
+                                         for p in binaries})
             provenance["input_sha256"] = {
                 p.name: digest(p) for p in sorted(case.glob("*.bin"))}
             (case / "baseline_provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")

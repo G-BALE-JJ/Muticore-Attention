@@ -8,6 +8,7 @@
 #include <tuple>
 
 #include <sst/elements/golem/sfu/sfu.h>
+#include <sst/elements/golem/attention/resourceTrace.h>
 #include <sst/elements/golem/fp16.h>
 
 namespace SST {
@@ -651,6 +652,13 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
         "RowEngineSelf",
         std::to_string(rowEngineAcceleratorClockHz_) + "Hz",
         new SST::Event::Handler2<SFU, &SFU::handleTensorRowEngineEvent>(this));
+    const uint32_t vectorFifoElements = params.find<uint32_t>("vector_fifo_elements", 64);
+    const uint32_t vectorMaxRequests = params.find<uint32_t>("vector_max_requests", 8);
+    if (!vectorMaxRequests || vectorFifoElements < std::max(vectorOpLanes_, rowEngineExpLanes_))
+        output_.fatal(CALL_INFO, -1, "Invalid vector pipeline capacity\n");
+    vectorScheduler_.reset(new SFUVectorPipeline(
+        vectorOpPipeline_, expPipeline_, reciprocalPipeline_, vectorOpLanes_,
+        rowEngineExpLanes_, vectorFifoElements, vectorMaxRequests));
     const std::string transport =
         params.find<std::string>("distributed_reduction_transport", "shared");
     if (transport == "shared") {
@@ -1045,6 +1053,14 @@ void SFU::finish()
     reportPipeline("online_add", 1, onlineAddPipeline_);
     reportPipeline("reciprocal", 1, reciprocalPipeline_);
     reportPipeline("normalize", rowEngineVectorLanes_, normalizePipeline_);
+    reportPipeline("vector_op", vectorOpLanes_, vectorOpPipeline_);
+    std::printf("[SFU_VECTOR_PIPELINE] core=%u fifo_elements=%zu fifo_high_water=%llu "
+        "request_high_water=%llu fifo_backpressure_events=%llu resource_backpressure_events=%llu\n",
+        coreId_, vectorScheduler_->fifoCapacity(),
+        (unsigned long long)vectorScheduler_->fifoHighWater,
+        (unsigned long long)vectorScheduler_->requestHighWater,
+        (unsigned long long)vectorScheduler_->fifoBackpressureEvents,
+        (unsigned long long)vectorScheduler_->resourceBackpressureEvents);
     if (verbose_ > 0) {
         output_.verbose(CALL_INFO, 1, 0,
             "SFU finish core=%" PRIu32 " inflight=%" PRIu32 "\n",
@@ -2317,6 +2333,13 @@ uint64_t SFU::scheduleScoreFifoPort(uint64_t bytes, bool write)
     const uint64_t transfer = ceilDiv(bytes, attentionScoreFifoBytesPerCycle_);
     nextCycle = start + transfer;
     statAttentionClusterScoreFifoPortWaitCycles_->addData(start - now);
+    if (resourceTraceEnabled()) {
+        const uint64_t issueTick = ceilMulDiv(start, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+        const uint64_t endTick = ceilMulDiv(start + transfer, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+        const uint64_t visibleTick = ceilMulDiv(start + transfer + attentionScoreFifoLatencyCycles_, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+        traceResourceInterval("sfu_model", write ? "score_fifo_write" : "score_fifo_read", coreId_,
+            ++traceResourceSequence_, 0, 0, getCurrentSimCycle(), issueTick, endTick, visibleTick, bytes, 0);
+    }
     return std::max<uint64_t>(
         1, start - now + attentionScoreFifoLatencyCycles_ + transfer);
 }
@@ -2423,6 +2446,13 @@ uint64_t SFU::schedulePFifoPort(uint64_t bytes, bool write)
     const uint64_t transfer = ceilDiv(bytes, attentionScoreFifoBytesPerCycle_);
     nextCycle = start + transfer;
     statAttentionClusterPFifoPortWaitCycles_->addData(start - now);
+    if (resourceTraceEnabled()) {
+        const uint64_t issueTick = ceilMulDiv(start, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+        const uint64_t endTick = ceilMulDiv(start + transfer, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+        const uint64_t visibleTick = ceilMulDiv(start + transfer + attentionScoreFifoLatencyCycles_, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+        traceResourceInterval("sfu_model", write ? "p_fifo_write" : "p_fifo_read", coreId_,
+            ++traceResourceSequence_, 0, 0, getCurrentSimCycle(), issueTick, endTick, visibleTick, bytes, 0);
+    }
     return std::max<uint64_t>(
         1, start - now + attentionScoreFifoLatencyCycles_ + transfer);
 }
@@ -2542,9 +2572,27 @@ void SFU::cancelAttentionClusterGeneration(uint64_t generation)
 bool SFU::issueVectorOp(const SFUVectorRequest& request,
                        SFUVectorResult* result)
 {
-    if (result == nullptr || vectorOpLanes_ == 0 ||
-        vectorReduceLatency_ == 0 || vectorRsqrtLatency_ == 0 ||
+    if (result == nullptr) return false;
+    if (request.op == SFUVectorOp::Add || request.op == SFUVectorOp::Multiply ||
+        request.op == SFUVectorOp::Silu) {
+        uint64_t job = 0;
+        if (!vectorScheduler_->submit(request, rowEngineCurrentCycle(), &job)) return false;
+        *result = SFUVectorResult{};
+        result->readyTick = std::numeric_limits<uint64_t>::max();
+        vectorResults_.emplace(job, result);
+        statVectorOps_->addData(1);
+        statVectorElems_->addData(request.input->size());
+        if (!vectorPumpScheduled_) {
+            vectorPumpScheduled_ = true;
+            rowEngineSelfLink_->send(1, new TensorRowEngineEvent(
+                0, 0, 0, TensorRowEngineStage::Max,
+                TensorRowEngineEventKind::VectorPump, 0));
+        }
+        return true;
+    }
+    if (vectorOpLanes_ == 0 || vectorReduceLatency_ == 0 || vectorRsqrtLatency_ == 0 ||
         !evaluateSFUVectorOp(request, &result->values)) return false;
+    result->completed = false;
     uint64_t activeElements = 0;
     if (request.op == SFUVectorOp::Rope) {
         activeElements = static_cast<uint64_t>(request.positions->size()) *
@@ -2552,7 +2600,7 @@ bool SFU::issueVectorOp(const SFUVectorRequest& request,
         result->modeledCycles = vectorOpPipeline_.latency +
             ceilDiv(activeElements / 2, vectorOpLanes_) *
                 vectorOpPipeline_.initiationInterval;
-    } else {
+    } else if (request.op == SFUVectorOp::RmsNorm) {
         activeElements = request.input->size();
         uint64_t reductionStages = 0;
         for (uint32_t remaining = request.rowWidth; remaining > 1;
@@ -2568,12 +2616,76 @@ bool SFU::issueVectorOp(const SFUVectorRequest& request,
     const uint64_t modeledTicks = ceilMulDiv(
         result->modeledCycles, rowEngineTimebaseTicksPerSecond_,
         rowEngineAcceleratorClockHz_);
-    result->readyTick = std::max(now, vectorOpFreeTick_) +
-        modeledTicks;
+    // RoPE/RMSNorm retain their aggregate timing model. Reserve the vector
+    // resource exclusively over that interval, including previously issued
+    // tokens, so they cannot silently overlap the new vector requests.
+    uint64_t vectorReadyCycle = vectorOpPipeline_.nextIssueCycle;
+    if (!vectorOpPipeline_.completionCycles.empty())
+        vectorReadyCycle = std::max(vectorReadyCycle, vectorOpPipeline_.completionCycles.back());
+    const uint64_t vectorReadyTick = ceilMulDiv(
+        vectorReadyCycle, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+    const uint64_t traceStart = std::max(std::max(now, vectorOpFreeTick_), vectorReadyTick);
+    result->readyTick = traceStart + modeledTicks;
+    if (resourceTraceEnabled()) traceResourceInterval("sfu_model", request.op == SFUVectorOp::Rope ? "rope_vector" : request.op == SFUVectorOp::RmsNorm ? "norm_vector" :
+        request.op == SFUVectorOp::Add ? "add_vector" : request.op == SFUVectorOp::Multiply ? "multiply_vector" : "silu_vector",
+        coreId_, ++traceResourceSequence_, 0, 0, now, traceStart, result->readyTick,
+        result->readyTick, activeElements * sizeof(float), 0);
     vectorOpFreeTick_ = result->readyTick;
+    vectorOpPipeline_.nextIssueCycle = ceilMulDiv(
+        result->readyTick, rowEngineAcceleratorClockHz_, rowEngineTimebaseTicksPerSecond_);
+    result->completed = true; // readyTick still gates aggregate result visibility.
     statVectorOps_->addData(1);
     statVectorElems_->addData(activeElements);
     return true;
+}
+
+void SFU::advanceVectorPipeline()
+{
+    vectorPumpScheduled_ = false;
+    const uint64_t now = rowEngineCurrentCycle();
+    vectorScheduler_->step(now, [this](const SFUVectorPipeline::Issue& issue) {
+        if (!resourceTraceEnabled()) return;
+        const char* resources[] = {"vector_negate", "exp", "vector_add_one",
+                                   "reciprocal", "vector_multiply", "vector_direct"};
+        const uint64_t start = ceilMulDiv(issue.issueCycle,
+            rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+        const uint64_t done = ceilMulDiv(issue.completionCycle,
+            rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+        traceResourceInterval("sfu_vector", resources[issue.stage], coreId_,
+            ++traceResourceSequence_, issue.job, 0, start, start, done, done,
+            issue.elements * sizeof(float), 0, issue.first);
+    });
+    for (auto& completion : vectorScheduler_->takeCompleted()) {
+        auto* result = vectorResults_.at(completion.job);
+        result->values = std::move(completion.values);
+        result->modeledCycles = completion.completionCycle - completion.submittedCycle;
+        result->readyTick = getCurrentSimCycle();
+        result->completed = true;
+        if (resourceTraceEnabled()) std::printf(
+            "[SFU_VECTOR_OP] core=%u op=%u job=%llu elements=%zu cycles=%llu "
+            "submit_tick=%llu done_tick=%llu\n", coreId_, unsigned(completion.op),
+            (unsigned long long)completion.job, result->values.size(),
+            (unsigned long long)result->modeledCycles,
+            (unsigned long long)ceilMulDiv(completion.submittedCycle,
+                rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_),
+            (unsigned long long)result->readyTick);
+        if (resourceTraceEnabled()) traceResourceInterval("sfu_model",
+            completion.op == SFUVectorOp::Silu ? "silu_vector" :
+            completion.op == SFUVectorOp::Add ? "add_vector" : "multiply_vector",
+            coreId_, ++traceResourceSequence_, completion.job, 0,
+            ceilMulDiv(completion.submittedCycle, rowEngineTimebaseTicksPerSecond_,
+                rowEngineAcceleratorClockHz_),
+            ceilMulDiv(completion.submittedCycle, rowEngineTimebaseTicksPerSecond_,
+                rowEngineAcceleratorClockHz_),
+            result->readyTick, result->readyTick, result->values.size() * sizeof(float), 0);
+        vectorResults_.erase(completion.job);
+    }
+    if (vectorScheduler_->active()) {
+        vectorPumpScheduled_ = true;
+        rowEngineSelfLink_->send(1, new TensorRowEngineEvent(
+            0, 0, 0, TensorRowEngineStage::Max,
+            TensorRowEngineEventKind::VectorPump, 0));
+    }
 }
 
 AttentionClusterAdmission SFU::attentionTileAdmission(
@@ -3287,6 +3399,8 @@ void SFU::scheduleTensorHardwareOperation(
         return;
     }
 
+    if (resourceTraceEnabled() && context.traceHardwareSubmit == 0)
+        context.traceHardwareSubmit = getCurrentSimCycle();
     const uint64_t now = rowEngineCurrentCycle();
     uint64_t completionCycle = 0;
     context.pendingHardwareCompletionKind = completionKind;
@@ -3304,6 +3418,23 @@ void SFU::scheduleTensorHardwareOperation(
     const uint64_t issueCycle = completionCycle - pipeline->latency;
     const uint64_t issueTick = ceilMulDiv(
         issueCycle, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+    if (resourceTraceEnabled()) {
+        context.traceHardwareRequest = ++traceResourceSequence_;
+        context.traceHardwareStart = issueTick;
+        const char* resource = "unknown";
+        if (pipeline == &scalePipeline_) resource = "scale";
+        else if (pipeline == &maxComparePipeline_) resource = "max_compare";
+        else if (pipeline == &maxReductionPipeline_) resource = "max_reduce";
+        else if (pipeline == &sumReductionPipeline_) resource = "sum_reduce";
+        else if (pipeline == &expPipeline_) resource = "exp";
+        else if (pipeline == &normalizePipeline_) resource = "normalize";
+        else if (pipeline == &onlineMaxPipeline_) resource = "online_max";
+        else if (pipeline == &onlineExpPipeline_) resource = "online_exp";
+        else if (pipeline == &onlineMulPipeline_) resource = "online_mul";
+        else if (pipeline == &onlineAddPipeline_) resource = "online_add";
+        else if (pipeline == &reciprocalPipeline_) resource = "reciprocal";
+        context.traceHardwareResource = resource;
+    }
     if ((completionKind == TensorRowEngineEventKind::ScaleDone ||
          completionKind == TensorRowEngineEventKind::ResourceDone) &&
         context.chunkBegin == 0) {
@@ -3421,6 +3552,11 @@ void SFU::completeTensorRow(const TensorWorkerKey& key, uint32_t contextIndex)
 void SFU::handleTensorRowEngineEvent(SST::Event* event)
 {
     auto* rowEvent = static_cast<TensorRowEngineEvent*>(event);
+    if (rowEvent->kind() == TensorRowEngineEventKind::VectorPump) {
+        delete rowEvent;
+        advanceVectorPipeline();
+        return;
+    }
     const TensorWorkerKey key(
         rowEvent->generation(), rowEvent->tag(), rowEvent->bandRow());
     const uint32_t contextIndex = rowEvent->context();
@@ -3499,6 +3635,14 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
     TensorWorkerState::Context& context = worker.contexts[contextIndex];
     if (!context.busy || context.stage != stage || context.pendingLocalTag != localTag) {
         return;
+    }
+    if (resourceTraceEnabled() && context.traceHardwareRequest != 0 &&
+        kind == context.pendingHardwareCompletionKind) {
+        traceResourceInterval("sfu", context.traceHardwareResource, coreId_,
+            context.traceHardwareRequest, localTag, generation, context.traceHardwareSubmit,
+            context.traceHardwareStart, getCurrentSimCycle(), getCurrentSimCycle(),
+            context.laneValues.size() * sizeof(float), 0, 0, contextIndex);
+        context.traceHardwareRequest = context.traceHardwareSubmit = 0;
     }
     if (kind == TensorRowEngineEventKind::LocalReadRetry) {
         issueTensorLocalRead(key, contextIndex);

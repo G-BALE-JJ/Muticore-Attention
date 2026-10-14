@@ -25,6 +25,38 @@ SPEC.loader.exec_module(MODULE)
 
 
 class AttentionCluster8Qk8PvTest(unittest.TestCase):
+    def test_report_accounts_for_shared_silu_exp_and_rejects_missing_or_duplicate_jobs(self):
+        lines, activations = [], []
+        for manager in range(4):
+            for column in range(2):
+                core = 4 + column*4 + manager
+                lines.extend((
+                    f"[ATTENTION_REUSE_WINDOW_QK] core={core} cycles=11 start=10 end=20 fusion_tiles=4 expected_tiles=4",
+                    f"[ATTENTION_WORKER_CLUSTER_SFU] core={core} start=18 end=30 cycles=13",
+                    f"[ATTENTION_WORKER_CLUSTER_E2E] core={core} start=10 end=50 cycles=41",
+                    f"GOLEM_SFU_HW_PIPELINE core={core} unit=exp lanes=16 latency=8 ii=1 depth=16 accepted_tokens=2065",
+                ))
+                activations.append(f"[SFU_VECTOR_OP] core={core} op=5 job=1 elements=257 cycles=284 submit_tick=60000 done_tick=344000")
+                for window in range(2):
+                    lines.append(f"[ATTENTION_WORKER_CLUSTER_PV] core={12+manager} qk_core={core} row=0 window={window} cycles=10 start=10 end=20")
+        with tempfile.TemporaryDirectory() as directory:
+            log, output = Path(directory)/'sst.log', Path(directory)/'report.json'
+            command = [sys.executable, str(REPORT_SOURCE), '--log', str(log),
+                       '--num-query-heads', '1', '--num-kv-heads', '1',
+                       '--query-length', '512', '--kv-length', '512', '--head-dim', '64',
+                       '--qk-workers-per-manager', '2', '--output', str(output)]
+            for name, jobs, expected in (('complete', activations, 0),
+                                         ('missing', activations[:-1], 1),
+                                         ('duplicate', activations+[activations[0]], 1)):
+                with self.subTest(name=name):
+                    log.write_text('\n'.join(lines+jobs))
+                    run = subprocess.run(command, capture_output=True, text=True)
+                    self.assertEqual(run.returncode, expected, run.stdout+run.stderr)
+                    if name=='complete':
+                        result=json.loads(output.read_text())['sfu_exp_work']
+                        self.assertEqual(result['observed_elements'], 262144)
+                        self.assertEqual(result['excluded_silu_exp_elements'], 2176)
+
     def test_causal_report_requires_reduced_qk_and_pv_work(self):
         lines = []
         for manager in range(4):

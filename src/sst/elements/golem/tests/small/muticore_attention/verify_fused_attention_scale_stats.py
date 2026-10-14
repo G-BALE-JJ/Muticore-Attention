@@ -2619,7 +2619,7 @@ def verify(path, case_id, accelerator_clock_hz=1_000_000_000,
                 "arrays_per_worker": 64,
                 "input_rows_per_array": 64,
                 "output_cus_per_array": 64,
-                "operand_banks_per_array": 2,
+                "operand_banks_per_array": 1,
             },
             "array_partition": {
                 "qk": [0, attention_cluster_qk_arrays - 1],
