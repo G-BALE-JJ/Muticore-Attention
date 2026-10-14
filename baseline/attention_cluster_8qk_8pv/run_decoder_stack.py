@@ -121,6 +121,46 @@ def rms(x,gamma):
     return storage_half(f*(1/np.sqrt(square/np.float32(x.shape[1])+np.float32(1e-6)))[:,None]*gamma.astype(np.float32))
 
 
+@lru_cache(maxsize=1)
+def scalar_silu_reference_executable():
+    # Independent scalar oracle: NumPy x/(1+exp(-x)) uses a different sequence
+    # from FP32 EXP -> add -> reciprocal -> multiply. Previously actual `act`
+    # supplied that rounding boundary; fused jobs intentionally elide its DMA.
+    directory=tempfile.TemporaryDirectory()
+    root=Path(directory.name);source=root/'silu.cc';exe=root/'silu'
+    source.write_text('''#include <cmath>
+#include <cstdint>
+#include <iostream>
+#include <sst/elements/golem/fp16.h>
+using namespace SST::Golem;
+int main() {
+    std::ios::sync_with_stdio(false);
+    std::cin.tie(nullptr);
+    uint16_t bits;
+    while (std::cin.read(reinterpret_cast<char*>(&bits),2)) {
+        const float x=golem_fp16_to_float(bits);
+        const float exponential=std::exp(-x);
+        const float denominator=1.0f+exponential;
+        const float reciprocal=1.0f/denominator;
+        const float output=x*reciprocal;
+        bits=golem_float_to_fp16(output);
+        std::cout.write(reinterpret_cast<const char*>(&bits),2);
+    }
+    return std::cin.eof()?0:1;
+}
+''')
+    subprocess.run(['g++','-std=c++17','-O2','-I',str(ROOT/'src'),str(source),'-o',str(exe)],check=True)
+    return directory,exe
+
+
+def scalar_silu_reference(x):
+    _,exe=scalar_silu_reference_executable()
+    data=np.asarray(x,dtype='<f2')
+    output=subprocess.run([str(exe)],input=data.tobytes(),capture_output=True,check=True).stdout
+    if len(output)!=data.nbytes:raise ValueError('SiLU scalar oracle size mismatch')
+    return np.frombuffer(output,dtype='<f2').reshape(data.shape)
+
+
 def attention_reference(x,qkv,hq,hkv,table):
     sys.path.insert(0,str(GUEST_DIR))
     from verify_fused_attention_scale_output import rotate_rope,compute_attention_blocked
@@ -181,7 +221,12 @@ def verify_numerics(case,m):
     check('norm2',rms(actual['h1'],gamma2),2e-3)
     check('gate',linear_reference(actual['norm2'],weights['gate']))
     check('up',linear_reference(actual['norm2'],weights['up']))
-    g=actual['gate'].astype('f4');check('act',storage_half(g/(np.float32(1)+np.exp(-g))),5e-4)
+    g=actual['gate'].astype('f4');act_expected=storage_half(g/(np.float32(1)+np.exp(-g)))
+    if m.get('silu_multiply_fusion'):
+        actual['act']=scalar_silu_reference(actual['gate'])
+        compare(actual['act'],act_expected,5e-4,'fused_SiLU_scalar_vs_numpy')
+        results['last_act']={'status':'ELIDED','reason':'FP16-rounded bounded SiLU result consumed directly by Multiply'}
+    else:check('act',act_expected,5e-4)
     check('gated',storage_half(actual['act'].astype('f4')*actual['up'].astype('f4')))
     check('down',linear_reference(actual['gated'],weights['down']))
     results['last_residual2']=compare(read_bands(case,l['output'],hidden),
@@ -218,7 +263,8 @@ def verify_lifecycle(case,m):
             final_flags.update(node*m['layout']['node_stride']+m['layout']['embedding']['done']+lane*8 for node in range(1,5) for lane in range(4))
         ops=[e for e in ops if e['stage']!=10 and not (m.get('lm_head') and e['stage']==11) and not (m.get('embedding') and e['stage']==12)]
         resets=[e for e in resets if e['address'] not in final_flags]
-    if len(accepts)!=32 or len(ops)!=288 or len(resets)!=64 or len(scratch)!=64:raise ValueError('missing or duplicate layer jobs/reset ACKs')
+    expected_stages=[stage for stage in range(1,10) if stage!=6 or not m.get('silu_multiply_fusion')]
+    if len(accepts)!=32 or len(ops)!=32*len(expected_stages) or len(resets)!=64 or len(scratch)!=64:raise ValueError('missing or duplicate layer jobs/reset ACKs')
     begin={};end={};stages={};s=m['layout']['shared'];stride=m['layout']['node_stride']
     flags={node*stride+s[name]+lane*8 for node in range(1,5) for name in ('projection_done','decoder_done') for lane in range(4)}
     for epoch in (1,2):
@@ -230,7 +276,7 @@ def verify_lifecycle(case,m):
                 raise ValueError('layer input or weight address mismatch')
         begin[epoch]=min(e['tick'] for e in group)
         stage_summary={}
-        for stage in range(1,10):
+        for stage in expected_stages:
             group=[e for e in ops if e['epoch']==epoch and e['stage']==stage]
             if len(group)!=16 or {e['core'] for e in group}!=set(range(4,20)) or any(e['status'] for e in group):
                 raise ValueError('incomplete/failed decoder stages')
@@ -282,7 +328,7 @@ def verify_lifecycle(case,m):
                             'completed_jobs':len(done),'qk_tiles':expected_tiles,'root_tags':sorted(tags)}
     if set(cluster['1']['root_tags']) & set(cluster['2']['root_tags']):raise ValueError('layer Attention tag reused')
     (case/'decoder_stack_attention.json').write_text(json.dumps(cluster,indent=2)+'\n')
-    return log,begin,end,{'status':'PASS','projection_jobs':32,'decoder_ops':288,'reset_ack_count':64,
+    return log,begin,end,{'status':'PASS','projection_jobs':32,'decoder_ops':len(ops),'reset_ack_count':64,
         'layers':2,'scratch_retire_count':64,'distinct_attention_tags':True,'all_attention_jobs_checked':sum(e['completed_jobs'] for e in cluster.values()),'stage_spans':stages}
 
 
@@ -432,6 +478,10 @@ def main():
     p.add_argument('--vocab',type=int,help='default: 8201 for small, 128256 for formal')
     p.add_argument('--node-mib',type=int,help='HBM capacity per node; default 2048 for LM head, otherwise 128')
     p.add_argument('--embedding',action='store_true',help='on-architecture token lookup before the complete prefill path')
+    p.add_argument('--output-panel-tiles',type=int,choices=range(17),default=16)
+    p.add_argument('--output-write-window',type=int,choices=range(1,17),default=8)
+    p.add_argument('--gemm-prefetch',action='store_true')
+    p.add_argument('--silu-multiply-fusion',action='store_true')
     a=p.parse_args();case=a.artifact_root.resolve()
     if a.validate_inputs:validate_inputs(case);return
     if a.verify_only:
@@ -451,6 +501,10 @@ def main():
             from verify_embedding import verify_embedding
             result['embedding']=verify_embedding(case,m,log,begin,result['lm_head'])
         (case/'decoder_stack_result.json').write_text(json.dumps(result,indent=2)+'\n')
+        (case/'verification_provenance.json').write_text(json.dumps({
+            'verifier_source_sha256':digest(Path(__file__).resolve()),
+            'scalar_SiLU_oracle':bool(m.get('silu_multiply_fusion')),
+            'scope':'host validation only; simulator source/library and run environment remain in decoder_stack_provenance.json'},indent=2)+'\n')
         print(json.dumps(result,indent=2));return
     case.mkdir(parents=True,exist_ok=False)
     if a.embedding:a.lm_head=True
@@ -461,6 +515,9 @@ def main():
     if node_mib<128 or node_mib & (node_mib-1):p.error('--node-mib must be a power of two >=128')
     node_bytes=node_mib*2**20
     m=prepare(case,*( (32,8) if a.shape=='formal' else (4,2)),final_norm=a.final_norm or a.lm_head,vocab=vocab,node_bytes=node_bytes,embedding=a.embedding)
+    if a.silu_multiply_fusion:
+        m['silu_multiply_fusion']=True
+        (case/'decoder_stack_inputs.json').write_text(json.dumps(m,indent=2)+'\n')
     env=environment(case,(1,1,1),'none',1024,a.shape)
     env.update({'GOLEM_DECODER_LAYERS':'2','GOLEM_DECODER_STACK_MANIFEST':str(case/'decoder_stack_inputs.json'),
         'GOLEM_ATTENTION_GUEST_EXECUTABLE':str(GUEST_DIR/'riscv64'/('decoder-embedding' if a.embedding else 'decoder-lm-head' if a.lm_head else 'decoder-final-norm' if a.final_norm else 'decoder-two-layer')/'fused_attention'),
@@ -468,6 +525,10 @@ def main():
         'GOLEM_MPI_RANKS':str(a.mpi_ranks),
         'GOLEM_MPI_ARGS':f'--bind-to core --cpu-set {a.cpu_set or "0-"+str(a.mpi_ranks-1)} --output-filename {case/"mpi_rank_output"}'})
     env['GOLEM_DECODER_NODE_BYTES']=str(node_bytes)
+    env['GOLEM_DECODER_OUTPUT_PANEL_TILES']=str(a.output_panel_tiles)
+    env['GOLEM_DECODER_OUTPUT_WRITE_WINDOW']=str(a.output_write_window)
+    env['GOLEM_DECODER_GEMM_PREFETCH']=str(int(a.gemm_prefetch))
+    env['GOLEM_DECODER_SILU_MULTIPLY_FUSION']=str(int(a.silu_multiply_fusion))
     if a.lm_head:env['GOLEM_DECODER_VOCAB']=str(vocab)
     command=[str(HERE/'run_sst.sh'),'--projection','--query-length','1024','--kv-length','1024',
         '--num-query-heads',str(m['num_query_heads']),'--num-kv-heads',str(m['num_kv_heads']),

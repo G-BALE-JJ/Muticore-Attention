@@ -3,7 +3,7 @@
 #include <cstdint>
 namespace SST { namespace Golem {
 constexpr uint32_t GOLEM_DECODER_OP_MAGIC = 0x44454331;
-enum class DecoderOp : uint32_t { Linear = 1, Add = 2, RmsNorm = 3, Silu = 4, Multiply = 5, Embedding = 6 };
+enum class DecoderOp : uint32_t { Linear = 1, Add = 2, RmsNorm = 3, Silu = 4, Multiply = 5, Embedding = 6, SiluMultiply = 7 };
 // FP16 storage and arithmetic contract; 64-row/64-column linear tiles. Weights
 // are output-tile striped across four HBM nodes, never replicated in full GM.
 struct DecoderOpDesc {

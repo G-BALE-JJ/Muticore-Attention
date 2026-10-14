@@ -1,0 +1,5 @@
+{
+  "verifier_source_sha256": "d794e63b5c3012c808b0a00157deb4cd9c6581fdf362c3f08947f0c0106c81c2",
+  "scalar_SiLU_oracle": false,
+  "scope": "host validation only; simulator source/library and run environment remain in decoder_stack_provenance.json"
+}

@@ -227,8 +227,12 @@ def main():
     p.add_argument('--shape',choices=('small','formal'),default='small')
     p.add_argument('--checkpoint',choices=STAGES,default='wo')
     p.add_argument('--reference',type=Path)
-    p.add_argument('--cpu-set',default='0-3')
+    p.add_argument('--cpu-set')
+    p.add_argument('--mpi-ranks',type=int,choices=(4,8),default=4)
     p.add_argument('--verify-only',action='store_true')
+    p.add_argument('--output-panel-tiles',type=int,choices=range(17),default=16)
+    p.add_argument('--output-write-window',type=int,choices=range(1,17),default=8)
+    p.add_argument('--gemm-prefetch',action='store_true')
     args=p.parse_args();case=args.artifact_root.resolve()
     heads=(32,8) if args.shape=='formal' else (4,2);hidden=heads[0]*64;stage=STAGES[args.checkpoint]
     if not args.verify_only:
@@ -239,13 +243,18 @@ def main():
         env['GOLEM_ATTENTION_GUEST_EXECUTABLE']=str(guest)
         env['GOLEM_DECODER_INPUT_MANIFEST']=str(manifest)
         env['GOLEM_RESOURCE_TRACE_DOMAINS']='gm';env['GOLEM_CRITICAL_PATH_TRACE']='1'
-        env['GOLEM_MPI_ARGS']=f'--bind-to core --cpu-set {args.cpu_set} --output-filename {case/"mpi_rank_output"}'
+        env['GOLEM_DECODER_OUTPUT_PANEL_TILES']=str(args.output_panel_tiles)
+        env['GOLEM_DECODER_OUTPUT_WRITE_WINDOW']=str(args.output_write_window)
+        env['GOLEM_DECODER_GEMM_PREFETCH']=str(int(args.gemm_prefetch))
+        env['GOLEM_MPI_RANKS']=str(args.mpi_ranks)
+        env['GOLEM_MPI_ARGS']=f'--bind-to core --cpu-set {args.cpu_set or "0-"+str(args.mpi_ranks-1)} --output-filename {case/"mpi_rank_output"}'
         if args.reference:env['GOLEM_PROJECTION_INPUT_REFERENCE']=str(args.reference.resolve())
         command=[str(HERE/'run_sst.sh'),'--projection','--query-length','1024','--kv-length','1024',
             '--num-query-heads',str(heads[0]),'--num-kv-heads',str(heads[1]),'--head-dim','64',
             '--causal','--rope','--artifact-root',str(case)]
         source_paths=[ROOT/path for path in (
             'src/sst/elements/golem/attention/decoderOpAbi.h',
+            'src/sst/elements/golem/attention/decoderMemoryLayout.h',
             'src/sst/elements/golem/attention/decoderOpJob.h',
             'src/sst/elements/golem/rocc/roccAnalog.h',
             'src/sst/elements/golem/sfu/vector_math.h',

@@ -1,0 +1,1668 @@
+{
+  "status": "PASS",
+  "scope": "synthetic two-layer prefill from token IDs through timed embedding and last-token LM head; host greedy selection",
+  "shape": {
+    "S": 1024,
+    "hidden": 2048,
+    "intermediate": 8192,
+    "layers": 2
+  },
+  "total_cycles": 20167497.75,
+  "clock_GHz": 1,
+  "simulated_ms": 20.16749775,
+  "additive_boundary_stages": {
+    "embedding": {
+      "cycles": 31508.625,
+      "percent": 0.15623467715522615
+    },
+    "embedding_handoff": {
+      "cycles": 51908.375,
+      "percent": 0.25738629374583666
+    },
+    "layer1_norm_qkv_attention": {
+      "cycles": 519926.25,
+      "percent": 2.578040451250329
+    },
+    "layer1_post_attention": {
+      "cycles": 8795572.5,
+      "percent": 43.61261178273839
+    },
+    "layer_handoff": {
+      "cycles": 49240.25,
+      "percent": 0.24415646705600846
+    },
+    "layer2_norm_qkv_attention": {
+      "cycles": 509969.75,
+      "percent": 2.528671411405017
+    },
+    "layer2_post_attention": {
+      "cycles": 8793658.0,
+      "percent": 43.60311878552211
+    },
+    "final_norm_handoff": {
+      "cycles": 15584.25,
+      "percent": 0.07727408820462121
+    },
+    "final_norm": {
+      "cycles": 48740.75,
+      "percent": 0.24167970962089236
+    },
+    "lm_head_handoff": {
+      "cycles": 9963.25,
+      "percent": 0.049402509540381626
+    },
+    "lm_head": {
+      "cycles": 1341425.75,
+      "percent": 6.6514238237611805
+    }
+  },
+  "operation_profiles": {
+    "layer1.Wo": {
+      "global_activity_window_cycles": 659330.0,
+      "worker_duration_min": 554037.0,
+      "worker_duration_median": 608997.0,
+      "worker_duration_max": 659185.0,
+      "last_finishing_worker_duration": 659185.0,
+      "per_worker_capacity_bound_max": 74816.0,
+      "per_worker_serial_order_bound_max": 213088,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 1040,
+          "bytes": 8650752,
+          "cycles": 197822.375,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 1040,
+          "bytes": 8650752,
+          "cycles": 197822.375,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 2240,
+          "bytes": 9175040,
+          "cycles": 38080.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 2112,
+          "bytes": 8650752,
+          "cycles": 35904.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 1040,
+          "bytes": 8650752,
+          "cycles": 35932.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 1040,
+          "bytes": 8650752,
+          "cycles": 35932.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 6208,
+          "bytes": 17301504,
+          "cycles": 74816.0,
+          "tiny128_count": 2048
+        },
+        "local_read.client1": {
+          "count": 4160,
+          "bytes": 17039360,
+          "cycles": 70720.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 128,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 4096.0,
+          "tiny128_count": 2048
+        },
+        "dma_write_transport": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 232390.625,
+          "tiny128_count": 2048
+        },
+        "dma_write_transport.client-1": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 232390.625,
+          "tiny128_count": 2048
+        }
+      },
+      "HBM_read_bytes": 138412032,
+      "HBM_write_bytes": 4194304
+    },
+    "layer1.residual1": {
+      "global_activity_window_cycles": 142098.0,
+      "worker_duration_min": 27528.0,
+      "worker_duration_median": 29780.5,
+      "worker_duration_max": 37532.0,
+      "last_finishing_worker_duration": 36869.0,
+      "per_worker_capacity_bound_max": 8240,
+      "per_worker_serial_order_bound_max": 8240,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 6218.625,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 6218.625,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 192,
+          "bytes": 786432,
+          "cycles": 3264.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 128,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 192,
+          "bytes": 786432,
+          "cycles": 3264.0,
+          "tiny128_count": 0
+        },
+        "local_read.client1": {
+          "count": 128,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 1088.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 1088.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 15676.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport.client-1": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 15676.0,
+          "tiny128_count": 0
+        }
+      },
+      "HBM_read_bytes": 8388608,
+      "HBM_write_bytes": 4194304
+    },
+    "layer1.RMSNorm2": {
+      "global_activity_window_cycles": 168487.0,
+      "worker_duration_min": 45334.0,
+      "worker_duration_median": 47454.5,
+      "worker_duration_max": 55402.0,
+      "last_finishing_worker_duration": 55402.0,
+      "per_worker_capacity_bound_max": 27952,
+      "per_worker_serial_order_bound_max": 27952,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 32,
+          "bytes": 327680,
+          "cycles": 5352.25,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 32,
+          "bytes": 327680,
+          "cycles": 5352.25,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 144,
+          "bytes": 589824,
+          "cycles": 2448.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 80,
+          "bytes": 327680,
+          "cycles": 1360.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 32,
+          "bytes": 327680,
+          "cycles": 1360.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 32,
+          "bytes": 327680,
+          "cycles": 1360.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 144,
+          "bytes": 589824,
+          "cycles": 2448.0,
+          "tiny128_count": 0
+        },
+        "local_read.client1": {
+          "count": 80,
+          "bytes": 327680,
+          "cycles": 1360.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 1088.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 1088.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 17058.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport.client-1": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 17058.0,
+          "tiny128_count": 0
+        }
+      },
+      "HBM_read_bytes": 5242880,
+      "HBM_write_bytes": 4194304
+    },
+    "layer1.gate": {
+      "global_activity_window_cycles": 2813646.0,
+      "worker_duration_min": 2335908.0,
+      "worker_duration_median": 2504855.5,
+      "worker_duration_max": 2691446.0,
+      "last_finishing_worker_duration": 2691446.0,
+      "per_worker_capacity_bound_max": 299136,
+      "per_worker_serial_order_bound_max": 852352,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 651051.5,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 651051.5,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 8576,
+          "bytes": 35127296,
+          "cycles": 145792.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 8256,
+          "bytes": 33816576,
+          "cycles": 140352.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 140753.5,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 140753.5,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 24640,
+          "bytes": 68419584,
+          "cycles": 296000.0,
+          "tiny128_count": 8192
+        },
+        "local_read.client1": {
+          "count": 16448,
+          "bytes": 67371008,
+          "cycles": 279616.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 320,
+          "bytes": 1310720,
+          "cycles": 5440.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 16384.0,
+          "tiny128_count": 8192
+        },
+        "dma_write_transport": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 988729.5,
+          "tiny128_count": 8192
+        },
+        "dma_write_transport.client-1": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 988729.5,
+          "tiny128_count": 8192
+        }
+      },
+      "HBM_read_bytes": 541065216,
+      "HBM_write_bytes": 16777216
+    },
+    "layer1.up": {
+      "global_activity_window_cycles": 3054551.0,
+      "worker_duration_min": 2370652.0,
+      "worker_duration_median": 2518133.0,
+      "worker_duration_max": 2593587.0,
+      "last_finishing_worker_duration": 2593587.0,
+      "per_worker_capacity_bound_max": 299136,
+      "per_worker_serial_order_bound_max": 852352,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 637837.5,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 637837.5,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 8576,
+          "bytes": 35127296,
+          "cycles": 145792.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 8256,
+          "bytes": 33816576,
+          "cycles": 140352.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 140857.5,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 140857.5,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 24640,
+          "bytes": 68419584,
+          "cycles": 296000.0,
+          "tiny128_count": 8192
+        },
+        "local_read.client1": {
+          "count": 16448,
+          "bytes": 67371008,
+          "cycles": 279616.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 320,
+          "bytes": 1310720,
+          "cycles": 5440.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 16384.0,
+          "tiny128_count": 8192
+        },
+        "dma_write_transport": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 905005.375,
+          "tiny128_count": 8192
+        },
+        "dma_write_transport.client-1": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 905005.375,
+          "tiny128_count": 8192
+        }
+      },
+      "HBM_read_bytes": 541065216,
+      "HBM_write_bytes": 16777216
+    },
+    "layer1.SiLU": {
+      "global_activity_window_cycles": 1306644.0,
+      "worker_duration_min": 585194.0,
+      "worker_duration_median": 588347.5,
+      "worker_duration_max": 622745.0,
+      "last_finishing_worker_duration": 622745.0,
+      "per_worker_capacity_bound_max": 525888,
+      "per_worker_serial_order_bound_max": 525888,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 64,
+          "bytes": 1048576,
+          "cycles": 12932.5,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 64,
+          "bytes": 1048576,
+          "cycles": 12932.5,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 512,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 64,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 64,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 512,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "local_read.client1": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 65962.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport.client-1": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 65962.0,
+          "tiny128_count": 0
+        }
+      },
+      "HBM_read_bytes": 16777216,
+      "HBM_write_bytes": 16777216
+    },
+    "layer1.multiply": {
+      "global_activity_window_cycles": 897656.0,
+      "worker_duration_min": 98043.0,
+      "worker_duration_median": 120002.0,
+      "worker_duration_max": 180287.0,
+      "last_finishing_worker_duration": 180287.0,
+      "per_worker_capacity_bound_max": 32960,
+      "per_worker_serial_order_bound_max": 32960,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 128,
+          "bytes": 2097152,
+          "cycles": 24882.75,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 128,
+          "bytes": 2097152,
+          "cycles": 24882.75,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 768,
+          "bytes": 3145728,
+          "cycles": 13056.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 512,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 128,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 128,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 768,
+          "bytes": 3145728,
+          "cycles": 13056.0,
+          "tiny128_count": 0
+        },
+        "local_read.client1": {
+          "count": 512,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 95494.25,
+          "tiny128_count": 0
+        },
+        "dma_write_transport.client-1": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 95494.25,
+          "tiny128_count": 0
+        }
+      },
+      "HBM_read_bytes": 33554432,
+      "HBM_write_bytes": 16777216
+    },
+    "layer1.down": {
+      "global_activity_window_cycles": 2696686.0,
+      "worker_duration_min": 1869997.0,
+      "worker_duration_median": 1912369.5,
+      "worker_duration_max": 1950172.0,
+      "last_finishing_worker_duration": 1899529.0,
+      "per_worker_capacity_bound_max": 295968,
+      "per_worker_serial_order_bound_max": 845920,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 4160,
+          "bytes": 34603008,
+          "cycles": 729447.0,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 4160,
+          "bytes": 34603008,
+          "cycles": 729447.0,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 8768,
+          "bytes": 35913728,
+          "cycles": 149056.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 8448,
+          "bytes": 34603008,
+          "cycles": 143616.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 4160,
+          "bytes": 34603008,
+          "cycles": 154267.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 4160,
+          "bytes": 34603008,
+          "cycles": 154267.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 18688,
+          "bytes": 68419584,
+          "cycles": 286976.0,
+          "tiny128_count": 2048
+        },
+        "local_read.client1": {
+          "count": 16640,
+          "bytes": 68157440,
+          "cycles": 282880.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 320,
+          "bytes": 1310720,
+          "cycles": 5440.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 4096.0,
+          "tiny128_count": 2048
+        },
+        "dma_write_transport": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 259760.125,
+          "tiny128_count": 2048
+        },
+        "dma_write_transport.client-1": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 259760.125,
+          "tiny128_count": 2048
+        }
+      },
+      "HBM_read_bytes": 553648128,
+      "HBM_write_bytes": 4194304
+    },
+    "layer1.residual2": {
+      "global_activity_window_cycles": 848055.0,
+      "worker_duration_min": 24508.0,
+      "worker_duration_median": 29301.5,
+      "worker_duration_max": 32885.0,
+      "last_finishing_worker_duration": 30006.0,
+      "per_worker_capacity_bound_max": 8240,
+      "per_worker_serial_order_bound_max": 8240,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 6210.75,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 6210.75,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 193,
+          "bytes": 786440,
+          "cycles": 3266.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 128,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 193,
+          "bytes": 786440,
+          "cycles": 3266.0,
+          "tiny128_count": 0
+        },
+        "local_read.client1": {
+          "count": 128,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 65,
+          "bytes": 262152,
+          "cycles": 1090.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 65,
+          "bytes": 262152,
+          "cycles": 1090.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport": {
+          "count": 65,
+          "bytes": 262152,
+          "cycles": 8815.75,
+          "tiny128_count": 0
+        },
+        "dma_write_transport.client-1": {
+          "count": 65,
+          "bytes": 262152,
+          "cycles": 8815.75,
+          "tiny128_count": 0
+        }
+      },
+      "HBM_read_bytes": 8388608,
+      "HBM_write_bytes": 4194432
+    },
+    "layer2.Wo": {
+      "global_activity_window_cycles": 659151.0,
+      "worker_duration_min": 554205.0,
+      "worker_duration_median": 612633.0,
+      "worker_duration_max": 659026.0,
+      "last_finishing_worker_duration": 658863.0,
+      "per_worker_capacity_bound_max": 74816.0,
+      "per_worker_serial_order_bound_max": 213088,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 1040,
+          "bytes": 8650752,
+          "cycles": 195861.75,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 1040,
+          "bytes": 8650752,
+          "cycles": 195861.75,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 2240,
+          "bytes": 9175040,
+          "cycles": 38080.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 2112,
+          "bytes": 8650752,
+          "cycles": 35904.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 1040,
+          "bytes": 8650752,
+          "cycles": 35935.25,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 1040,
+          "bytes": 8650752,
+          "cycles": 35935.25,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 6208,
+          "bytes": 17301504,
+          "cycles": 74816.0,
+          "tiny128_count": 2048
+        },
+        "local_read.client1": {
+          "count": 4160,
+          "bytes": 17039360,
+          "cycles": 70720.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 128,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 4096.0,
+          "tiny128_count": 2048
+        },
+        "dma_write_transport": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 233301.625,
+          "tiny128_count": 2048
+        },
+        "dma_write_transport.client-1": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 233301.625,
+          "tiny128_count": 2048
+        }
+      },
+      "HBM_read_bytes": 138412032,
+      "HBM_write_bytes": 4194304
+    },
+    "layer2.residual1": {
+      "global_activity_window_cycles": 141241.0,
+      "worker_duration_min": 27639.0,
+      "worker_duration_median": 30528.0,
+      "worker_duration_max": 36306.0,
+      "last_finishing_worker_duration": 35514.0,
+      "per_worker_capacity_bound_max": 8240,
+      "per_worker_serial_order_bound_max": 8240,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 6135.25,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 6135.25,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 192,
+          "bytes": 786432,
+          "cycles": 3264.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 128,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 192,
+          "bytes": 786432,
+          "cycles": 3264.0,
+          "tiny128_count": 0
+        },
+        "local_read.client1": {
+          "count": 128,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 1088.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 1088.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 14404.75,
+          "tiny128_count": 0
+        },
+        "dma_write_transport.client-1": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 14404.75,
+          "tiny128_count": 0
+        }
+      },
+      "HBM_read_bytes": 8388608,
+      "HBM_write_bytes": 4194304
+    },
+    "layer2.RMSNorm2": {
+      "global_activity_window_cycles": 170617.0,
+      "worker_duration_min": 43913.0,
+      "worker_duration_median": 47311.0,
+      "worker_duration_max": 57015.0,
+      "last_finishing_worker_duration": 55871.0,
+      "per_worker_capacity_bound_max": 27952,
+      "per_worker_serial_order_bound_max": 27952,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 32,
+          "bytes": 327680,
+          "cycles": 5796.875,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 32,
+          "bytes": 327680,
+          "cycles": 5796.875,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 144,
+          "bytes": 589824,
+          "cycles": 2448.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 80,
+          "bytes": 327680,
+          "cycles": 1360.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 32,
+          "bytes": 327680,
+          "cycles": 1360.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 32,
+          "bytes": 327680,
+          "cycles": 1360.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 144,
+          "bytes": 589824,
+          "cycles": 2448.0,
+          "tiny128_count": 0
+        },
+        "local_read.client1": {
+          "count": 80,
+          "bytes": 327680,
+          "cycles": 1360.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 1088.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 1088.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 17083.125,
+          "tiny128_count": 0
+        },
+        "dma_write_transport.client-1": {
+          "count": 64,
+          "bytes": 262144,
+          "cycles": 17083.125,
+          "tiny128_count": 0
+        }
+      },
+      "HBM_read_bytes": 5242880,
+      "HBM_write_bytes": 4194304
+    },
+    "layer2.gate": {
+      "global_activity_window_cycles": 2804437.0,
+      "worker_duration_min": 2344627.0,
+      "worker_duration_median": 2505041.0,
+      "worker_duration_max": 2682955.0,
+      "last_finishing_worker_duration": 2682955.0,
+      "per_worker_capacity_bound_max": 299136,
+      "per_worker_serial_order_bound_max": 852352,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 643006.625,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 643006.625,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 8576,
+          "bytes": 35127296,
+          "cycles": 145792.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 8256,
+          "bytes": 33816576,
+          "cycles": 140352.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 141027.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 141027.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 24640,
+          "bytes": 68419584,
+          "cycles": 296000.0,
+          "tiny128_count": 8192
+        },
+        "local_read.client1": {
+          "count": 16448,
+          "bytes": 67371008,
+          "cycles": 279616.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 320,
+          "bytes": 1310720,
+          "cycles": 5440.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 16384.0,
+          "tiny128_count": 8192
+        },
+        "dma_write_transport": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 988379.625,
+          "tiny128_count": 8192
+        },
+        "dma_write_transport.client-1": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 988379.625,
+          "tiny128_count": 8192
+        }
+      },
+      "HBM_read_bytes": 541065216,
+      "HBM_write_bytes": 16777216
+    },
+    "layer2.up": {
+      "global_activity_window_cycles": 3041012.0,
+      "worker_duration_min": 2329106.0,
+      "worker_duration_median": 2486890.0,
+      "worker_duration_max": 2590424.0,
+      "last_finishing_worker_duration": 2590424.0,
+      "per_worker_capacity_bound_max": 299136,
+      "per_worker_serial_order_bound_max": 852352,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 635802.75,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 635802.75,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 8576,
+          "bytes": 35127296,
+          "cycles": 145792.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 8256,
+          "bytes": 33816576,
+          "cycles": 140352.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 140861.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 4112,
+          "bytes": 33816576,
+          "cycles": 140861.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 24640,
+          "bytes": 68419584,
+          "cycles": 296000.0,
+          "tiny128_count": 8192
+        },
+        "local_read.client1": {
+          "count": 16448,
+          "bytes": 67371008,
+          "cycles": 279616.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 320,
+          "bytes": 1310720,
+          "cycles": 5440.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 16384.0,
+          "tiny128_count": 8192
+        },
+        "dma_write_transport": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 903920.5,
+          "tiny128_count": 8192
+        },
+        "dma_write_transport.client-1": {
+          "count": 8192,
+          "bytes": 1048576,
+          "cycles": 903920.5,
+          "tiny128_count": 8192
+        }
+      },
+      "HBM_read_bytes": 541065216,
+      "HBM_write_bytes": 16777216
+    },
+    "layer2.SiLU": {
+      "global_activity_window_cycles": 1334172.0,
+      "worker_duration_min": 583055.0,
+      "worker_duration_median": 587967.5,
+      "worker_duration_max": 624169.0,
+      "last_finishing_worker_duration": 624169.0,
+      "per_worker_capacity_bound_max": 525888,
+      "per_worker_serial_order_bound_max": 525888,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 64,
+          "bytes": 1048576,
+          "cycles": 12634.125,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 64,
+          "bytes": 1048576,
+          "cycles": 12634.125,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 512,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 64,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 64,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 512,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "local_read.client1": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 67686.75,
+          "tiny128_count": 0
+        },
+        "dma_write_transport.client-1": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 67686.75,
+          "tiny128_count": 0
+        }
+      },
+      "HBM_read_bytes": 16777216,
+      "HBM_write_bytes": 16777216
+    },
+    "layer2.multiply": {
+      "global_activity_window_cycles": 930475.0,
+      "worker_duration_min": 99995.0,
+      "worker_duration_median": 117390.5,
+      "worker_duration_max": 181778.0,
+      "last_finishing_worker_duration": 181778.0,
+      "per_worker_capacity_bound_max": 32960,
+      "per_worker_serial_order_bound_max": 32960,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 128,
+          "bytes": 2097152,
+          "cycles": 24264.75,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 128,
+          "bytes": 2097152,
+          "cycles": 24264.75,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 768,
+          "bytes": 3145728,
+          "cycles": 13056.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 512,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 128,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 128,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 768,
+          "bytes": 3145728,
+          "cycles": 13056.0,
+          "tiny128_count": 0
+        },
+        "local_read.client1": {
+          "count": 512,
+          "bytes": 2097152,
+          "cycles": 8704.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 4352.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 97612.5,
+          "tiny128_count": 0
+        },
+        "dma_write_transport.client-1": {
+          "count": 256,
+          "bytes": 1048576,
+          "cycles": 97612.5,
+          "tiny128_count": 0
+        }
+      },
+      "HBM_read_bytes": 33554432,
+      "HBM_write_bytes": 16777216
+    },
+    "layer2.down": {
+      "global_activity_window_cycles": 2738123.0,
+      "worker_duration_min": 1869446.0,
+      "worker_duration_median": 1923856.0,
+      "worker_duration_max": 1959248.0,
+      "last_finishing_worker_duration": 1907812.0,
+      "per_worker_capacity_bound_max": 295968,
+      "per_worker_serial_order_bound_max": 845920,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 4160,
+          "bytes": 34603008,
+          "cycles": 747756.125,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 4160,
+          "bytes": 34603008,
+          "cycles": 747756.125,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 8768,
+          "bytes": 35913728,
+          "cycles": 149056.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 8448,
+          "bytes": 34603008,
+          "cycles": 143616.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 4160,
+          "bytes": 34603008,
+          "cycles": 152781.5,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 4160,
+          "bytes": 34603008,
+          "cycles": 152781.5,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 18688,
+          "bytes": 68419584,
+          "cycles": 286976.0,
+          "tiny128_count": 2048
+        },
+        "local_read.client1": {
+          "count": 16640,
+          "bytes": 68157440,
+          "cycles": 282880.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 320,
+          "bytes": 1310720,
+          "cycles": 5440.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 4096.0,
+          "tiny128_count": 2048
+        },
+        "dma_write_transport": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 249000.875,
+          "tiny128_count": 2048
+        },
+        "dma_write_transport.client-1": {
+          "count": 2048,
+          "bytes": 262144,
+          "cycles": 249000.875,
+          "tiny128_count": 2048
+        }
+      },
+      "HBM_read_bytes": 553648128,
+      "HBM_write_bytes": 4194304
+    },
+    "layer2.residual2": {
+      "global_activity_window_cycles": 871317.0,
+      "worker_duration_min": 24313.0,
+      "worker_duration_median": 27956.0,
+      "worker_duration_max": 34043.0,
+      "last_finishing_worker_duration": 30119.0,
+      "per_worker_capacity_bound_max": 8240,
+      "per_worker_serial_order_bound_max": 8240,
+      "critical_worker_resource_intervals": {
+        "dma_read_transport": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 5881.25,
+          "tiny128_count": 0
+        },
+        "dma_read_transport.client-1": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 5881.25,
+          "tiny128_count": 0
+        },
+        "local_write": {
+          "count": 193,
+          "bytes": 786440,
+          "cycles": 3266.0,
+          "tiny128_count": 0
+        },
+        "local_write.client0": {
+          "count": 128,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "dma_read_landing.client-1": {
+          "count": 32,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "local_read": {
+          "count": 193,
+          "bytes": 786440,
+          "cycles": 3266.0,
+          "tiny128_count": 0
+        },
+        "local_read.client1": {
+          "count": 128,
+          "bytes": 524288,
+          "cycles": 2176.0,
+          "tiny128_count": 0
+        },
+        "local_write.client1": {
+          "count": 65,
+          "bytes": 262152,
+          "cycles": 1090.0,
+          "tiny128_count": 0
+        },
+        "local_read.client0": {
+          "count": 65,
+          "bytes": 262152,
+          "cycles": 1090.0,
+          "tiny128_count": 0
+        },
+        "dma_write_transport": {
+          "count": 65,
+          "bytes": 262152,
+          "cycles": 9259.75,
+          "tiny128_count": 0
+        },
+        "dma_write_transport.client-1": {
+          "count": 65,
+          "bytes": 262152,
+          "cycles": 9259.75,
+          "tiny128_count": 0
+        }
+      },
+      "HBM_read_bytes": 8388608,
+      "HBM_write_bytes": 4194432
+    }
+  },
+  "last_finishing_worker_chains": {
+    "1": {
+      "last_finishing_core": 16,
+      "own_compute_and_dataflow_job_cycles": 8769056.0,
+      "inter_job_dispatch_cycles": 3116.0,
+      "dispatch_before_Wo_and_boundary_adjustment_cycles": 23400.5
+    },
+    "2": {
+      "last_finishing_core": 16,
+      "own_compute_and_dataflow_job_cycles": 8767505.0,
+      "inter_job_dispatch_cycles": 3116.0,
+      "dispatch_before_Wo_and_boundary_adjustment_cycles": 23037.0
+    }
+  },
+  "lower_bounds_cycles": {
+    "resource_capacity": 4086942.8,
+    "current_serial_order": 8020456.0
+  },
+  "post_attention_bounds_cycles": {
+    "1": {
+      "resource_capacity": 1572336.0,
+      "current_serial_order": 3366992
+    },
+    "2": {
+      "resource_capacity": 1572336.0,
+      "current_serial_order": 3366992
+    }
+  },
+  "LM_head_bounds_cycles": {
+    "resource_capacity": 411438.8,
+    "current_serial_order": 552888
+  },
+  "attention_EXP_issue_per_layer": 139264.0,
+  "HBM_peak_GB_per_second_per_node": 320,
+  "post_attention_HBM_payload_bound_cycles": {
+    "1": 1511424.1,
+    "2": 1511424.1
+  },
+  "LM_head_HBM_payload_bound_cycles": 411438.8,
+  "whole_chain_DMA_payload_bytes_by_data_node": {
+    "1": {
+      "dma_read_transport": 1164402064,
+      "dma_write_transport": 51444760
+    },
+    "2": {
+      "dma_read_transport": 1160322648,
+      "dma_write_transport": 51444768
+    },
+    "4": {
+      "dma_read_transport": 1161381392,
+      "dma_write_transport": 51444768
+    },
+    "3": {
+      "dma_read_transport": 1160257872,
+      "dma_write_transport": 51444768
+    }
+  },
+  "whole_chain_HBM_payload_bound_cycles": 3799521.325,
+  "projection_array_resource_bound": 112176,
+  "projection_serial_array_bound": 213552,
+  "actual_to_bound": {
+    "resource_capacity": 4.9346170810122425,
+    "current_serial_order": 2.514507622758606
+  },
+  "resource_sidecar_scanned": true,
+  "cautions": [
+    "Activity windows and max-worker durations overlap across workers and must not be summed.",
+    "Only the last-finishing-worker chain adds within a post-attention phase; boundary adjustment excludes its final flag ACK.",
+    "DMA transport intervals are measured RTT, not theoretical HBM bandwidth or isolated resource service.",
+    "DMA write transport includes local-read prefetch; DMA landing duplicates local-write service. Do not double count.",
+    "Bounds retain current phase barriers, job ownership, dense tile work and serial SFU request sizes.",
+    "Serial-order bound additionally retains per-tile GM read -> matrix -> input read -> scatter -> MAC -> drain.",
+    "HBM payload bound uses configured peak bandwidth; bank conflicts, refresh, read/write turnarounds, packet overhead and NoC cuts remain omitted.",
+    "Bounds omit embedding service, control handoffs and some prepare/drain work; they are optimistic necessary bounds, not attainable optima.",
+    "Changing mapping, fusion, traffic reuse or resource sizes requires recomputing bounds.",
+    "Timing covers token DMA through last logits ACK; host greedy argmax and SST wall time are outside it."
+  ]
+}

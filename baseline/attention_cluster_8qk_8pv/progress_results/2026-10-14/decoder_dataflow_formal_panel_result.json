@@ -1,0 +1,380 @@
+{
+  "status": "PASS",
+  "shape": {
+    "S": 1024,
+    "hidden": 2048,
+    "intermediate": 8192,
+    "layers": 2
+  },
+  "numerics": {
+    "layer1_composed": {
+      "status": "PASS",
+      "max_abs_error": 0.0009765625,
+      "tolerance": 0.004,
+      "elements": 2097152
+    },
+    "layer2_composed": {
+      "status": "PASS",
+      "max_abs_error": 0.0009765625,
+      "tolerance": 0.004,
+      "elements": 2097152
+    },
+    "final_norm_composed": {
+      "status": "PASS",
+      "max_abs_error": 0.00390625,
+      "tolerance": 0.006,
+      "elements": 2097152
+    },
+    "final_norm_local": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0.002,
+      "elements": 2097152
+    },
+    "last_attention": {
+      "status": "PASS",
+      "max_abs_error": 0.0001220703125,
+      "tolerance": 0.0003,
+      "elements": 2097152
+    },
+    "last_wo": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0,
+      "elements": 2097152
+    },
+    "last_h1": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0,
+      "elements": 2097152
+    },
+    "last_norm2": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0.002,
+      "elements": 2097152
+    },
+    "last_gate": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0,
+      "elements": 8388608
+    },
+    "last_up": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0,
+      "elements": 8388608
+    },
+    "last_act": {
+      "status": "PASS",
+      "max_abs_error": 0.0001220703125,
+      "tolerance": 0.0005,
+      "elements": 8388608
+    },
+    "last_gated": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0,
+      "elements": 8388608
+    },
+    "last_down": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0,
+      "elements": 2097152
+    },
+    "last_residual2": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0,
+      "elements": 2097152
+    }
+  },
+  "lifecycle": {
+    "status": "PASS",
+    "projection_jobs": 32,
+    "decoder_ops": 288,
+    "reset_ack_count": 64,
+    "layers": 2,
+    "scratch_retire_count": 64,
+    "distinct_attention_tags": true,
+    "all_attention_jobs_checked": 128,
+    "stage_spans": {
+      "1": {
+        "1": {
+          "start_tick": 859803000,
+          "end_tick": 1298991000,
+          "span_cycles": 439188.0,
+          "workers": 16,
+          "hbm_read_bytes": 138412032,
+          "hbm_write_bytes": 4194304
+        },
+        "2": {
+          "start_tick": 1267792000,
+          "end_tick": 1332380000,
+          "span_cycles": 64588.0,
+          "workers": 16,
+          "hbm_read_bytes": 8388608,
+          "hbm_write_bytes": 4194304
+        },
+        "3": {
+          "start_tick": 1299931000,
+          "end_tick": 1400530000,
+          "span_cycles": 100599.0,
+          "workers": 16,
+          "hbm_read_bytes": 5242880,
+          "hbm_write_bytes": 4194304
+        },
+        "4": {
+          "start_tick": 1347081000,
+          "end_tick": 3086840000,
+          "span_cycles": 1739759.0,
+          "workers": 16,
+          "hbm_read_bytes": 541065216,
+          "hbm_write_bytes": 16777216
+        },
+        "5": {
+          "start_tick": 2972395000,
+          "end_tick": 4767168000,
+          "span_cycles": 1794773.0,
+          "workers": 16,
+          "hbm_read_bytes": 541065216,
+          "hbm_write_bytes": 16777216
+        },
+        "6": {
+          "start_tick": 4613840000,
+          "end_tick": 5368862000,
+          "span_cycles": 755022.0,
+          "workers": 16,
+          "hbm_read_bytes": 16777216,
+          "hbm_write_bytes": 16777216
+        },
+        "7": {
+          "start_tick": 5194215000,
+          "end_tick": 5548202000,
+          "span_cycles": 353987.0,
+          "workers": 16,
+          "hbm_read_bytes": 33554432,
+          "hbm_write_bytes": 16777216
+        },
+        "8": {
+          "start_tick": 5300794000,
+          "end_tick": 7235120000,
+          "span_cycles": 1934326.0,
+          "workers": 16,
+          "hbm_read_bytes": 553648128,
+          "hbm_write_bytes": 4194304
+        },
+        "9": {
+          "start_tick": 6912082000,
+          "end_tick": 7265396000,
+          "span_cycles": 353314.0,
+          "workers": 16,
+          "hbm_read_bytes": 8388608,
+          "hbm_write_bytes": 4194432
+        }
+      },
+      "2": {
+        "1": {
+          "start_tick": 7844188000,
+          "end_tick": 8285401000,
+          "span_cycles": 441213.0,
+          "workers": 16,
+          "hbm_read_bytes": 138412032,
+          "hbm_write_bytes": 4194304
+        },
+        "2": {
+          "start_tick": 8247139000,
+          "end_tick": 8319864000,
+          "span_cycles": 72725.0,
+          "workers": 16,
+          "hbm_read_bytes": 8388608,
+          "hbm_write_bytes": 4194304
+        },
+        "3": {
+          "start_tick": 8282841000,
+          "end_tick": 8386025000,
+          "span_cycles": 103184.0,
+          "workers": 16,
+          "hbm_read_bytes": 5242880,
+          "hbm_write_bytes": 4194304
+        },
+        "4": {
+          "start_tick": 8328701000,
+          "end_tick": 10073116000,
+          "span_cycles": 1744415.0,
+          "workers": 16,
+          "hbm_read_bytes": 541065216,
+          "hbm_write_bytes": 16777216
+        },
+        "5": {
+          "start_tick": 9943244000,
+          "end_tick": 11775626000,
+          "span_cycles": 1832382.0,
+          "workers": 16,
+          "hbm_read_bytes": 541065216,
+          "hbm_write_bytes": 16777216
+        },
+        "6": {
+          "start_tick": 11584778000,
+          "end_tick": 12383288000,
+          "span_cycles": 798510.0,
+          "workers": 16,
+          "hbm_read_bytes": 16777216,
+          "hbm_write_bytes": 16777216
+        },
+        "7": {
+          "start_tick": 12169107000,
+          "end_tick": 12563765000,
+          "span_cycles": 394658.0,
+          "workers": 16,
+          "hbm_read_bytes": 33554432,
+          "hbm_write_bytes": 16777216
+        },
+        "8": {
+          "start_tick": 12272094000,
+          "end_tick": 14250812000,
+          "span_cycles": 1978718.0,
+          "workers": 16,
+          "hbm_read_bytes": 553648128,
+          "hbm_write_bytes": 4194304
+        },
+        "9": {
+          "start_tick": 13901162000,
+          "end_tick": 14280272000,
+          "span_cycles": 379110.0,
+          "workers": 16,
+          "hbm_read_bytes": 8388608,
+          "hbm_write_bytes": 4194432
+        }
+      }
+    }
+  },
+  "dma_timing": {
+    "contract": "first layer X input DMA send to second layer Y final DMA ACK",
+    "ticks_per_cycle": 1000,
+    "layers": {
+      "1": {
+        "first_input_dma_tick": 326944000,
+        "last_attention_o_ack_tick": 836590500,
+        "last_y_ack_tick": 7265339750,
+        "attention_cycles": 509646.5,
+        "post_attention_cycles": 6428749.25,
+        "layer_cycles": 6938395.75,
+        "output_ack_bytes": 4194304
+      },
+      "2": {
+        "first_input_dma_tick": 7315667000,
+        "last_attention_o_ack_tick": 7821321750,
+        "last_y_ack_tick": 14280219750,
+        "attention_cycles": 505654.75,
+        "post_attention_cycles": 6458898.0,
+        "layer_cycles": 6964552.75,
+        "output_ack_bytes": 4194304
+      }
+    },
+    "layer_handoff_cycles": 50327.25,
+    "end_to_end_cycles": 13953275.75,
+    "note": "Stage spans overlap; cannot be summed. Includes handoff/reset between layers; excludes host preload/startup and final exit."
+  },
+  "memory": {
+    "per_node_used_bytes": 373198880,
+    "per_node_capacity_bytes": 2147483648,
+    "activation_slots": 2,
+    "shared_scratch": true,
+    "weight_sets": 2
+  },
+  "final_norm": {
+    "status": "PASS",
+    "workers": 16,
+    "epoch": 3,
+    "reset_ack_count": 16,
+    "first_input_dma_tick": 14295646000,
+    "last_output_ack_tick": 14344128750,
+    "last_completion_ack_tick": 14344180750,
+    "output_ack_bytes": 4194304,
+    "rmsnorm_cycles": 48482.75,
+    "handoff_cycles": 15426.25,
+    "tail_cycles": 63909.0,
+    "end_to_end_cycles": 14017184.75,
+    "contract": "first layer X input DMA send to final RMSNorm output DMA ACK",
+    "epsilon": 1e-06,
+    "io_dtype": "fp16",
+    "internal_dtype": "fp32"
+  },
+  "lm_head": {
+    "status": "PASS",
+    "token_index": 1023,
+    "M": 1,
+    "vocab": 128256,
+    "padded_vocab": 128256,
+    "vocabulary_chunk_columns": 8192,
+    "chunks": 16,
+    "tail_chunk_columns": 5376,
+    "worker_jobs": 256,
+    "reset_ack_count": 16,
+    "last_epoch": 19,
+    "next_token": {
+      "method": "greedy_argmax",
+      "token_id": 99037,
+      "logit": 0.6982421875,
+      "vocab": 128256,
+      "tie_break": "lowest token ID",
+      "host_selection_seconds": 0.000848699,
+      "status": "PASS",
+      "local_reference_token_id": 99037,
+      "composed_reference_token_id": 99037,
+      "composed_reference_agrees": true,
+      "timing_scope": "host argmax only; excluded from accelerator cycles"
+    },
+    "local_reference": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0,
+      "elements": 128256
+    },
+    "composed_reference": {
+      "status": "PASS",
+      "max_abs_error": 0.000244140625,
+      "tolerance": 0.006,
+      "elements": 128256
+    },
+    "first_input_dma_tick": 14354085000,
+    "last_logits_ack_tick": 15695347750,
+    "last_completion_ack_tick": 15695410750,
+    "input_and_weight_dma_bytes": 526385152,
+    "output_ack_bytes": 256512,
+    "lm_head_cycles": 1341262.75,
+    "handoff_cycles": 9956.25,
+    "tail_cycles": 1351219.0,
+    "end_to_end_cycles": 15368403.75,
+    "contract": "first layer X input DMA send to last-token logits final DMA ACK"
+  },
+  "embedding": {
+    "status": "PASS",
+    "tokens": 1024,
+    "hidden": 2048,
+    "vocab": 128256,
+    "numerics": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0,
+      "elements": 2097152
+    },
+    "workers": 16,
+    "reset_ack_count": 16,
+    "first_token_ids_dma_tick": 241503000,
+    "last_embedding_output_ack_tick": 272706625,
+    "last_worker_completion_tick": 272739000,
+    "first_decoder_input_dma_tick": 326944000,
+    "input_token_bytes": 4096,
+    "table_read_bytes": 4194304,
+    "output_ack_bytes": 4194304,
+    "embedding_cycles": 31203.625,
+    "handoff_cycles": 54237.375,
+    "end_to_end_cycles": 15453844.75,
+    "contract": "first token-ID DMA send to last-token logits final output DMA ACK"
+  }
+}

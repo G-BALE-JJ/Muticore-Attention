@@ -31,7 +31,11 @@ struct DecoderMemoryLayout {
     static constexpr uint64_t decoder_input_gm=0x10000;
     static constexpr uint64_t decoder_weight_gm=0x110000;
     static constexpr uint64_t decoder_output_gm=0x112000;
-    static constexpr uint64_t decoder_required_gm=0x118000+64;
+    // Two bounded 64-row x 1024-column FP16 output panels. Input K=8192
+    // remains in its existing 1 MiB slot; this does not enlarge worker SRAM.
+    static constexpr uint64_t decoder_panel_bytes=64*1024*2;
+    static constexpr uint64_t decoder_prefetch_gm=decoder_output_gm+2*decoder_panel_bytes;
+    static constexpr uint64_t decoder_required_gm=decoder_prefetch_gm+2*8192;
     uint64_t activation[2]{}, projection_done=0, decoder_done=0;
     uint64_t norm1=0,q=0,k=0,v=0,o=0,q_panel=0,k_panel=0,v_panel=0,rope=0;
     uint64_t wo=0,h1=0,norm2=0,gate=0,up=0,act=0,gated=0,down=0,used_bytes=0;

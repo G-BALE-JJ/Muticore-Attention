@@ -1,11 +1,20 @@
 # 8 QK/SFU + 8 PV attention cluster
 
-**Latest progress (2026-10-14):** timed Embedding → two Decoder layers →
-final RMSNorm → last-token LM head → host greedy token selection is validated.
-Formal 4/8-rank runs have identical logits and 20,167,497.75 cycles;
-8 ranks reduce simulator wall time by 12.08% in the matched single-run comparison.
-See [current progress](PROGRESS_2026-10-14.md) and the
-[archived results](progress_results/2026-10-14/embedding_token_summary.md).
+**Latest progress (2026-10-14):** generic GEMM output panels, bounded weight
+prefetch, and chunked SiLU/Multiply fusion are validated through timed Embedding,
+two Decoder layers, final RMSNorm, and last-token LM head. The formal 8-rank run
+measures **10,210,612.75 cycles**, down 49.37% from the pre-optimization archive,
+with bit-identical layer outputs and logits. See the
+[dataflow implementation and matched comparisons](DECODER_DATAFLOW_2026-10-14.md)
+and [current progress](PROGRESS_2026-10-14.md).
+
+The earlier 4/8-rank archive has identical logits and 20,167,497.75 cycles;
+8 ranks reduce simulator wall time by 12.08% in that matched single-run comparison.
+See the [archived results](progress_results/2026-10-14/embedding_token_summary.md).
+
+See the [full-prefill cycle and lower-bound analysis](DECODER_E2E_ANALYSIS_2026-10-14.md)
+for pre-optimization additive phase timings, overlapping worker profiles, resource bounds,
+and the evidence for optimizing generic GEMM output DMA and prefetch before FFN fusion.
 
 **Canonical DMA timing (2026-10-12):** the primary report is `dma_e2e_result.json`, contract `hbmdma_to_O_ack_v1`: first workload data DMA sent → last final O write ACK. Clean IW S1024/S2048 measure **473,902.75 / 1,238,814.75 cycles**. Legacy job-to-worker fields below retain historical boundaries. Current group1 + producer barrier resource lower bounds are **352,816 / 967,776 cycles**, necessary bounds rather than attained optimal schedules. See [timing and lower-bound analysis](DMA_LOWER_BOUND_2026-10-12.md).
 

@@ -88,7 +88,7 @@ static bool run_decoder(uint32_t worker,uint32_t rows,uint32_t hidden,uint32_t d
         DecoderOpDesc d{};
         d.magic=GOLEM_DECODER_OP_MAGIC; d.size_bytes=sizeof(d); d.op=static_cast<uint32_t>(op); d.stage=stage;
         d.epoch=layout?layer+1:1; d.rows=rows; d.input_dim=k; d.output_dim=n; d.manager=manager; d.lane=lane; d.head_dim=head;
-        d.input_addr=node+input; d.input1_addr=(op==DecoderOp::Add || op==DecoderOp::Multiply || op==DecoderOp::RmsNorm)?node+input1:0; d.output_addr=node+output;
+        d.input_addr=node+input; d.input1_addr=(op==DecoderOp::Add || op==DecoderOp::Multiply || op==DecoderOp::RmsNorm || op==DecoderOp::SiluMultiply)?node+input1:0; d.output_addr=node+output;
         d.weights_offset=weights; d.node_stride=stride;
         d.completion_addr=last?node+(layout?layout->decoder_done:DEC_DONE)+lane*8:0;
         return submit_decoder_op(worker,d);
@@ -99,12 +99,16 @@ static bool run_decoder(uint32_t worker,uint32_t rows,uint32_t hidden,uint32_t d
     if (!issue(DecoderOp::Add,2,hidden,hidden,wo,l.input,h1,0,0,GOLEM_DECODER_STAGE==2)) return false;
     if (GOLEM_DECODER_STAGE==2) return true;
     const uint32_t intermediate=4*hidden;
+    const char* fusion_env=std::getenv("GOLEM_DECODER_SILU_MULTIPLY_FUSION");
+    const bool fuse_silu=fusion_env && std::strcmp(fusion_env,"1")==0;
     if (!issue(DecoderOp::RmsNorm,3,hidden,hidden,h1,l.gamma2,norm,0,0,false) ||
         !issue(DecoderOp::Linear,4,hidden,intermediate,norm,0,gate,l.gate_weight,0,false) ||
-        !issue(DecoderOp::Linear,5,hidden,intermediate,norm,0,up,l.up_weight,0,false) ||
-        !issue(DecoderOp::Silu,6,intermediate,intermediate,gate,0,act,0,0,false) ||
-        !issue(DecoderOp::Multiply,7,intermediate,intermediate,act,up,gated,0,0,false) ||
-        !issue(DecoderOp::Linear,8,intermediate,hidden,gated,0,down,l.down_weight,0,GOLEM_DECODER_STAGE==3)) return false;
+        !issue(DecoderOp::Linear,5,hidden,intermediate,norm,0,up,l.up_weight,0,false)) return false;
+    if (fuse_silu) {
+        if (!issue(DecoderOp::SiluMultiply,7,intermediate,intermediate,gate,up,gated,0,0,false)) return false;
+    } else if (!issue(DecoderOp::Silu,6,intermediate,intermediate,gate,0,act,0,0,false) ||
+        !issue(DecoderOp::Multiply,7,intermediate,intermediate,act,up,gated,0,0,false)) return false;
+    if (!issue(DecoderOp::Linear,8,intermediate,hidden,gated,0,down,l.down_weight,0,GOLEM_DECODER_STAGE==3)) return false;
     if (GOLEM_DECODER_STAGE==3) return true;
     return issue(DecoderOp::Add,9,hidden,hidden,down,h1,l.output,0,0,true);
 }

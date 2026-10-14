@@ -1,0 +1,7 @@
+SiLU shared-resource cycles: clean=284 busy=377
+8192-element SiLU cycles=8219
+8192-element SiLU, EXP=16 lanes, cycles=8216
+----------------------------------------------------------------------
+Ran 150 tests in 10.246s
+
+OK

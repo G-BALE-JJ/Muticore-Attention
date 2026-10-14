@@ -6,6 +6,10 @@ import csv
 import json
 import re
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'architecture'))
+from partition_planner import attention_query_block_placements
 
 
 CORE_COMPONENT = re.compile(r"^core([0-9]+)(?::|$)")
@@ -13,11 +17,15 @@ ROUTER_COMPONENT = re.compile(r"^rtr_([0-9]+)(?::|$)")
 
 
 def expected_rank(core_id, mpi_ranks):
+    if mpi_ranks == 8:
+        return attention_query_block_placements(28, 20, mpi_ranks)[core_id + 4][0]
     manager_id = core_id if core_id < 4 else core_id % 4
     return manager_id % mpi_ranks
 
 
 def expected_router_rank(router_id, mpi_ranks):
+    if mpi_ranks == 8:
+        return attention_query_block_placements(28, 20, mpi_ranks)[router_id][0]
     return router_id % mpi_ranks if router_id < 24 else 0
 
 
@@ -41,7 +49,7 @@ def expected_component_ranks(mpi_ranks):
     expected["os"] = 0
     expected["node.os_l1cache"] = 0
     for node_index in range(5):
-        rank = 0 if node_index == 0 else (node_index - 1) % mpi_ranks
+        rank = 0 if node_index == 0 else expected_router_rank(node_index - 1, mpi_ranks)
         expected[f"dirctrl_{node_index}"] = rank
         expected[f"memory_{node_index}"] = rank
     return expected
@@ -183,8 +191,8 @@ def main():
     parser.add_argument("--mpi-ranks", type=int, required=True)
     parser.add_argument("--result-json")
     args = parser.parse_args()
-    if args.mpi_ranks not in (2, 4):
-        parser.error("--mpi-ranks must be 2 or 4")
+    if args.mpi_ranks not in (2, 4, 8):
+        parser.error("--mpi-ranks must be 2, 4 or 8")
 
     result = verify(args.stats_file, args.placement_file, args.mpi_ranks)
     print(json.dumps(result, indent=2, sort_keys=True))
