@@ -27,15 +27,21 @@ def identical_fp16_bits(a, b):
 def profile(case):
     r = json.loads((case / 'decoder_stack_result.json').read_text())
     m = json.loads((case / 'decoder_stack_inputs.json').read_text())
-    jobs, flow = [], []
+    jobs, flow, sfu_tokens = [], [], {}
     with next((case / 'logs').glob('attention-sst*.log')).open() as stream:
         for line in stream:
             if '[DECODER_OP] event=done' in line or '[DECODER_DATAFLOW]' in line:
                 fields = {k: int(v) for k, v in re.findall(r'(\w+)=(\d+)', line)}
                 (flow if '[DECODER_DATAFLOW]' in line else jobs).append(fields)
+            if 'GOLEM_SFU_HW_PIPELINE' in line:
+                match=re.search(r'core=(\d+) unit=(exp|reciprocal) .*?accepted_tokens=(\d+)',line)
+                if match:sfu_tokens[f'{match[1]}.{match[2]}']=int(match[3])
+    expected_sfu={f'{core}.{unit}' for core in range(4,20) for unit in ('exp','reciprocal')}
+    if set(sfu_tokens)!=expected_sfu:
+        raise ValueError(f'{case}: missing or unexpected worker EXP/reciprocal statistics')
     critical = {}
     for epoch in (1, 2):
-        last = max((j for j in jobs if j['stage'] == 9 and j['epoch'] == epoch), key=lambda j: j['tick'])
+        last = max((j for j in jobs if j['stage'] == (4 if m.get('down_residual_fusion') else 9) and j['epoch'] == epoch), key=lambda j: j['tick'])
         core = last['core']
         critical[str(epoch)] = {'core': core, 'jobs_cycles': {
             str(j['stage']): (j['tick'] - j['start_tick']) / 1000
@@ -48,6 +54,9 @@ def profile(case):
         'layer_post_attention_cycles': {k: v['post_attention_cycles'] for k, v in r['dma_timing']['layers'].items()},
         'LM_head_cycles': r['lm_head']['lm_head_cycles'],
         'last_finishing_worker_chains': critical,
+        'ffn_panel_flow':r.get('lifecycle',{}).get('ffn_panel_flow',[]),
+        'ffn_down_flow':r.get('lifecycle',{}).get('ffn_down_flow',[]),
+        'SFU_exp_reciprocal_accepted_tokens':sfu_tokens,
         'linear_output_requests': sum(f['output_requests'] for f in flow if f['stage'] in (1, 4, 5, 8)) if flow else legacy_requests,
         'output_request_evidence': 'DECODER_DATAFLOW counters' if flow else 'legacy 128-byte serial writes inferred from DECODER_OP bytes',
         'max_output_in_flight': max((f['output_high_water'] for f in flow),default=1),
@@ -80,11 +89,21 @@ def summarize(baseline, variants):
             read_bands(case, m['layout']['final_norm']['output'], m['hidden']))
         equal['logits'] = identical_fp16_bits(np.load(baseline / 'last_token_logits.npy'), np.load(case / 'last_token_logits.npy'))
         for key in ('wo', 'h1', 'norm2', 'gate', 'up', 'gated', 'down'):
+            if key in ('gate','up') and (bm.get('ffn_panel_fusion') or m.get('ffn_panel_fusion')):
+                continue  # Elided producer tensors have no HBM output to compare.
+            if key=='gated' and (bm.get('ffn_down_fusion') or m.get('ffn_down_fusion')):continue
+            if key=='down' and (bm.get('down_residual_fusion') or m.get('down_residual_fusion')):continue
             width = bm['hidden'] * (4 if key in ('gate', 'up', 'gated') else 1)
             equal[key] = identical_fp16_bits(read_bands(baseline, bm['layout']['shared'][key], width),
                                             read_bands(case, m['layout']['shared'][key], width))
         if not all(equal.values()):
             raise ValueError(f'{name}: outputs differ: {equal}')
+        p['elided_output_tensors'] = [key for key in ('gate','up','act') if m.get('ffn_panel_fusion') or (key=='act' and m.get('silu_multiply_fusion'))]
+        if m.get('ffn_down_fusion'):p['elided_output_tensors'].append('gated')
+        if m.get('down_residual_fusion'):p['elided_output_tensors'].append('down')
+        p['identical_SFU_exp_reciprocal_work'] = p['SFU_exp_reciprocal_accepted_tokens'] == base['SFU_exp_reciprocal_accepted_tokens']
+        if not p['identical_SFU_exp_reciprocal_work']:
+            raise ValueError(f'{name}: EXP/reciprocal work differs from the baseline')
         p['identical_input_preloads'] = True
         p['identical_guest_binary'] = p['provenance']['guest_sha256'] == base['provenance']['guest_sha256']
         p['identical_SST_library'] = p['provenance']['sst_library_sha256'] == base['provenance']['sst_library_sha256']

@@ -1319,7 +1319,27 @@ PY
 }
 
 TEST_START_NS="$(date +%s%N)"
+ARTIFACT_STORAGE="$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/artifact_storage.py"
+python3 "$ARTIFACT_STORAGE" preflight "$ARTIFACT_ROOT"
+python3 "$ARTIFACT_STORAGE" preflight "$HBM_DIR"
 mkdir -p "$ARTIFACT_ROOT" "$DRIVER_LOG_DIR"
+# Failed runs retain their raw evidence. Only a successful exit after validation
+# permits cleanup; cleanup errors are visible without masking the simulation RC.
+attention_finalize_artifacts() {
+  local test_rc=$?
+  trap - EXIT
+  if (( test_rc == 0 )); then
+    local cleanup_args=(finalize "$ARTIFACT_ROOT" --validated --log "$SST_RUNTIME_LOG")
+    if [[ -n "${GOLEM_MPI_RANK_LOG_ROOT:-}" ]]; then
+      cleanup_args+=(--rank-root "$GOLEM_MPI_RANK_LOG_ROOT")
+    fi
+    if ! python3 "$ARTIFACT_STORAGE" "${cleanup_args[@]}"; then
+      echo "[WARN] Artifact cleanup failed; inspect retained files in $ARTIFACT_ROOT" >&2
+    fi
+  fi
+  exit "$test_rc"
+}
+trap attention_finalize_artifacts EXIT
 rm -f "$RESULT_JSON" "$LIFECYCLE_JSON" "$METRICS_JSON" "$METRICS_CSV" \
   "$MPI_PARTITION_JSON" "$MPI_PLACEMENT_JSON" "$STATS_FILE" \
   "$BASELINE_RESULT_JSON" \

@@ -1,6 +1,89 @@
+# GM 模型校准
+
+**RTX 5060 GPU 实验交接（2026-10-16）：**
+[SSH 查阅、精简传输、计算图与测量契约](GPU_PREFILL_HANDOFF_2026-10-16.md)。
+当前通用性回归正式两层为 **7,424,562 cycles**；GPU prefill runner 尚待实现。
+交接清单包含当前工作树哈希、冻结输入和普通数组参考，无需复制完整 HBM/build。
+
+**宿主磁盘产物管理（2026-10-16）：** 主要 runner 默认在验收成功后核对并
+删除重复 MPI 日志、回收张量全零块；生成输入前检查至少 24 GiB 剩余空间。
+失败实验保留原始日志。构建复制排除所有 `results/` 并保留稀疏文件。
+显式归档清理及完整保留选项见 [产物保留策略](ARTIFACT_STORAGE.md)。
+
+当前 banked GM 下，FFN 内部保持 tile-major 并直接写最终 row-major down panel，正式两层 MPI8 从同构建 **7,483,267.75 → 7,362,979.75 cycles（−1.61%）**。新增 `--ffn-layout 2`，保留四槽预取、16-tile FFN/down/残差融合、两组数组与 LM N=4。硬件未改，每 worker 仍为 2 MiB GM；输出/logits 比特相同，302 项回归和完整资源审计通过。输入复用实验因 C-buffer 开销变慢，保留关闭。参见 [FFN GM 四步实验及正式验收](FFN_GM_FLOW_2026-10-16.md)。
+
+GM 校准补齐入口/bank 冲突与 WCP DMA 落地，校准对照为 **7,483,267.75 cycles**；张量未计时绕行均为 0 B。参见 [GM banked 实现与验证](GM_ALIGNMENT_VALIDATION_2026-10-16.md)；下文历史优化结果属于 legacy 模型。
+
 # 8 QK/SFU + 8 PV attention cluster
 
-**Latest progress (2026-10-14):** generic GEMM output panels, bounded weight
+**GM model alignment review (2026-10-16):** retain **2 MiB per worker**.
+The [review and candidate contract](GM_ALIGNMENT_REVIEW_2026-10-16.md) separate
+the reference SST abstraction from its HDL resource model, and bound client
+ingress, bank conflicts, read/write ordering and response backpressure together.
+The banked implementation and acceptance evidence are in the
+[validation report](GM_ALIGNMENT_VALIDATION_2026-10-16.md). Formal runners now
+default to banked; the historical results below use legacy timing.
+Model-calibration differences must not be reported as software scheduling speedups.
+
+**Latest LM head N parallelism (2026-10-15):** map distinct vocabulary tiles to
+existing single-context arrays with `--lm-n-parallel 1|2|4|8`. Local formal
+16-worker / MPI8 screening selects **4**, reducing LM cycles by **4.68%**;
+2 regresses and 8 is slightly slower than 4. Matched full two-layer prefill
+reduces LM head **633,901.75 → 602,504.75 cycles (−4.95%)**, and total
+**6,262,408.75 → 6,231,011.75 cycles (−0.50%)**. All upstream cycles are identical,
+outputs/logits are bit-identical, and dense weight/DMA/SFU work is unchanged.
+No hardware changes; 302 regression tests, 12 local SST cases and both full
+cases pass. Keep the fusion/prefetch/FFN settings below and explicitly add
+`--lm-n-parallel 4`; default remains 1. See the
+[implementation, local screening and full acceptance](LM_N_PARALLEL_2026-10-15.md).
+
+**Previous FFN array subset scheduling (2026-10-15):** interleave two disjoint
+32-array subsets of the existing 64 arrays, keeping one operand context per
+array and all hardware parameters unchanged. Formal single-worker / 16-worker
+FFN+residual cycles decrease by **8.56% / 4.60%**. Matched two-layer MPI8 prefill
+decreases **6,519,275.75 → 6,262,408.75 cycles (−3.94%)**, with bit-identical
+outputs/logits and equal DMA/GM and SFU work. All 299 regression tests pass.
+Use `--ffn-array-groups 2` with four-slot prefetch and the fusion settings below;
+the default remains one group. Extra broadcasts are charged to the existing
+shared port. See the [implementation and evidence](ARRAY_GROUP_PIPELINE_2026-10-15.md).
+
+**Previous down-to-residual pipeline (2026-10-15):** existing down panels feed the
+shared SFU Add before final layer-output DMA. Formal MPI8 prefill decreases from
+the matched current-build **6,575,251.75** to **6,519,275.75 cycles (−0.85%)**;
+formal 16-worker local FFN+residual decreases by 1.55%. Two layers save 16 MiB
+of HBM traffic and 32 standalone jobs. Outputs and logits are bit-identical,
+with equal EXP/reciprocal/vector-op work. All 297 tests pass. No hardware resource
+or timing parameters change: 8 KiB scratch reuses the existing GM input arena.
+Enable explicitly with `--down-residual-fusion` in addition to the settings below.
+See the [implementation and matched evidence](RESIDUAL_PIPELINE_2026-10-15.md).
+
+**Previous weight prefetch experiments (2026-10-15):** real 2/4/8-slot queues,
+foreground DMA/GM wait instrumentation, bounded cross-worker reuse replay, and
+local-to-full validation are complete. Four slots reduce formal 16-worker FFN
+cycles by **31.85%** and full two-layer prefill from **8,827,863**
+to **6,559,174.75 cycles (−25.70%)**, with bit-identical outputs
+and logits. Use `--gemm-prefetch --ffn-down-fusion --ffn-panel-tiles 16 --prefetch-slots 4`.
+The controller schedule uses the existing 2 MiB GM (maximum layout 1.945 MiB),
+64 arrays and one operand bank. All 295 tests pass. Reuse replay estimates bytes;
+it does not implement multicast or claim sharing cycle savings. See the
+[complete experiments](WEIGHT_PREFETCH_2026-10-15.md).
+
+**Previous gated-to-down fusion (2026-10-15):** op9 consumes gated panels in GM and
+preserves K-order FP16 partials in the existing timed C-buffer. The formal 8-rank
+two-layer prefill measures **8,827,863 cycles**, down **1.96%** from the matched
+current-build op8 baseline (9,003,939). Use `--ffn-down-fusion --ffn-panel-tiles 16`
+for this shape. Outputs and logits are bit-identical; two layers save 64 MiB of
+HBM traffic without increasing SRAM capacity. All 292 regression tests pass.
+See the [down fusion experiments](FFN_DOWN_FUSION_2026-10-15.md).
+
+**Previous FFN producer fusion (2026-10-14):** gate/up producer panels now feed the shared
+SiLU/Multiply SFU directly, with bounded GM ownership and final gated ACKs.
+The formal 8-rank two-layer prefill measures **8,807,050.75 cycles** with 8-tile
+panels, down **14.29%** from the matched current-binary baseline. Layer outputs
+and logits are bit-identical; two layers save 136 MiB of HBM traffic. See the
+[FFN panel implementation and validation](FFN_PANEL_FUSION_2026-10-14.md).
+
+**Previous dataflow progress (2026-10-14):** generic GEMM output panels, bounded weight
 prefetch, and chunked SiLU/Multiply fusion are validated through timed Embedding,
 two Decoder layers, final RMSNorm, and last-token LM head. The formal 8-rank run
 measures **10,210,612.75 cycles**, down 49.37% from the pre-optimization archive,
@@ -585,6 +668,11 @@ and are not deployable optimization results.
 两层 Decoder 重复执行、统一内存布局和 completion epoch：
 [DECODER_STACK_2026-10-14.md](DECODER_STACK_2026-10-14.md)。
 
+参数化多层、变长前缀、稠密权重与 FP32 误差测量：
+[PREFILL_GENERALIZATION_2026-10-16.md](PREFILL_GENERALIZATION_2026-10-16.md)。
+`run_prefill_validation.py` 按 local / formal / target 分级验证，支持重用已验收结果。
+变长 S 当前通过软件补齐到 1024 的倍数，所有补齐工作计入 cycle；GM 保持每 worker 2 MiB。
+
 Add/Multiply/SiLU 已接入实际 SFU 管线预占、有限 FIFO 和反压；SiLU 与
 Attention 使用同一个 EXP/倒数资源对象。精度契约、竞争测试及相同输入的
 两层周期对比见 [SFU_VECTOR_PIPELINE_2026-10-14.md](SFU_VECTOR_PIPELINE_2026-10-14.md)。
@@ -597,3 +685,6 @@ Attention 使用同一个 EXP/倒数资源对象。精度契约、竞争测试�
 
 已接入 worker 定时 Embedding gather 和 host greedy token 选择；4/8 MPI rank 的相同输入对比见
 [EMBEDDING_TOKEN_MPI_2026-10-14.md](EMBEDDING_TOKEN_MPI_2026-10-14.md)。
+
+后续优化采用 [局部 SST 筛选与端到端验收](LOCAL_TEST_WORKFLOW_2026-10-14.md)。
+`run_decoder_micro.py` 从预置 Norm2 开始，直接验证实际 FFN 数据通路，支持 1/4/16 worker、正式 K/N 宽度、可选 down 和配对收益报告。

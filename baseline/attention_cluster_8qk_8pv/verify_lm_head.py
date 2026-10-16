@@ -9,6 +9,7 @@ def verify_lm_head(case,m,log,final,timing):
     from run_decoder_stack import fields,compare
     from analyze_resource_timeline import FIELDS,merged
     layout=m['layout'];lm=layout['lm_head'];stride=layout['node_stride'];hidden=m['hidden']
+    sequence=m.get('sequence',1024);logical=m.get('logical_sequence',sequence);base_epoch=m.get('layers',2)+2
     vocab=lm['vocab'];columns=((vocab+63)//64)*64;chunks=(columns+8191)//8192
     flags={node*stride+lm['done']+lane*8 for node in range(1,5) for lane in range(4)}
     ops=[];resets=[]
@@ -22,14 +23,15 @@ def verify_lm_head(case,m,log,final,timing):
                 if e['address'] in flags:resets.append(e)
     if len(ops)!=16*chunks:raise ValueError('LM head missing/duplicate worker chunks')
     for chunk in range(chunks):
-        group=[e for e in ops if e['epoch']==4+chunk]
+        group=[e for e in ops if e['epoch']==base_epoch+chunk]
         if len(group)!=16 or {e['core'] for e in group}!=set(range(4,20)) or any(e['status'] or e['op']!=1 for e in group):
             raise ValueError('LM head chunk generation mismatch')
     start=min(e['start_tick'] for e in ops)
     if (len(resets)!=16 or {e['address'] for e in resets}!=flags or any(e['value'] or e['status'] or
         not final['last_completion_ack_tick']<=e['tick']<start for e in resets)):
         raise ValueError('LM head reset ACK/barrier mismatch')
-    input_address=4*stride+layout['final_norm']['output']+255*hidden*2
+    token=logical-1;rows=sequence//4
+    input_address=(1+token//rows)*stride+layout['final_norm']['output']+(token%rows)*hidden*2
     states={(e['core'],e['epoch']):{'op':e,'writes':[],'weight_reads':[],'inputs':[],
         'flag_acks':[],'last_output':0} for e in ops}
     per_core={core:sorted((e for e in ops if e['core']==core),key=lambda e:e['epoch']) for core in range(4,20)}
@@ -59,7 +61,7 @@ def verify_lm_head(case,m,log,final,timing):
                     state['writes'].append((address,stop));state['last_output']=max(state['last_output'],e['done_tick'])
     last_output=0;write_bytes=0;read_bytes=0;completion=[]
     for (core,epoch),state in states.items():
-        chunk=epoch-4;begin=chunk*128;ntiles=min(128,columns//64-begin)
+        chunk=epoch-base_epoch;begin=chunk*128;ntiles=min(128,columns//64-begin)
         tiles=list(range(begin+(core-4),begin+ntiles,16));node=1+(core-4)%4;op=state['op']
         wanted_writes=[(node*stride+lm['output']+tile*128,node*stride+lm['output']+(tile+1)*128) for tile in tiles]
         wanted_reads=[((1+tile%4)*stride+lm['weight']+(tile//4*(hidden//64)+k)*8192,
@@ -79,7 +81,7 @@ def verify_lm_head(case,m,log,final,timing):
             completion.append(ack['done_tick'])
         last_output=max(last_output,state['last_output']);write_bytes+=len(tiles)*128;read_bytes+=expected_read
     stdout='\n'.join(p.read_text() for p in (case/'stdout').rglob('stdout-*'))
-    if re.findall(r'DECODER_LM_HEAD status=(\d+) vocab=(\d+) epoch=(\d+) token=(\d+)',stdout)!=[('0',str(vocab),str(3+chunks),'1023')]:
+    if re.findall(r'DECODER_LM_HEAD status=(\d+) vocab=(\d+) epoch=(\d+) token=(\d+)',stdout)!=[('0',str(vocab),str(base_epoch+chunks-1),str(logical-1))]:
         raise ValueError('LM head root completion missing/failed')
     logits=np.empty(columns,dtype='<f2')
     for node in range(1,5):
@@ -88,9 +90,9 @@ def verify_lm_head(case,m,log,final,timing):
             if len(data)!=columns:raise ValueError('short logits backing')
             for tile in range(node-1,columns//64,4):logits[tile*64:(tile+1)*64]=data[tile*64:(tile+1)*64]
             stream.seek(lm['done']);done=np.frombuffer(stream.read(32),dtype='<u8')
-            if len(done)!=4 or not np.all(done==3+chunks):raise ValueError('stale LM completion epoch')
+            if len(done)!=4 or not np.all(done==base_epoch+chunks-1):raise ValueError('stale LM completion epoch')
     weight=np.load(case/'lm_weight.npy',mmap_mode='r')
-    actual_input=read_bands(case,layout['final_norm']['output'],hidden)[-1:]
+    actual_input=read_bands(case,layout['final_norm']['output'],hidden,rows=rows)[logical-1:logical]
     local=linear_reference(actual_input,weight).reshape(-1)
     local_result=compare(logits,local,0,'last-token LM head local')
     composed=linear_reference(np.load(case/'final_reference_last_token.npy'),weight).reshape(-1)
@@ -106,10 +108,17 @@ def verify_lm_head(case,m,log,final,timing):
         'composed_reference_agrees':selection['token_id']==composed_selection['token_id'],
         'timing_scope':'host argmax only; excluded from accelerator cycles'})
     (case/'next_token.json').write_text(json.dumps(selection,indent=2)+'\n')
-    return {'status':'PASS','token_index':1023,'M':1,'vocab':vocab,'padded_vocab':columns,
+    precision_result={}
+    if (case/'fp32_final_reference_last_token.npy').exists():
+        from prefill_precision_reference import error
+        fp32_logits=(np.load(case/'fp32_final_reference_last_token.npy')@weight.astype(np.float32).T).reshape(-1)[:vocab]
+        precision_result=error(logits[:vocab],fp32_logits)
+        precision_result['fp32_token_id']=int(np.argmax(fp32_logits))
+        precision_result['greedy_agrees']=precision_result['fp32_token_id']==selection['token_id']
+    return {'status':'PASS','token_index':logical-1,'M':1,'vocab':vocab,'padded_vocab':columns,
         'vocabulary_chunk_columns':8192,'chunks':chunks,'tail_chunk_columns':columns-(chunks-1)*8192,
-        'worker_jobs':len(ops),'reset_ack_count':16,'last_epoch':3+chunks,'next_token':selection,
-        'local_reference':local_result,'composed_reference':composed_result,
+        'worker_jobs':len(ops),'reset_ack_count':16,'last_epoch':base_epoch+chunks-1,'next_token':selection,
+        'local_reference':local_result,'composed_reference':composed_result,'fp32_precision':precision_result,
         'first_input_dma_tick':first_input,'last_logits_ack_tick':last_output,'last_completion_ack_tick':max(completion),
         'input_and_weight_dma_bytes':read_bytes,'output_ack_bytes':write_bytes,
         'lm_head_cycles':(last_output-first_input)/1000,'handoff_cycles':(first_input-final['last_output_ack_tick'])/1000,

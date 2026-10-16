@@ -27,6 +27,7 @@
 #include <sst/elements/memHierarchy/memLinkBase.h>
 #include <sst/elements/memHierarchy/util.h>
 #include <sst/elements/golem/attention/attentionCluster.h>
+#include "localGmBankScheduler.h"
 
 namespace SST {
 namespace Golem {
@@ -396,6 +397,11 @@ public:
         {"dump_data", "Enable detailed data hex dump logs", "0"},
         {"link_bw",  "Bandwidth of the router link (e.g., \"1GB/s\")."},
         {"globalMemTransLatency", "Latency per bytes transferred in global memory operation", "5ns"},
+        {"local_access_model", "Local GM model: legacy or banked", "legacy"},
+        {"local_access_banks", "Banked model SRAM bank count", "8"},
+        {"local_access_line_bytes", "Banked model bytes per ingress beat", "128"},
+        {"local_access_response_cycles", "Banked model grant-to-completion cycles", "1"},
+        {"local_access_response_capacity", "Banked model in-flight beat response capacity", "32"},
         {"local_access_clock", "Clock used by the modeled local-memory scheduler", "1GHz"},
         {"local_access_base_latency_cycles", "Base cycles for an accepted local-memory request", "1"},
         {"local_access_bytes_per_cycle", "Transfer bandwidth per local-memory port", "64"},
@@ -590,6 +596,8 @@ private:
         size_t total_len = 0;
         size_t received_len = 0;
         uint64_t submit_cycle = 0;
+        uint64_t ownerGeneration = 0;
+        uint64_t traceRequest = 0;
     };
 
     struct PendingLocalAccess {
@@ -606,6 +614,7 @@ private:
         uint64_t ownerGeneration = 0;
         bool issued = false;
         bool cancelled = false;
+        std::vector<uint8_t> readData;
         std::vector<uint8_t> writeData;
         LocalReadCallback readCallback;
         LocalWriteCallback writeCallback;
@@ -651,8 +660,11 @@ private:
 
     bool localAccessValid(uint64_t addr, size_t length) const;
     void tryIssueLocalAccesses();
+    void enqueueBankedLocalAccess(uint64_t requestId);
+    void stepBankedLocalAccess();
     void issueLocalAccess(uint64_t requestId);
     uint64_t localAccessDelayCycles(size_t length) const;
+    void landControlledReadChunk(uint64_t requestId, uint64_t addr, const std::vector<uint8_t>& data);
     void completeDmaReadToLocalMemory(PendingDmaOp op,
                                       const std::vector<uint8_t>& data);
     void issueNextDmaLandingChunk(uint64_t landingTag);
@@ -660,6 +672,9 @@ private:
     void retryDmaLandingChunks();
     void finishDmaReadLanding(PendingDmaOp& op, bool ok);
 
+    std::unique_ptr<LocalGmBankScheduler> localBankScheduler_;
+    bool localBankTickScheduled_ = false;
+    TimeConverter* localCoreTC_ = nullptr;
     SST::Link* localAccessSelfLink_ = nullptr;
     TimeConverter* localAccessTC_ = nullptr;
     uint32_t localAccessBaseLatencyCycles_ = 1;

@@ -1,10 +1,12 @@
 # GM 请求接收间隔与返回延迟核查
 
-## 结论
+2026-10-16 补充：[GM 合理性与对齐方案](GM_ALIGNMENT_REVIEW_2026-10-16.md) 保留每 worker **2 MiB**，区分参考 SST 与 HDL，并提出入口/bank/返回资源共同有界的合同。`GOLEM_LOCAL_GM_MODEL=legacy` 保持历史合同；`banked` 启用已验收的 banked 实现，通用子组件兼容默认值仍为 legacy，正式 baseline runner 默认 banked。实现与验收见 [验证报告](GM_ALIGNMENT_VALIDATION_2026-10-16.md)，不能把两种模型的 cycle 差异作为软件优化收益。
 
-当前 GM 实现是**非流水请求服务模型**：请求可以连续入队，但每个端口只能有一个正在服务的请求；端口在请求返回时释放。因此启动间隔与服务延迟绑定。配置的 256 B/cycle 是传输项的速率，并不保证 256 B 小请求流能持续达到这个速率。
+## 历史 legacy 合同（以下为切换 banked 前的核查记录）
 
-源码和时序探针已确认模型行为。目前没有足以确认当前配置物理 SRAM 接口的 RTL/宏时序契约，因而**本次保留生产模型**。把启动间隔改成仅由传输长度决定，会改变既有性能假设，不能当成已经证实的 bug 修复或调度收益。
+legacy GM 实现是**非流水请求服务模型**：请求可以连续入队，但每个端口只能有一个正在服务的请求；端口在请求返回时释放。因此启动间隔与服务延迟绑定。配置的 256 B/cycle 是传输项的速率，并不保证 256 B 小请求流能持续达到这个速率。
+
+本节源码和时序探针确认的是旧模型行为。当时保留 legacy 供后续对照；2026-10-16 的 banked 实现已单独验证参考 RTL 仲裁、返回及数据语义，见页首报告。物理 SRAM 宏时序仍需实现数据支持。模型切换会改变性能假设，不能当成软件调度收益。
 
 ## 三个不同时间点
 
@@ -55,6 +57,7 @@ ready = next_port_free + L
 当前项目没有检出 HDL、SRAM 宏 `.lib` 或给出 GM 启动间隔的硬件时序规范。相邻 `/data/jjgong/RISC-V-CIM-Manycore-SST` 工程有 HDL 面积/功耗包：
 
 - `golem_gm_bank_cluster.sv` 的组合仲裁不等待上一响应，可每 cycle 授权一个请求到每个 bank；同 bank 同 cycle 的客户端请求冲突由固定优先级解决。
+- 每个 client 每周期最多提供一条 128 B line。worker top 的四个 client 中，WCP/DMA 是正常数据来源，debug 独立，第四路无效；8 banks 不等于八条活动入口，软件 RoCC/WCP/SFU 标签也不自动对应独立端口。
 - 仿真 SRAM wrapper 在时钟沿执行同步读；GM 将 grant 和读数据再经响应寄存器送出。若在 E0 沿接受请求，wrapper 数据在 E0 后更新，响应在 E1 后有效。这个边沿描述仅对应 `GOLEM_SRAM_SIM` 行为模型，不是已绑定 foundry 宏的物理时序。
 - 尽管 wrapper 为 1R1W，该 bank 仲裁每 cycle 仅选择一个请求，不能直接等同于当前 SST 的独立全局读写端口。
 - README 明确说明该 RTL 不是 SST 的 cycle-exact 替代。其 GM 为 512 KiB、8 banks、128 B line，当前投影配置 GM 为 2 MiB；因此不能直接移植吞吐数字。默认 SRAM wrapper 为 black box，还需宏绑定。

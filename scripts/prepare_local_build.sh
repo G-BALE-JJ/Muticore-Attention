@@ -27,6 +27,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKTREE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 ELEMENTS_SOURCE="$WORKTREE_ROOT/src/sst/elements"
 BUILD_ROOT="${1:-$WORKTREE_ROOT/build/sst-elements}"
+BUILD_ROOT="$(realpath -m "$BUILD_ROOT")"
+if [[ "$BUILD_ROOT" == "$WORKTREE_ROOT" ]]; then
+	echo "[ERROR] BUILD_ROOT must differ from the source worktree." >&2
+	exit 1
+fi
+# Also exclude a custom destination inside the worktree, even if it is not
+# named build/. Otherwise rsync can copy a previous destination into itself.
+BUILD_EXCLUDES=()
+if [[ "$BUILD_ROOT" == "$WORKTREE_ROOT/"* ]]; then
+	BUILD_EXCLUDES+=(--exclude="/${BUILD_ROOT#"$WORKTREE_ROOT/"}/")
+fi
 INSTALL_PREFIX="$WORKTREE_ROOT/install"
 SST_CORE_PREFIX="${SST_CORE_PREFIX:-/local/sstcore}"
 SST_DRAMSIM3_PREFIX="${SST_DRAMSIM3_PREFIX:-/local/packages/dramsim3}"
@@ -61,11 +72,13 @@ else
 	echo "[INFO] Preparing local build tree: $BUILD_ROOT"
 fi
 
-rsync -a \
+rsync -a --sparse \
+	"${BUILD_EXCLUDES[@]}" \
 	--exclude='.git/' \
 	--exclude='build/' \
 	--exclude='install/' \
 	--exclude='deps/' \
+	--exclude='results/' \
 	--exclude='autom4te.cache/' \
 	--exclude='config.log' \
 	--exclude='config.status' \

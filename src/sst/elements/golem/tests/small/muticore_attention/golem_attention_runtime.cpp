@@ -160,18 +160,20 @@ int main(int argc, char** argv) {
     if (argc >= 15 && std::strcmp(argv[14], "0") != 0 && !rope) return 1;
     const bool projection = argc >= 16 && std::strcmp(argv[15], "1") == 0;
     if (argc >= 16 && std::strcmp(argv[15], "0") != 0 && !projection) return 1;
-    constexpr uint32_t layer_count=GOLEM_DECODER_LAYERS ? GOLEM_DECODER_LAYERS : 1;
+    uint32_t layer_count=GOLEM_DECODER_LAYERS ? GOLEM_DECODER_LAYERS : 1;
     SST::Golem::DecoderMemoryLayout stack_layout;
     const SST::Golem::DecoderMemoryLayout* layout=nullptr;
     if (GOLEM_DECODER_LAYERS) {
         const char* configured=std::getenv("GOLEM_DECODER_LAYERS");
-        if (!projection || !configured || std::strtoul(configured,nullptr,10)!=layer_count) return 1;
+        if (!projection || !parse_positive_u32(configured,&layer_count) || layer_count>32) return 1;
         const char* vocab_env=std::getenv("GOLEM_DECODER_VOCAB");
         const char* stride_env=std::getenv("GOLEM_DECODER_NODE_BYTES");
         const uint32_t vocab=GOLEM_DECODER_LM_HEAD && vocab_env ? std::strtoul(vocab_env,nullptr,10):0;
         const uint64_t node_bytes=stride_env ? std::strtoull(stride_env,nullptr,10):SST::Golem::DecoderMemoryLayout::node_stride;
         if (GOLEM_DECODER_LM_HEAD && !vocab) return 1;
-        stack_layout=SST::Golem::makeDecoderMemoryLayout(kv_length,num_query_heads,num_kv_heads,head_dim,layer_count,GOLEM_DECODER_FINAL_NORM,vocab,node_bytes,GOLEM_DECODER_EMBEDDING);
+        const char* retain_env=std::getenv("GOLEM_DECODER_RETAIN_OUTPUTS");
+        const bool retain=retain_env && std::strcmp(retain_env,"1")==0;
+        stack_layout=SST::Golem::makeDecoderMemoryLayout(kv_length,num_query_heads,num_kv_heads,head_dim,layer_count,GOLEM_DECODER_FINAL_NORM,vocab,node_bytes,GOLEM_DECODER_EMBEDDING,retain);
         if (!stack_layout.valid || manager_query_rows!=kv_length/4) return 1;
         layout=&stack_layout;
         q_offset=layout->q; k_offset=layout->k; v_offset=layout->v; o_offset=layout->o;
@@ -461,7 +463,10 @@ int main(int argc, char** argv) {
             asm volatile(".insn r 0x0b, 7, 0x25, %0, %1, %2" : "=r"(status) : "r"(flag), "r"(completed_epoch) : "memory");
             if (status) return 1;
         }
-        std::printf("DECODER_LM_HEAD status=0 vocab=%u epoch=%llu token=%u\n",layout->vocab,(unsigned long long)completed_epoch,kv_length-1);
+        const char* logical_env=std::getenv("GOLEM_DECODER_LOGICAL_SEQUENCE");
+        uint32_t logical=kv_length;
+        if (logical_env && (!parse_positive_u32(logical_env,&logical) || logical>kv_length)) return 1;
+        std::printf("DECODER_LM_HEAD status=0 vocab=%u epoch=%llu token=%u\n",layout->vocab,(unsigned long long)completed_epoch,logical-1);
 #endif
     }
 #endif

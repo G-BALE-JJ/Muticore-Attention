@@ -12,6 +12,7 @@ import subprocess
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 GM_PROFILE = {
+    "GOLEM_LOCAL_GM_MODEL": "banked",
     "GOLEM_LOCAL_GM_BYTES_PER_CYCLE": "256",
     "GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES": "1",
     "GOLEM_LOCAL_GM_READ_PORTS": "1",

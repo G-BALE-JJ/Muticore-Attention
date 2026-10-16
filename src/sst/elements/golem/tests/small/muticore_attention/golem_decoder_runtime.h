@@ -52,8 +52,12 @@ static bool run_lm_head(uint32_t worker,uint32_t hidden,const SST::Golem::Decode
         d.epoch=layout.layers.size()+2+first/8192; d.rows=1;
         d.input_dim=hidden; d.output_dim=std::min(8192u,columns-first);
         d.manager=(worker-4)%4; d.lane=(worker-4)/4; d.output_tile_begin=first/64;
-        // Token S-1 belongs to the fourth data node; all workers read it.
-        d.input_addr=4*layout.hbm_node_stride+layout.final_output+255ull*hidden*2;
+        uint32_t logical=layout.sequence;
+        const char* logical_env=std::getenv("GOLEM_DECODER_LOGICAL_SEQUENCE");
+        if (logical_env) logical=std::strtoul(logical_env,nullptr,10);
+        if (!logical || logical>layout.sequence) return false;
+        const uint32_t rows=layout.sequence/4, token=logical-1;
+        d.input_addr=(1+uint64_t(token/rows))*layout.hbm_node_stride+layout.final_output+uint64_t(token%rows)*hidden*2;
         d.output_addr=(d.manager+1)*layout.hbm_node_stride+layout.lm_output+first*2;
         d.weights_offset=layout.lm_weight; d.node_stride=layout.hbm_node_stride;
         if (first+d.output_dim==columns)
@@ -68,9 +72,8 @@ static bool run_lm_head(uint32_t worker,uint32_t hidden,const SST::Golem::Decode
 static bool run_decoder(uint32_t worker,uint32_t rows,uint32_t hidden,uint32_t dim,uint64_t o_offset,
         const SST::Golem::DecoderMemoryLayout* layout=nullptr,uint32_t layer=0) {
     using namespace SST::Golem;
-    // This first integration preserves all Attention audit buffers at S=1024.
-    // Larger sequences require a new HBM allocator rather than silent overlap.
-    if (rows != 256 || hidden > 2048 || hidden % 256 || dim != 64) return false;
+    // Software pads to the existing 256-row per-node projection block.
+    if (!rows || rows%256 || hidden > 2048 || hidden % 256 || dim != 64) return false;
     const uint32_t manager=(worker-4)%4, lane=(worker-4)/4;
     const uint64_t stride=layout?layout->hbm_node_stride:SST::Golem::DecoderMemoryLayout::node_stride;
     const uint64_t node=uint64_t(manager+1)*stride;
@@ -83,12 +86,16 @@ static bool run_decoder(uint32_t worker,uint32_t rows,uint32_t hidden,uint32_t d
     const uint64_t norm=layout?layout->norm2:DEC_NORM, gate=layout?layout->gate:DEC_GATE;
     const uint64_t up=layout?layout->up:DEC_UP, act=layout?layout->act:DEC_ACT;
     const uint64_t gated=layout?layout->gated:DEC_GATED, down=layout?layout->down:DEC_DOWN;
+    const char* residual_env=std::getenv("GOLEM_DECODER_DOWN_RESIDUAL_FUSION");
+    const bool fuse_residual=residual_env && std::strcmp(residual_env,"1")==0;
     const auto issue=[&](DecoderOp op,uint32_t stage,uint32_t k,uint32_t n,uint64_t input,
         uint64_t input1,uint64_t output,uint64_t weights,uint32_t head,bool last) {
         DecoderOpDesc d{};
         d.magic=GOLEM_DECODER_OP_MAGIC; d.size_bytes=sizeof(d); d.op=static_cast<uint32_t>(op); d.stage=stage;
         d.epoch=layout?layer+1:1; d.rows=rows; d.input_dim=k; d.output_dim=n; d.manager=manager; d.lane=lane; d.head_dim=head;
         d.input_addr=node+input; d.input1_addr=(op==DecoderOp::Add || op==DecoderOp::Multiply || op==DecoderOp::RmsNorm || op==DecoderOp::SiluMultiply)?node+input1:0; d.output_addr=node+output;
+        if (op==DecoderOp::GateUpSiluMultiply || op==DecoderOp::GateUpSiluDown) d.input1_addr=input1;
+        if (op==DecoderOp::GateUpSiluDown && fuse_residual) d.residual_offset=static_cast<uint32_t>(h1);
         d.weights_offset=weights; d.node_stride=stride;
         d.completion_addr=last?node+(layout?layout->decoder_done:DEC_DONE)+lane*8:0;
         return submit_decoder_op(worker,d);
@@ -101,15 +108,26 @@ static bool run_decoder(uint32_t worker,uint32_t rows,uint32_t hidden,uint32_t d
     const uint32_t intermediate=4*hidden;
     const char* fusion_env=std::getenv("GOLEM_DECODER_SILU_MULTIPLY_FUSION");
     const bool fuse_silu=fusion_env && std::strcmp(fusion_env,"1")==0;
-    if (!issue(DecoderOp::RmsNorm,3,hidden,hidden,h1,l.gamma2,norm,0,0,false) ||
-        !issue(DecoderOp::Linear,4,hidden,intermediate,norm,0,gate,l.gate_weight,0,false) ||
-        !issue(DecoderOp::Linear,5,hidden,intermediate,norm,0,up,l.up_weight,0,false)) return false;
-    if (fuse_silu) {
-        if (!issue(DecoderOp::SiluMultiply,7,intermediate,intermediate,gate,up,gated,0,0,false)) return false;
-    } else if (!issue(DecoderOp::Silu,6,intermediate,intermediate,gate,0,act,0,0,false) ||
-        !issue(DecoderOp::Multiply,7,intermediate,intermediate,act,up,gated,0,0,false)) return false;
-    if (!issue(DecoderOp::Linear,8,intermediate,hidden,gated,0,down,l.down_weight,0,GOLEM_DECODER_STAGE==3)) return false;
-    if (GOLEM_DECODER_STAGE==3) return true;
+    const char* panel_env=std::getenv("GOLEM_DECODER_FFN_PANEL_FUSION");
+    const char* down_env=std::getenv("GOLEM_DECODER_FFN_DOWN_FUSION");
+    const bool fuse_down=down_env && std::strcmp(down_env,"1")==0;
+    const bool fuse_panels=fuse_down || (panel_env && std::strcmp(panel_env,"1")==0);
+    if (!issue(DecoderOp::RmsNorm,3,hidden,hidden,h1,l.gamma2,norm,0,0,false)) return false;
+    if (fuse_down) {
+        if (l.down_weight>UINT32_MAX || !issue(DecoderOp::GateUpSiluDown,4,hidden,intermediate,
+            norm,l.up_weight,fuse_residual?l.output:down,l.gate_weight,static_cast<uint32_t>(l.down_weight),GOLEM_DECODER_STAGE==3 || fuse_residual)) return false;
+    } else if (fuse_panels) {
+        if (!issue(DecoderOp::GateUpSiluMultiply,4,hidden,intermediate,norm,l.up_weight,gated,l.gate_weight,0,false)) return false;
+    } else {
+        if (!issue(DecoderOp::Linear,4,hidden,intermediate,norm,0,gate,l.gate_weight,0,false) ||
+            !issue(DecoderOp::Linear,5,hidden,intermediate,norm,0,up,l.up_weight,0,false)) return false;
+        if (fuse_silu) {
+            if (!issue(DecoderOp::SiluMultiply,7,intermediate,intermediate,gate,up,gated,0,0,false)) return false;
+        } else if (!issue(DecoderOp::Silu,6,intermediate,intermediate,gate,0,act,0,0,false) ||
+            !issue(DecoderOp::Multiply,7,intermediate,intermediate,act,up,gated,0,0,false)) return false;
+    }
+    if (!fuse_down && !issue(DecoderOp::Linear,8,intermediate,hidden,gated,0,down,l.down_weight,0,GOLEM_DECODER_STAGE==3)) return false;
+    if (GOLEM_DECODER_STAGE==3 || (fuse_down && fuse_residual)) return true;
     return issue(DecoderOp::Add,9,hidden,hidden,down,h1,l.output,0,0,true);
 }
 #endif

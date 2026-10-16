@@ -2,12 +2,12 @@
 #include <cstdio>
 #include <cstdlib>
 int main(int argc,char** argv) {
-    if (argc<6 || argc>10) return 1;
+    if (argc<6 || argc>11) return 1;
     auto m=SST::Golem::makeDecoderMemoryLayout(std::atoi(argv[1]),std::atoi(argv[2]),
         std::atoi(argv[3]),std::atoi(argv[4]),std::atoi(argv[5]),argc>=7 && std::atoi(argv[6])==1,
         argc>=8 ? std::strtoul(argv[7],nullptr,10):0,
         argc>=9 ? std::strtoull(argv[8],nullptr,10):SST::Golem::DecoderMemoryLayout::node_stride,
-        argc==10 && std::atoi(argv[9])==1);
+        argc>=10 && std::atoi(argv[9])==1,argc>=11 && std::atoi(argv[10])==1);
     if (!m.valid) { std::fprintf(stderr,"decoder tensors/weights exceed supported HBM layout (used=%llu)\n",(unsigned long long)m.used_bytes); return 2; }
     std::printf("{\"node_stride\":%llu,\"gm_stride\":%llu,\"used_bytes\":%llu,\"shared\":{",(unsigned long long)m.hbm_node_stride,(unsigned long long)m.gm_stride,(unsigned long long)m.used_bytes);
 #define FIELD(n) std::printf("\"" #n "\":%llu,",(unsigned long long)m.n)

@@ -3,16 +3,26 @@
 #include <cstdint>
 namespace SST { namespace Golem {
 constexpr uint32_t GOLEM_DECODER_OP_MAGIC = 0x44454331;
-enum class DecoderOp : uint32_t { Linear = 1, Add = 2, RmsNorm = 3, Silu = 4, Multiply = 5, Embedding = 6, SiluMultiply = 7 };
+enum class DecoderOp : uint32_t { Linear = 1, Add = 2, RmsNorm = 3, Silu = 4, Multiply = 5, Embedding = 6, SiluMultiply = 7, GateUpSiluMultiply = 8, GateUpSiluDown = 9 };
 // FP16 storage and arithmetic contract; 64-row/64-column linear tiles. Weights
 // are output-tile striped across four HBM nodes, never replicated in full GM.
 struct DecoderOpDesc {
     uint32_t magic, size_bytes, op, stage;
     uint32_t rows, input_dim, output_dim, lane;
-    uint32_t manager, head_dim, epoch, output_tile_begin;
+    uint32_t manager;
+    union { uint32_t head_dim; uint32_t down_weights_offset; };
+    uint32_t epoch;
+    union { uint32_t output_tile_begin; uint32_t residual_offset; };
     uint64_t input_addr, input1_addr, output_addr, weights_offset;
     uint64_t node_stride, completion_addr;
 };
+// GateUpSiluMultiply: input_addr is Norm2, output_addr is gated;
+// weights_offset/input1_addr are gate/up weight offsets within each HBM node.
+// GateUpSiluDown additionally uses down_weights_offset (byte offset, <=UINT32_MAX).
+// output_dim remains the gate/up width; final output_addr has input_dim columns.
+// For op9 only, nonzero residual_offset selects an existing HBM residual tensor
+// in the worker's node. Add via the existing SFU before the final output DMA.
+// Reuses the otherwise-unused column offset; descriptor size/opcodes unchanged.
 static_assert(sizeof(DecoderOpDesc) == 96, "decoder ABI size");
 constexpr uint64_t DEC_WO_WEIGHT = 0x02800000ull;
 constexpr uint64_t DEC_GATE_WEIGHT = 0x03000000ull;

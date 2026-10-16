@@ -52,6 +52,11 @@ branch_arith_cycles = int(os.getenv("VANADIS_BRANCH_ARITH_CYCLES", 2))
 
 cpu_clock = os.getenv("VANADIS_CPU_CLOCK", "2.3GHz")
 gm_trans_latency = os.getenv("GOLEM_GM_TRANS_LATENCY", "30ns")
+local_gm_model = os.getenv("GOLEM_LOCAL_GM_MODEL", "legacy")
+local_gm_banks = int(os.getenv("GOLEM_LOCAL_GM_BANKS", "8"))
+local_gm_line_bytes = int(os.getenv("GOLEM_LOCAL_GM_LINE_BYTES", "128"))
+local_gm_response_cycles = int(os.getenv("GOLEM_LOCAL_GM_RESPONSE_CYCLES", "1"))
+local_gm_response_capacity = int(os.getenv("GOLEM_LOCAL_GM_RESPONSE_CAPACITY", "32"))
 local_gm_base_latency_cycles = int(os.getenv("GOLEM_LOCAL_GM_BASE_LATENCY_CYCLES", "1"))
 local_gm_bytes_per_cycle = int(os.getenv("GOLEM_LOCAL_GM_BYTES_PER_CYCLE", "64"))
 local_gm_read_ports = int(os.getenv("GOLEM_LOCAL_GM_READ_PORTS", "1"))
@@ -1084,6 +1089,11 @@ class CPU_Builder:
                 "dma_burst_bytes": gm_dma_burst_bytes,
                 "globalMemTransLatency": gm_trans_latency,
                 "local_access_clock": cpu_clock,
+                "local_access_model": local_gm_model,
+                "local_access_banks": local_gm_banks,
+                "local_access_line_bytes": local_gm_line_bytes,
+                "local_access_response_cycles": local_gm_response_cycles,
+                "local_access_response_capacity": local_gm_response_capacity,
                 "local_access_base_latency_cycles": local_gm_base_latency_cycles,
                 "local_access_bytes_per_cycle": local_gm_bytes_per_cycle,
                 "local_access_read_ports": local_gm_read_ports,

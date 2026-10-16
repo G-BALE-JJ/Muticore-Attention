@@ -44,6 +44,23 @@ struct GlobalMemoryAPI {
  uint16_t bytes_dummy=0;
 };
 struct WorkerCommandProcessorAPI {
+ bool partialOwned=false;std::vector<uint8_t> partial;uint64_t partialWriteReady=0;
+ bool beginProjectionPartialBuffer(size_t bytes) {
+  if(partialOwned || bytes>1048576)return false;partialOwned=true;partial.resize(bytes);return true;
+ }
+ bool writeProjectionPartial(uint64_t offset,const std::vector<uint8_t>& data,uint64_t cycle,uint64_t& ready) {
+  assert(partialOwned && offset+data.size()<=partial.size());
+  std::copy(data.begin(),data.end(),partial.begin()+offset);ready=cycle+(data.size()+255)/256+31;partialWriteReady=ready;return true;
+ }
+ bool readProjectionPartial(uint64_t offset,size_t size,uint64_t cycle,std::vector<uint8_t>& data,uint64_t& ready) {
+  assert(partialOwned && offset+size<=partial.size());data.assign(partial.begin()+offset,partial.begin()+offset+size);
+  ready=std::max(cycle,partialWriteReady)+(size+255)/256+31;return true;
+ }
+ void endProjectionPartialBuffer() {assert(partialOwned);partialOwned=false;}
+ bool writeGemmOutputGroupClassAsync(const std::vector<uint32_t>& a,const std::vector<double>& values,size_t,
+  AttentionClusterTrafficClass,uint64_t tag,uint64_t cycle,std::function<void(bool,uint64_t)> cb) {
+  assert(values.size()==a.size()*64 && cycle>=partialWriteReady);output=values;cb(true,tag);return true;
+ }
  std::vector<double> matrix,input,output;std::vector<size_t> active;
  bool isBusy() {return false;}
  bool programGemmMatrixGroupClassBankAsync(const std::vector<uint32_t>& a,uint32_t,const std::vector<double>& v,size_t,

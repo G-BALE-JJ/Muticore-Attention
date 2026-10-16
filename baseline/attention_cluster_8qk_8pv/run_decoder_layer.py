@@ -79,15 +79,15 @@ def prepare(case, hidden):
     return path
 
 
-def read_bands(case, offset, width, heads=0):
+def read_bands(case, offset, width, heads=0, rows=256):
     pieces=[]
     for node in range(1,5):
         path=case/'hbm'/f'hbm_out_node{node}.bin'
         with path.open('rb') as f:
-            f.seek(offset); data=np.frombuffer(f.read(256*width*2),dtype='<f2').copy()
-        if data.size!=256*width: raise ValueError(f'short HBM output: {path}')
-        if heads: data=data.reshape(heads,256,width//heads).transpose(1,0,2).reshape(256,width)
-        else: data=data.reshape(256,width)
+            f.seek(offset); data=np.frombuffer(f.read(rows*width*2),dtype='<f2').copy()
+        if data.size!=rows*width: raise ValueError(f'short HBM output: {path}')
+        if heads: data=data.reshape(heads,rows,width//heads).transpose(1,0,2).reshape(rows,width)
+        else: data=data.reshape(rows,width)
         pieces.append(data)
     return np.concatenate(pieces)
 
@@ -102,7 +102,7 @@ def storage_half(values):
     return values.astype('<f2')
 
 
-def linear_reference(x, w):
+def sparse_linear_reference(x, w):
     """Independent sparse reference to array FP16 products, dot and tile accumulation."""
     result=np.zeros((len(x),len(w)),dtype='<f2')
     for output,row in enumerate(w):
@@ -114,6 +114,21 @@ def linear_reference(x, w):
                 dot=storage_half(dot.astype(np.float32)+product.astype(np.float32))
             result[:,output]=storage_half(result[:,output].astype(np.float32)+dot.astype(np.float32))
     return result
+
+
+def linear_reference(x, w):
+    """Use the independent scalar host oracle for dense numerical stress."""
+    if x.ndim!=2 or w.ndim!=2 or x.shape[1]!=w.shape[1] or x.shape[1]%64:
+        raise ValueError('linear reference shape mismatch')
+    if np.count_nonzero(w)>len(w)*8:
+        import struct
+        from dense_reference import executable
+        result=subprocess.run([str(executable())],input=struct.pack('<III',len(x),len(w),x.shape[1])+
+                              np.asarray(x,dtype='<f2').tobytes()+np.asarray(w,dtype='<f2').tobytes(),
+                              capture_output=True,check=True).stdout
+        if len(result)!=len(x)*len(w)*2:raise ValueError('short dense reference output')
+        return np.frombuffer(result,dtype='<f2').reshape(len(x),len(w))
+    return sparse_linear_reference(x,w)
 
 
 def verify(case, hidden, heads, stage):

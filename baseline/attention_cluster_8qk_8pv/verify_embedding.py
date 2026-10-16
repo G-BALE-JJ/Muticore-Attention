@@ -9,13 +9,14 @@ def verify_embedding(case,m,log,begin,lm_head):
     from run_decoder_stack import fields,compare
     from analyze_resource_timeline import FIELDS,merged
     layout=m['layout'];emb=layout['embedding'];stride=layout['node_stride'];hidden=m['hidden'];vocab=layout['lm_head']['vocab']
+    sequence=m.get('sequence',1024);logical=m.get('logical_sequence',sequence);rows=sequence//4;groups=sequence//1024
     tokens=np.fromfile(case/'input_token_ids.bin',dtype='<u4')
-    if len(tokens)!=1024 or np.any(tokens>=vocab):raise ValueError('invalid embedding token IDs')
+    if len(tokens)!=sequence or np.any(tokens>=vocab):raise ValueError('invalid embedding token IDs')
     table=np.load(case/'embedding_weight.npy',mmap_mode='r')
     if table.shape!=(vocab,hidden):raise ValueError('embedding table shape mismatch')
-    want=table[tokens];got=read_bands(case,emb['output'],hidden)
+    want=table[tokens];got=read_bands(case,emb['output'],hidden,rows=rows)
     numerical=compare(got,want,0,'embedding gather')
-    compare(np.fromfile(case/'projection_x.bin',dtype='<f2').reshape(1024,hidden),want,0,'embedding input oracle')
+    compare(np.fromfile(case/'projection_x.bin',dtype='<f2').reshape(sequence,hidden),want,0,'embedding input oracle')
     flags={node*stride+emb['done']+lane*8 for node in range(1,5) for lane in range(4)}
     ops=[];resets=[]
     with log.open() as stream:
@@ -39,7 +40,7 @@ def verify_embedding(case,m,log,begin,lm_head):
             e={k:int(v) for k,v in FIELDS.findall(line) if k not in ('domain','resource')}
             if 'resource=dma_read_transport ' in line and e['start_tick']>=begin[1]:
                 node=e['address']//stride;offset=e['address']%stride
-                if 1<=node<=4 and emb['output']<=offset<emb['output']+256*hidden*2:
+                if 1<=node<=4 and emb['output']<=offset<emb['output']+rows*hidden*2:
                     first_decoder=e['start_tick'] if first_decoder is None else min(first_decoder,e['start_tick'])
             if e['core'] not in states:continue
             state=states[e['core']];op=state['op']
@@ -48,7 +49,7 @@ def verify_embedding(case,m,log,begin,lm_head):
             node=1+(e['core']-4)%4;lane=(e['core']-4)//4
             address=e['address'];stop=address+e['bytes']
             if 'resource=dma_read_transport ' in line:
-                if address==node*stride+emb['tokens']+lane*64*4 and e['bytes']==256:
+                if any(address==node*stride+emb['tokens']+(block*256+lane*64)*4 and e['bytes']==256 for block in range(groups)):
                     state['tokens'].append((address,stop))
                     first_tokens=e['start_tick'] if first_tokens is None else min(first_tokens,e['start_tick'])
                 else:state['weights'].append((address,stop))
@@ -56,13 +57,13 @@ def verify_embedding(case,m,log,begin,lm_head):
                 if address==node*stride+emb['done']+lane*8 and e['bytes']==8:state['flags'].append(e)
                 else:state['outputs'].append((address,stop));state['last_output']=max(state['last_output'],e['done_tick'])
     for core,state in states.items():
-        node=1+(core-4)%4;lane=(core-4)//4;owned=tokens[(node-1)*256+lane*64:(node-1)*256+(lane+1)*64]
+        node=1+(core-4)%4;lane=(core-4)//4;owned=np.concatenate([tokens[(node-1)*rows+block*256+lane*64:(node-1)*rows+block*256+(lane+1)*64] for block in range(groups)])
         wanted=Counter(((1+int(token)%4)*stride+emb['weight']+(int(token)//4)*hidden*2,
                         (1+int(token)%4)*stride+emb['weight']+(int(token)//4+1)*hidden*2) for token in owned)
-        base=node*stride+emb['output']+lane*64*hidden*2
-        if len(state['tokens'])!=1 or Counter(state['weights'])!=wanted or merged(state['outputs'])!=[(base,base+64*hidden*2)] or sum(b-a for a,b in state['outputs'])!=64*hidden*2:
+        wanted_outputs=[(node*stride+emb['output']+(block*256+lane*64)*hidden*2,node*stride+emb['output']+(block*256+(lane+1)*64)*hidden*2) for block in range(groups)]
+        if len(state['tokens'])!=groups or Counter(state['weights'])!=wanted or merged(state['outputs'])!=merged(wanted_outputs) or sum(b-a for a,b in state['outputs'])!=groups*64*hidden*2:
             raise ValueError('embedding token/weight/output DMA coverage mismatch')
-        if state['op']['hbm_read']!=256+64*hidden*2 or state['op']['hbm_write']!=64*hidden*2+8:
+        if state['op']['hbm_read']!=groups*(256+64*hidden*2) or state['op']['hbm_write']!=groups*64*hidden*2+8:
             raise ValueError('embedding traffic mismatch')
         if len(state['flags'])!=1 or not state['last_output']<=state['flags'][0]['start_tick']<=state['flags'][0]['done_tick']<=state['op']['tick']:
             raise ValueError('embedding completion before output ACK')
@@ -74,12 +75,12 @@ def verify_embedding(case,m,log,begin,lm_head):
             stream.seek(emb['done']);values=np.frombuffer(stream.read(32),dtype='<u8')
             if len(values)!=4 or not np.all(values==1):raise ValueError('embedding completion flag mismatch')
     stdout='\n'.join(p.read_text() for p in (case/'stdout').rglob('stdout-*'))
-    if re.findall(r'DECODER_EMBEDDING status=(\d+) tokens=(\d+) hidden=(\d+) vocab=(\d+)',stdout)!=[('0','1024',str(hidden),str(vocab))]:
+    if re.findall(r'DECODER_EMBEDDING status=(\d+) tokens=(\d+) hidden=(\d+) vocab=(\d+)',stdout)!=[('0',str(sequence),str(hidden),str(vocab))]:
         raise ValueError('embedding root completion missing/failed')
-    return {'status':'PASS','tokens':1024,'hidden':hidden,'vocab':vocab,'numerics':numerical,'workers':16,
+    return {'status':'PASS','tokens':logical,'executed_tokens':sequence,'hidden':hidden,'vocab':vocab,'numerics':numerical,'workers':16,
         'reset_ack_count':16,'first_token_ids_dma_tick':first_tokens,'last_embedding_output_ack_tick':last_output,
         'last_worker_completion_tick':last_done,'first_decoder_input_dma_tick':first_decoder,
-        'input_token_bytes':4096,'table_read_bytes':1024*hidden*2,'output_ack_bytes':1024*hidden*2,
+        'input_token_bytes':sequence*4,'table_read_bytes':sequence*hidden*2,'output_ack_bytes':sequence*hidden*2,
         'embedding_cycles':(last_output-first_tokens)/1000,'handoff_cycles':(first_decoder-last_output)/1000,
         'end_to_end_cycles':(lm_head['last_logits_ack_tick']-first_tokens)/1000,
         'contract':'first token-ID DMA send to last-token logits final output DMA ACK'}

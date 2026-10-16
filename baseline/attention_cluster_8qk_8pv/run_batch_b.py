@@ -43,7 +43,7 @@ def cases_for(suite):
 def environment(case, factors, oracle, sequence, stage, origin=None):
     i, w, g = factors
     # Do not inherit experimental GOLEM switches from the caller's shell.
-    env = {k: v for k, v in os.environ.items() if not k.startswith('GOLEM_')}
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GOLEM_') or k in ('GOLEM_ARTIFACT_POLICY','GOLEM_ARTIFACT_MIN_FREE_GIB')}
     env.update(GM_PROFILE)
     env.update(BEST)
     env.update({

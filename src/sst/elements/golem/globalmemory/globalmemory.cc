@@ -102,6 +102,22 @@ GlobalMemoryImplement::GlobalMemoryImplement(ComponentId_t id, Params& params)
         output->fatal(CALL_INFO, -1,
                       "GlobalMemory local-access parameters must be positive\n");
     }
+    const std::string localModel = params.find<std::string>("local_access_model", "legacy");
+    if (localModel == "banked") {
+        LocalGmBankScheduler::Config c;
+        c.banks = params.find<uint32_t>("local_access_banks", 8);
+        c.lineBytes = params.find<uint32_t>("local_access_line_bytes", 128);
+        c.responseCycles = params.find<uint32_t>("local_access_response_cycles", 1);
+        c.responseCapacity = params.find<uint32_t>("local_access_response_capacity", 32);
+        c.requestCapacity = localAccessQueueDepth_;
+        try { localBankScheduler_.reset(new LocalGmBankScheduler(c)); }
+        catch (const std::exception& e) { output->fatal(CALL_INFO, -1, "%s\n", e.what()); }
+        if (size % (uint64_t(c.banks) * c.lineBytes) != 0)
+            output->fatal(CALL_INFO, -1, "GM size must contain complete bank rows\n");
+        localCoreTC_ = getTimeConverter(getCoreTimeBase());
+    } else if (localModel != "legacy") {
+        output->fatal(CALL_INFO, -1, "Unknown local_access_model: %s\n", localModel.c_str());
+    }
     dma_read_retry_ticks = params.find<uint32_t>("dma_read_retry_ticks", 96);
     dma_read_max_retries = params.find<uint32_t>("dma_read_max_retries", 8);
     dma_read_max_inflight = params.find<uint32_t>("dma_read_max_inflight", 8);
@@ -349,6 +365,8 @@ void GlobalMemoryImplement::ctrlRegisterPendingReadRequest(uint64_t requestId, u
     pending.total_len = totalLength;
     pending.received_len = 0;
     pending.submit_cycle = getCurrentSimCycle();
+    pending.ownerGeneration = attentionClusterEnable_ ? attentionGenerationFence_.active() : 0;
+    pending.traceRequest = nextTraceDmaRequest_++;
     request_pending[requestId] = pending;
     output->verbose(CALL_INFO, 1, 2,
                     "ctrlRegisterPendingReadRequest: core=%d req=%" PRIu64 " dst=0x%" PRIx64
@@ -548,6 +566,14 @@ void GlobalMemoryImplement::get_dma_flag_addrs(bool is_write, uint8_t read_slot,
 
 void GlobalMemoryImplement::wr_to_globalmem(uint64_t wr_addr, size_t length, const std::vector<uint8_t>& wr_data)
 {
+    // Descriptor/status control page is a functional control-plane interface.
+    // Trace all accesses outside it; full-run audit rejects untimed tensor data.
+    if (wr_addr < baseAddr || wr_addr - baseAddr >= 0x8000 ||
+        length > 0x8000 - (wr_addr - baseAddr)) {
+        traceResourceInterval("gm", "untimed_write", core_id, 0, 0, 0,
+            getCurrentSimCycle(), getCurrentSimCycle(), getCurrentSimCycle(), getCurrentSimCycle(),
+            length, 0, wr_addr, -1, -1, true);
+    }
     // 确保写入地址和长度在本地存储范围内
     output->verbose(CALL_INFO, 3, 2,
                 "wr_to_globalmem: core %d writing addr=0x%" PRIx64 " len=%zu\n"
@@ -577,6 +603,14 @@ void GlobalMemoryImplement::wr_to_globalmem(uint64_t wr_addr, size_t length, con
 
 void GlobalMemoryImplement::rd_from_globalmem(uint64_t rd_addr, size_t length, std::vector<uint8_t>& rd_data)
 {
+    // Descriptor/status control page is a functional control-plane interface.
+    // Trace all accesses outside it; full-run audit rejects untimed tensor data.
+    if (rd_addr < baseAddr || rd_addr - baseAddr >= 0x8000 ||
+        length > 0x8000 - (rd_addr - baseAddr)) {
+        traceResourceInterval("gm", "untimed_read", core_id, 0, 0, 0,
+            getCurrentSimCycle(), getCurrentSimCycle(), getCurrentSimCycle(), getCurrentSimCycle(),
+            length, 0, rd_addr, -1, -1, true);
+    }
     // 确保读取地址和长度在本地存储范围内
     output->verbose(CALL_INFO, 3, 2,
                 "rd_from_globalmem: core %d reading addr=0x%" PRIx64 " len=%zu, "
@@ -626,7 +660,8 @@ bool GlobalMemoryImplement::localReadAsync(uint64_t addr,
     request.readCallback = std::move(cb);
     const uint64_t requestId = request.requestId;
     localAccessPending_.emplace(requestId, std::move(request));
-    localReadQueue_.push_back(requestId);
+    if (localBankScheduler_) enqueueBankedLocalAccess(requestId);
+    else localReadQueue_.push_back(requestId);
     ++localReadRequests_;
 
     const uint64_t depth = localAccessPending_.size();
@@ -664,7 +699,8 @@ bool GlobalMemoryImplement::localWriteAsync(uint64_t addr,
     request.writeCallback = std::move(cb);
     const uint64_t requestId = request.requestId;
     localAccessPending_.emplace(requestId, std::move(request));
-    localWriteQueue_.push_back(requestId);
+    if (localBankScheduler_) enqueueBankedLocalAccess(requestId);
+    else localWriteQueue_.push_back(requestId);
     ++localWriteRequests_;
 
     const uint64_t depth = localAccessPending_.size();
@@ -716,8 +752,63 @@ void GlobalMemoryImplement::issueLocalAccess(uint64_t requestId)
                                new LocalMemoryAccessEvent(requestId));
 }
 
+void GlobalMemoryImplement::enqueueBankedLocalAccess(uint64_t requestId)
+{
+    auto& r = localAccessPending_.at(requestId);
+    if (r.kind == PendingLocalAccess::Kind::Read) r.readData.resize(r.length);
+    const uint64_t eligible = localAccessTC_->convertFromCoreTime(getCurrentSimCycle()) + 1;
+    if (!localBankScheduler_->enqueue(r.client == LocalMemoryClient::Dma ? 1 : 0,
+            {requestId, r.addr - baseAddr, r.length, eligible}))
+        output->fatal(CALL_INFO, -1, "GM bounded API/beat queues disagree\n");
+}
+
+void GlobalMemoryImplement::stepBankedLocalAccess()
+{
+    localBankTickScheduled_ = false;
+    const uint64_t cycle = localAccessTC_->convertFromCoreTime(getCurrentSimCycle());
+    auto grants = localBankScheduler_->step(cycle);
+    for (const auto& g : grants) {
+        auto& r = localAccessPending_.at(g.id);
+        if (!r.issued) {
+            r.issued = true;
+            r.serviceStartTick = getCurrentSimCycle();
+            const uint64_t wait = r.serviceStartTick - r.submitCycle;
+            if (r.kind == PendingLocalAccess::Kind::Read) localReadQueueCycles_ += wait;
+            else localWriteQueueCycles_ += wait;
+        }
+        const bool valid = !r.cancelled && (r.ownerGeneration == 0 ||
+            attentionGenerationFence_.matches(r.ownerGeneration));
+        if (valid) {
+            if (r.kind == PendingLocalAccess::Kind::Read)
+                std::copy_n(storage.begin() + g.address, g.bytes, r.readData.begin() + g.offset);
+            else std::copy_n(r.writeData.begin() + g.offset, g.bytes, storage.begin() + g.address);
+        }
+        if (attentionClusterEnable_) {
+            auto& intervals = r.kind == PendingLocalAccess::Kind::Read ?
+                attentionClusterLocalReadIntervals_ : attentionClusterLocalWriteIntervals_;
+            if (!intervals.add(getCurrentSimCycle(), getCurrentSimCycle() +
+                    localAccessTC_->convertToCoreTime(1)))
+                output->fatal(CALL_INFO, -1, "Banked GM interval order violation\n");
+        }
+        if (g.last) localAccessSelfLink_->send(localBankScheduler_->config().responseCycles,
+            new LocalMemoryAccessEvent(g.id));
+    }
+    tryIssueLocalAccesses();
+}
+
 void GlobalMemoryImplement::tryIssueLocalAccesses()
 {
+    if (localBankScheduler_) {
+        if (!localBankTickScheduled_ && localBankScheduler_->busy()) {
+            localBankTickScheduled_ = true;
+            const uint64_t next = localAccessTC_->convertToCoreTime(
+                localAccessTC_->convertFromCoreTime(getCurrentSimCycle()) + 1);
+            // Align to a clock edge, independent of the submitting event phase.
+            localAccessSelfLink_->send(next - getCurrentSimCycle(), *localCoreTC_,
+                new LocalMemoryAccessEvent(std::numeric_limits<uint64_t>::max()));
+        }
+        return;
+    }
     while (localReadsInFlight_ < localAccessReadPorts_ && !localReadQueue_.empty()) {
         const uint64_t requestId = localReadQueue_.front();
         localReadQueue_.pop_front();
@@ -742,6 +833,10 @@ void GlobalMemoryImplement::handleLocalAccessEvent(Event* ev)
     const uint64_t requestId = accessEvent->requestId();
     delete accessEvent;
 
+    if (localBankScheduler_ && requestId == std::numeric_limits<uint64_t>::max()) {
+        stepBankedLocalAccess();
+        return;
+    }
     if (requestId == 0) {
         dmaLandingRetryScheduled_ = false;
         retryDmaLandingChunks();
@@ -775,8 +870,9 @@ void GlobalMemoryImplement::handleLocalAccessEvent(Event* ev)
         }
         std::vector<uint8_t> data;
         const uint64_t offset = request.addr - baseAddr;
-        data.assign(storage.begin() + offset,
-                    storage.begin() + offset + request.length);
+        if (localBankScheduler_) data = std::move(request.readData);
+        else data.assign(storage.begin() + offset,
+                         storage.begin() + offset + request.length);
         localReadBytes_ += request.length;
         tryIssueLocalAccesses();
         request.readCallback(true, request.tag, data);
@@ -792,11 +888,49 @@ void GlobalMemoryImplement::handleLocalAccessEvent(Event* ev)
         return;
     }
     const uint64_t offset = request.addr - baseAddr;
-    std::copy(request.writeData.begin(), request.writeData.end(),
-              storage.begin() + offset);
+    if (!localBankScheduler_)
+        std::copy(request.writeData.begin(), request.writeData.end(), storage.begin() + offset);
     localWriteBytes_ += request.length;
     tryIssueLocalAccesses();
     request.writeCallback(true, request.tag);
+}
+
+void GlobalMemoryImplement::landControlledReadChunk(
+    uint64_t requestId, uint64_t addr, const std::vector<uint8_t>& data)
+{
+    auto it = request_pending.find(requestId);
+    if (it == request_pending.end()) return;
+    const auto pending = it->second;
+    if (pending.ownerGeneration && !attentionGenerationFence_.matches(pending.ownerGeneration)) return;
+    PendingDmaLanding landing;
+    auto& op = landing.op;
+    op.kind = PendingDmaOp::READ_TO_GM;
+    op.request_id = requestId;
+    op.gm_dst_addr = pending.total_len ? addr : pending.gm_dst_addr;
+    op.length = data.size();
+    op.ownerGeneration = pending.ownerGeneration;
+    op.traceRequest = pending.traceRequest;
+    op.traceArrivalTick = getCurrentSimCycle();
+    op.cb = [this, requestId, pending, bytes=data.size()](bool ok) {
+        auto current = request_pending.find(requestId);
+        if (current == request_pending.end() || current->second.traceRequest != pending.traceRequest) return;
+        if (pending.ownerGeneration && !attentionGenerationFence_.matches(pending.ownerGeneration)) return;
+        if (!ok) output->fatal(CALL_INFO, -1, "Controlled DMA GM landing failed\n");
+        auto& r = current->second;
+        r.received_len += bytes;
+        if (r.total_len && r.received_len < r.total_len) return;
+        const uint64_t wait = getCurrentSimCycle() - r.submit_cycle;
+        ++request_read_submit_ready_samples;
+        request_read_submit_ready_cycles_sum += wait;
+        request_read_submit_ready_cycles_max = std::max(request_read_submit_ready_cycles_max, wait);
+        write_u64_to_storage(r.completion_flag_addr, r.completion_value);
+        request_pending.erase(current);
+        notifyCtrlReadComplete(requestId);
+    };
+    landing.data = data;
+    const uint64_t tag = nextLocalDmaTag_++;
+    pendingDmaLandings_.emplace(tag, std::move(landing));
+    issueNextDmaLandingChunk(tag);
 }
 
 void GlobalMemoryImplement::completeDmaReadToLocalMemory(
@@ -1373,6 +1507,22 @@ void GlobalMemoryImplement::finish() {
         localReadQueueCycles_,
         localWriteQueueCycles_,
         dmaLandingBackpressureRetries_);
+    if (localBankScheduler_) {
+        const auto& c = localBankScheduler_->config();
+        const auto& s = localBankScheduler_->stats();
+        output->output("GOLEM_LOCAL_GM_BANK_STATS core=%d capacity=%" PRIu64
+            " banks=%u line_bytes=%u response_cycles=%u response_capacity=%u"
+            " compute_beats=%" PRIu64 " dma_beats=%" PRIu64 " payload_bytes=%" PRIu64
+            " bank_conflict_cycles=%" PRIu64 " response_blocked_lane_cycles=%" PRIu64
+            " response_high_water=%" PRIu64 " pending=%zu queued=%zu\n",
+            core_id, size, c.banks, c.lineBytes, c.responseCycles, c.responseCapacity,
+            s.laneBeats[0], s.laneBeats[1], s.payloadBytes, s.bankConflictCycles,
+            s.responseBlockedLaneCycles, s.responseHighWater, localAccessPending_.size(),
+            localBankScheduler_->queued());
+        for (size_t bank = 0; bank < s.bankBeats.size(); ++bank)
+            output->output("GOLEM_LOCAL_GM_BANK_GRANTS core=%d bank=%zu beats=%" PRIu64 "\n",
+                core_id, bank, s.bankBeats[bank]);
+    }
     uint64_t avg_rtt_ticks = (dma_read_rtt_samples > 0)
                                  ? (dma_read_rtt_ticks_sum / dma_read_rtt_samples)
                                  : 0;
@@ -1682,6 +1832,12 @@ uint32_t GlobalMemoryImplement::cancelAttentionGeneration(uint64_t generation)
             ++cancelled;
         } else {
             ++it;
+        }
+    }
+    if (localBankScheduler_) {
+        for (auto it = request_pending.begin(); it != request_pending.end();) {
+            if (it->second.ownerGeneration == generation) { it = request_pending.erase(it); ++cancelled; }
+            else ++it;
         }
     }
     for (auto& item : localAccessPending_) {
@@ -2017,6 +2173,16 @@ bool GlobalMemoryImplement::handle_receives(int vn) {
                               req->src, static_cast<int>(ev->getType()));
             }
         };
+
+        if (localBankScheduler_ && request_pending.count(ev->getRequestId()) &&
+            (ev->getType() == NetworkDataEvent::WRITE ||
+             (ev->getType() == NetworkDataEvent::DMA_READ_COMPLETE &&
+              !dma_pending.count(ev->getRequestId())))) {
+            landControlledReadChunk(ev->getRequestId(), addr, ev->getData());
+            delete ev;
+            delete req;
+            continue;
+        }
 
         if (ev->getType() == NetworkDataEvent::WRITE) {
             // 处理 WRITE 类型请求: 将数据写入本地内存

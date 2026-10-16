@@ -30,18 +30,38 @@ struct DecoderMemoryLayout {
     static constexpr uint64_t projection_scratch = 0x8000;
     static constexpr uint64_t decoder_input_gm=0x10000;
     static constexpr uint64_t decoder_weight_gm=0x110000;
+    // op9 input is at most 64x2048 FP16. Reuse 8 KiB of the unused tail of
+    // its existing 1 MiB input arena for the residual epilogue, even while
+    // a later row group loads its input. No new SRAM or layout high-water.
+    static constexpr uint64_t decoder_epilogue_gm=decoder_input_gm+64*2048*2;
+    static_assert(decoder_epilogue_gm+8192<=decoder_weight_gm,"epilogue scratch overlaps weights");
     static constexpr uint64_t decoder_output_gm=0x112000;
     // Two bounded 64-row x 1024-column FP16 output panels. Input K=8192
     // remains in its existing 1 MiB slot; this does not enlarge worker SRAM.
     static constexpr uint64_t decoder_panel_bytes=64*1024*2;
+    // The physical layout reserves eight 8 KiB weight slots.  The runtime
+    // selects 2, 4, or 8 of them; reserving the maximum keeps all experiments
+    // on one ABI/layout and leaves the unused slots idle.
+    static constexpr uint64_t decoder_prefetch_slots=8;
     static constexpr uint64_t decoder_prefetch_gm=decoder_output_gm+2*decoder_panel_bytes;
-    static constexpr uint64_t decoder_required_gm=decoder_prefetch_gm+2*8192;
+    // Paired gate/up panels. Gated overwrites gate only after the SFU consumes
+    // that chunk; each pair is reusable only after all gated output ACKs.
+    static constexpr uint64_t decoder_ffn_up_gm=decoder_prefetch_gm+decoder_prefetch_slots*8192;
+    static constexpr uint64_t decoder_required_gm=decoder_ffn_up_gm+2*decoder_panel_bytes;
+    // Down weights have independent slots so an already-prefetched producer
+    // weight cannot be overwritten while the same arrays consume gated.
+    static constexpr uint64_t decoder_down_weight_gm=decoder_required_gm;
+    static constexpr uint64_t decoder_down_output_gm=decoder_down_weight_gm+decoder_prefetch_slots*8192;
+    static constexpr uint64_t decoder_down_required_gm=decoder_down_output_gm+2*decoder_panel_bytes;
+    static_assert(decoder_down_required_gm<=gm_stride,"fused down scratch exceeds worker GM");
+    static_assert(decoder_required_gm<=gm_stride,"decoder scratch exceeds worker GM");
     uint64_t activation[2]{}, projection_done=0, decoder_done=0;
     uint64_t norm1=0,q=0,k=0,v=0,o=0,q_panel=0,k_panel=0,v_panel=0,rope=0;
     uint64_t wo=0,h1=0,norm2=0,gate=0,up=0,act=0,gated=0,down=0,used_bytes=0;
     uint64_t final_gamma=0, final_output=0, final_done=0;
     uint64_t hbm_node_stride=node_stride, lm_weight=0, lm_output=0, lm_done=0;
     uint32_t vocab=0;
+    uint32_t sequence=0;
     uint64_t embedding_tokens=0,embedding_weight=0,embedding_output=0,embedding_done=0;
     bool valid=false;
     std::vector<DecoderLayerMemory> layers;
@@ -49,11 +69,12 @@ struct DecoderMemoryLayout {
 };
 inline DecoderMemoryLayout makeDecoderMemoryLayout(uint32_t sequence,
         uint32_t hq,uint32_t hkv,uint32_t dim,uint32_t count,bool final_norm=false,
-        uint32_t vocab=0,uint64_t node_bytes=DecoderMemoryLayout::node_stride,bool embedding=false) {
+        uint32_t vocab=0,uint64_t node_bytes=DecoderMemoryLayout::node_stride,bool embedding=false,
+        bool retain_outputs=false) {
     DecoderMemoryLayout m;
-    m.hbm_node_stride=node_bytes; m.vocab=vocab;
+    m.hbm_node_stride=node_bytes; m.vocab=vocab; m.sequence=sequence;
     const uint64_t hidden=uint64_t(hq)*dim, intermediate=4*hidden;
-    if (sequence!=1024 || dim!=64 || (hidden!=256 && hidden!=2048) ||
+    if (!sequence || sequence%1024 || sequence>8192 || dim!=64 || (hidden!=256 && hidden!=2048) ||
         !hkv || hq%hkv || !count || count>32 || (vocab && !final_norm) || (embedding && !vocab) || vocab>1048576 ||
         node_bytes<m.node_stride || (node_bytes & (node_bytes-1))) return m;
     const uint64_t qbytes=uint64_t(sequence/4)*hidden*2;
@@ -79,7 +100,8 @@ inline DecoderMemoryLayout makeDecoderMemoryLayout(uint32_t sequence,
     m.down=alloc("down",qbytes);
     for (uint32_t layer=0;layer<count;++layer) {
         DecoderLayerMemory l{};
-        l.input=m.activation[layer%2]; l.output=m.activation[(layer+1)%2];
+        l.input=retain_outputs && layer ? m.layers.back().output : m.activation[layer%2];
+        l.output=retain_outputs && layer ? alloc("retained_output",qbytes,layer+1) : m.activation[(layer+1)%2];
         l.gamma1=alloc("gamma1",hidden*2,layer+1);
         l.gamma2=alloc("gamma2",hidden*2,layer+1);
         // QKV weights are replicated; other linear weights stripe output tiles.

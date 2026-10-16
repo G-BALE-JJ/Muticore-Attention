@@ -10,6 +10,13 @@ RMSNORM_EXE := $(ARCH)/rmsnorm
 
 all: scale
 
+.PHONY: decoder-micro
+decoder-micro: $(ARCH)/decoder-micro/ffn
+
+$(ARCH)/decoder-micro/ffn: golem_decoder_micro.cpp golem_attention_runtime.h golem_decoder_runtime.h ../../../attention/decoderMemoryLayout.h ../../../attention/decoderOpAbi.h
+	mkdir -p $(dir $@)
+	$(CXX) $(CFLAGS) -static -no-pie -O2 -o $@ $<
+
 base:
 	$(MAKE) -C $(BASE_TEST_DIR) ARCH=$(ARCH)
 
@@ -61,3 +68,10 @@ decoder-lm-head:
 .PHONY: decoder-embedding
 decoder-embedding:
 	$(MAKE) ATTENTION_EXE=riscv64/$@/fused_attention CFLAGS="$(CFLAGS) -DGOLEM_GUEST_STARTUP_DIAGNOSTICS=0 -DGOLEM_DECODER_STAGE=4 -DGOLEM_DECODER_LAYERS=2 -DGOLEM_DECODER_FINAL_NORM=1 -DGOLEM_DECODER_LM_HEAD=1 -DGOLEM_DECODER_EMBEDDING=1" scale
+
+.PHONY: decoder-lm-micro
+decoder-lm-micro: $(ARCH)/decoder-lm-micro/lm
+
+$(ARCH)/decoder-lm-micro/lm: golem_decoder_lm_micro.cpp golem_attention_runtime.h golem_decoder_runtime.h ../../../attention/decoderMemoryLayout.h ../../../attention/decoderOpAbi.h
+	mkdir -p $(dir $@)
+	$(CXX) $(CFLAGS) -static -no-pie -O2 -o $@ $<
