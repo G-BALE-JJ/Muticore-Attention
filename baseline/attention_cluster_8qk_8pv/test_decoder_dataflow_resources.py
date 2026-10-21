@@ -3,10 +3,50 @@ import json
 import unittest
 from pathlib import Path
 
-from verify_decoder_dataflow_resources import verify, residual_audit
+from verify_decoder_dataflow_resources import verify, residual_audit, block_pipeline_audit, optimization_audit
 
 
 class DecoderDataflowResourceTests(unittest.TestCase):
+    def test_stream_and_handoff_require_real_capacity_drain_and_complete_pair(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);(root/'logs').mkdir();log=root/'logs/attention-sst.log'
+            (root/'provenance.json').write_text(json.dumps({'environment':{
+                'GOLEM_DECODER_FFN_SFU_STREAM':'1','GOLEM_DECODER_NORM_FFN_HANDOFF':'1'}}))
+            jobs={4:[dict(core=4,epoch=1,stage=3,op=3),dict(core=4,epoch=1,stage=4,op=9)]}
+            stream='[DECODER_SFU_STREAM] core=4 epoch=1 stage=4 enabled=1 contexts=2 chunk_elements=8192 high_water=2 io_compute_overlap=10 drained=1\n'
+            producer='[DECODER_NORM_HANDOFF] core=4 epoch=1 stage=3 producer=1 consumer=0 cache_bytes=262144 saved_hbm_read=0 materialized=1 capacity_added=0\n'
+            consumer='[DECODER_NORM_HANDOFF] core=4 epoch=1 stage=4 producer=0 consumer=1 cache_bytes=0 saved_hbm_read=262144 materialized=1 capacity_added=0\n'
+            good=stream+producer+consumer;log.write_text(good)
+            result,savings=optimization_audit(root,jobs,dict(hidden=2048,sequence=1024))
+            self.assertEqual(result['saved_hbm_read_bytes'],262144)
+            self.assertEqual(savings,{(4,1):262144})
+            for bad in (stream+consumer,good+producer,good.replace('high_water=2','high_water=3'),
+                        good.replace('drained=1','drained=0'),good.replace('saved_hbm_read=262144','saved_hbm_read=8192')):
+                log.write_text(bad)
+                with self.assertRaises(ValueError):optimization_audit(root,jobs,dict(hidden=2048,sequence=1024))
+
+    def test_block_pipeline_requires_complete_lifecycle_and_released_array_owner(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);(root/'logs').mkdir();log=root/'logs/attention-sst.log'
+            (root/'provenance.json').write_text(json.dumps({'environment':{
+                'GOLEM_DECODER_FFN_BLOCK_PIPELINE':'1','GOLEM_DECODER_FFN_PANEL_TILES':'16'}}))
+            jobs={4:[dict(core=4,epoch=1,stage=4,op=9)]}
+            good=('[DECODER_BLOCK_PIPELINE] core=4 epoch=1 stage=4 panels=8 both_active=100 '
+                  'producer_transfer_down_compute=20 down_transfer_producer_compute=30 '
+                  'arrays=64 contexts=1 extra_gm_capacity=0 owner_at_finish=0 pending_at_finish=0\n')
+            log.write_text(good)
+            self.assertEqual(block_pipeline_audit(root,jobs)['both_active_cycles'],100)
+            for bad in ('',good+good,good.replace('owner_at_finish=0','owner_at_finish=1'),
+                        good.replace('contexts=1','contexts=2'),good.replace('pending_at_finish=0','pending_at_finish=1')):
+                log.write_text(bad)
+                with self.assertRaises(ValueError):block_pipeline_audit(root,jobs)
+            (root/'provenance.json').write_text(json.dumps({'environment':{
+                'GOLEM_DECODER_FFN_BLOCK_PIPELINE':'1','GOLEM_DECODER_FFN_PIPELINE_POLICY':'1'}}))
+            log.write_text(good.strip()+' policy=1\n')
+            self.assertEqual(block_pipeline_audit(root,jobs)['status'],'PASS')
+            log.write_text(good.strip()+' policy=2\n')
+            with self.assertRaisesRegex(ValueError,'policy differs'):block_pipeline_audit(root,jobs)
+
     def test_residual_epilogue_lifecycle_rejects_missing_duplicate_and_wrong_traffic(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);(root/'logs').mkdir();log=root/'logs/attention-sst.log'

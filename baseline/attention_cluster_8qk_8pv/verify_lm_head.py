@@ -12,7 +12,11 @@ def verify_lm_head(case,m,log,final,timing):
     sequence=m.get('sequence',1024);logical=m.get('logical_sequence',sequence);base_epoch=m.get('layers',2)+2
     vocab=lm['vocab'];columns=((vocab+63)//64)*64;chunks=(columns+8191)//8192
     flags={node*stride+lm['done']+lane*8 for node in range(1,5) for lane in range(4)}
-    ops=[];resets=[]
+    ops=[];resets=[];resident_flows=[]
+    provenance=case/'decoder_stack_provenance.json'
+    env=json.loads(provenance.read_text()).get('environment',{}) if provenance.exists() else {}
+    resident=env.get('GOLEM_DECODER_LM_INPUT_RESIDENCY','0')=='1'
+    if resident!=bool(m.get('lm_input_residency',False)):raise ValueError('LM input residency manifest/config mismatch')
     with log.open() as stream:
         for line in stream:
             if '[DECODER_OP] event=done ' in line:
@@ -21,7 +25,12 @@ def verify_lm_head(case,m,log,final,timing):
             if '[DECODER_SYNC] event=flag_write_ack ' in line:
                 e=fields(line)
                 if e['address'] in flags:resets.append(e)
+            if '[LM_INPUT_RESIDENCY]' in line:resident_flows.append(fields(line))
     if len(ops)!=16*chunks:raise ValueError('LM head missing/duplicate worker chunks')
+    expected_keys={(e['core'],e['epoch']) for e in ops} if resident else set()
+    if len(resident_flows)!=len(expected_keys) or {(f['core'],f['epoch']) for f in resident_flows}!=expected_keys:
+        raise ValueError('LM input residency lifecycle missing/duplicate/unexpected')
+    resident_by_key={(f['core'],f['epoch']):f for f in resident_flows}
     for chunk in range(chunks):
         group=[e for e in ops if e['epoch']==base_epoch+chunk]
         if len(group)!=16 or {e['core'] for e in group}!=set(range(4,20)) or any(e['status'] or e['op']!=1 for e in group):
@@ -70,8 +79,13 @@ def verify_lm_head(case,m,log,final,timing):
         if (merged(state['writes'])!=merged(wanted_writes) or sum(b-a for a,b in state['writes'])!=len(tiles)*128 or
             merged(state['weight_reads'])!=merged(wanted_reads) or sum(b-a for a,b in state['weight_reads'])!=len(tiles)*hidden*128):
             raise ValueError('LM head incomplete/duplicate output or weight tile coverage')
-        if len(state['inputs'])!=int(bool(tiles)):raise ValueError('LM head must read exactly the last token, without padded rows')
-        expected_read=(hidden*2 if tiles else 0)+len(tiles)*hidden*128
+        hit=resident and chunk>0 and bool(tiles)
+        if resident:
+            f=resident_by_key[core,epoch]
+            if f['hit']!=int(hit) or f['saved_hbm_read']!=(hidden*2 if hit else 0) or f['capacity_added'] or f['status']:
+                raise ValueError('LM input residency ownership/bytes mismatch')
+        if len(state['inputs'])!=int(bool(tiles) and not hit):raise ValueError('LM head last-token read/cache-hit mismatch')
+        expected_read=(hidden*2 if tiles and not hit else 0)+len(tiles)*hidden*128
         expected_write=len(tiles)*128+(8 if chunk==chunks-1 else 0)
         if op['hbm_read']!=expected_read or op['hbm_write']!=expected_write:raise ValueError('LM head traffic mismatch')
         if len(state['flag_acks'])!=int(chunk==chunks-1):raise ValueError('LM head completion before last vocabulary chunk')

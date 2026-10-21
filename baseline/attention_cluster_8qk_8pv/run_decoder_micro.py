@@ -143,9 +143,13 @@ def check_numerics(case, inputs, m, workers, down, fused=0, residual=False):
 
 def timing(case, m, workers, fused, down, residual=False):
     log=case/'logs/attention-sst.log'
-    jobs=[]
+    jobs=[];shared={}
     for line in log.read_text().splitlines():
         if '[DECODER_OP] event=done' in line:jobs.append({k:int(v) for k,v in FIELDS.findall(line)})
+        if '[GEMM_WEIGHT_SHARE]' in line:
+            f={k:int(v) for k,v in FIELDS.findall(line)};key=f['core'],f['epoch']
+            if key in shared:raise ValueError('duplicate shared weight lifecycle')
+            shared[key]=f
     expected_stages={4:9} if fused>=2 else {4:8} if fused else {4:1,5:1,7:7}
     if down and fused<2:expected_stages[8]=1
     if residual and fused!=3:expected_stages[9]=2
@@ -158,12 +162,24 @@ def timing(case, m, workers, fused, down, residual=False):
     if len(completions)!=workers or set(completions)!=expected_completions:
         raise ValueError('missing/failed guest completion')
     hidden=m['hidden'];width=4*hidden;weights=hidden*width*2
+    if shared and (workers!=16 or fused!=3 or set(shared)!={(j['core'],j['epoch']) for j in jobs}):
+        raise ValueError('missing shared weight worker lifecycle')
     for j in jobs:
         stage=j['stage']
         if j['op']!=expected_stages[stage] or j['status']:raise ValueError('failed or wrong decoder op')
         expected_read={4:(3*weights+64*hidden*2 if fused>=2 else 2*weights+64*hidden*2 if fused else weights+64*hidden*2),
                        5:weights+64*hidden*2,7:2*64*width*2,8:weights+64*width*2,9:2*64*hidden*2}[stage]
         if fused==3 and stage==4:expected_read+=64*hidden*2
+        if shared:
+            f=shared[j['core'],j['epoch']];cohort=f['cohort']
+            if cohort not in (2,4):raise ValueError('invalid weight cohort')
+            leader=4+(j['core']-4)%4+((j['core']-4)//4//cohort)*cohort*4
+            if (f['leader']!=leader or f['slots']!=4 or f['released']!=1
+                or f['requests']!=3*weights//8192 or f['gm_write']!=3*weights
+                or (j['core']!=leader and (f['hbm_bytes'] or f['server_requests']))
+                or (j['core']==leader and f['server_requests']!=cohort*f['requests'])):
+                raise ValueError('shared weight dense work or release mismatch')
+            expected_read=expected_read-3*weights+f['hbm_bytes']
         expected_write=64*(hidden if stage in (8,9) or fused>=2 else width)*2
         if (j['hbm_read'],j['hbm_write'])!=(expected_read,expected_write):
             raise ValueError('missing dense weight/input traffic or extra output write')

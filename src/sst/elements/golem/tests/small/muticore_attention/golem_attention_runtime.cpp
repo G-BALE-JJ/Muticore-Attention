@@ -240,6 +240,11 @@ int main(int argc, char** argv) {
         if (manager_id==0) {
             // Previous layer wait covers every worker output and flag ACK.
             // Clear both flag sets before any manager releases new work.
+            const char* epoch_flags=std::getenv("GOLEM_DECODER_EPOCH_FLAGS");
+            // The first generation initializes poisoned flags. Subsequent
+            // generations use distinct exact-match epochs, and the root has
+            // already waited for every preceding output/completion ACK.
+            if(layer==0 || !epoch_flags || std::strcmp(epoch_flags,"1")!=0)
             for (uint32_t node=1;node<=4;++node)
             for (uint64_t offset : {layout->projection_done,layout->decoder_done})
             for (uint32_t lane=0;lane<4;++lane) {

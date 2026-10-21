@@ -5,6 +5,9 @@
 #include <sst/elements/golem/globalmemory/globalmemory.h>
 #include <sst/elements/golem/workercmdproc/workercmdproc.h>
 #include <sst/elements/golem/fp16.h>
+#include <sst/elements/golem/attention/reuseWindowGemm.h>
+#include <sst/elements/golem/attention/reuseWeightInterface.h>
+#include <sst/elements/golem/attention/softwareLayerResidency.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -17,8 +20,19 @@ namespace SST { namespace Golem {
 // drain while subsequent tiles compute; completion waits for every HBM ACK.
 class DecoderOpJob {
 public:
-    DecoderOpJob(GlobalMemoryAPI* gm, WorkerCommandProcessorAPI* wcp, SFUAPI* sfu)
-        : gm_(gm), wcp_(wcp), sfu_(sfu) {
+    DecoderOpJob(GlobalMemoryAPI* gm, WorkerCommandProcessorAPI* wcp, SFUAPI* sfu,ReuseWeightInterface* sharing=nullptr)
+        : gm_(gm), wcp_(wcp), sfu_(sfu), window_(gm,wcp), downWindow_(gm,wcp), sharing_(sharing) {
+        allGemmWindow_=option("GOLEM_ALL_GEMM_REUSE_WINDOW",0,0,1);
+        blockPipeline_=option("GOLEM_DECODER_FFN_BLOCK_PIPELINE",0,0,1);
+        pipelinePolicy_=option("GOLEM_DECODER_FFN_PIPELINE_POLICY",2,0,2);
+        reuseGamma_=option("GOLEM_DECODER_GAMMA_REUSE",0,0,1);
+        streamFfn_=option("GOLEM_DECODER_FFN_SFU_STREAM",0,0,1);
+        ffnChunkLimit_=option("GOLEM_DECODER_FFN_SFU_CHUNK",8192,1024,8192);
+        normHandoff_=option("GOLEM_DECODER_NORM_FFN_HANDOFF",0,0,1);
+        stageChain_=option("GOLEM_DECODER_GM_STAGE_CHAIN",0,0,1);
+        layerResidency_=option("GOLEM_DECODER_LAYER_RESIDENCY",0,0,1);
+        inputResidency_=option("GOLEM_DECODER_INPUT_RESIDENCY",0,0,1);
+        lmInputResidency_=option("GOLEM_DECODER_LM_INPUT_RESIDENCY",0,0,1);
         for (uint32_t i = 0; i < 64; ++i) arrays_.push_back(i);
         panelLimit_=option("GOLEM_DECODER_OUTPUT_PANEL_TILES",16,0,16);
         writeWindow_=option("GOLEM_DECODER_OUTPUT_WRITE_WINDOW",8,1,16);
@@ -51,8 +65,61 @@ public:
             gm_->getSize() < DecoderMemoryLayout::decoder_required_gm ||
             (d.op==9 && (!d.down_weights_offset || d.input_dim>2048 ||
                 gm_->getSize()<DecoderMemoryLayout::decoder_down_required_gm))) return false;
+        chainJob_=0;
+        if(stageChain_ && chainState_) {
+            const uint32_t expected=chainState_==1?2:chainState_==2?3:4;
+            const bool same=d.epoch==chainDesc_.epoch && d.manager==chainDesc_.manager &&
+                d.lane==chainDesc_.lane && d.rows==chainDesc_.rows && d.input_dim==chainDesc_.input_dim &&
+                d.node_stride==chainDesc_.node_stride && (expected==4 || d.output_dim==d.input_dim);
+            const bool match=expected==2?(d.op==2 && d.stage==2 && d.input_addr==chainDesc_.output_addr):
+                expected==3?(d.op==3 && d.stage==3 && d.input_addr==chainH1Address_):
+                (d.op==9 && d.stage==4 && d.input_addr==chainNormAddress_ &&
+                 d.residual_offset && (d.manager+1)*d.node_stride+d.residual_offset==chainH1Address_);
+            // A previous producer deliberately omitted HBM materialization.
+            // A mismatched consumer must never fall back to stale HBM.
+            if(!same || !match)return false;
+            chainJob_=expected;
+        } else if(stageChain_ && allGemmWindow_ && d.op==1 && d.stage==1 &&
+                  d.rows<=256 && d.lane*64<d.rows && d.input_dim<=2048 &&
+                  d.output_dim==d.input_dim && panelLimit_ && ffnLayout_==2 &&
+                  !normHandoff_ && !blockPipeline_ && !sharing_) {
+            chainJob_=1;chainDesc_=d;
+        }
+        chainReadSaved_=chainWriteSaved_=chainLocalBytes_=0;
+        layerProducer_=layerResidency_ && chainJob_==4;
+        layerConsumer_=layerResidency_ && stageChain_ && d.op==3 && d.stage==10 &&
+            d.rows<=256 && d.input_dim<=2048 && d.lane*64<d.rows;
+        layerResidualConsumer_=inputResidency_ && layerResidency_ && stageChain_ &&
+            chainJob_==2 && d.op==2 && d.stage==2 && d.rows<=256 &&
+            d.input_dim<=2048 && d.lane*64<d.rows;
+        layerPublished_=false;layerBytes_=layerSaved_=0;
+        layerResidualSaved_=0;
+        useLmInput_=lmInputResidency_ && lmInputValid_ && d.op==1 && d.stage==11 && d.rows==1 &&
+            d.input_addr==lmInputDesc_.input_addr && d.input_dim==lmInputDesc_.input_dim &&
+            d.manager==lmInputDesc_.manager && d.lane==lmInputDesc_.lane &&
+            d.epoch==lmInputDesc_.epoch+1 && d.output_tile_begin==lmInputDesc_.output_tile_begin+lmInputDesc_.output_dim/64;
+        lmInputValid_=false;lmInputSaved_=0;
+        residualCacheNext_=0;
         if (d.op==9 && !wcp_->beginProjectionPartialBuffer(64ull*d.input_dim*2)) return false;
+        useNormCache_=normHandoff_ && allGemmWindow_ && d.op==9 && normCacheValid_ &&
+            d.rows==normCacheDesc_.rows && d.input_dim==normCacheDesc_.input_dim &&
+            d.lane==normCacheDesc_.lane && d.manager==normCacheDesc_.manager &&
+            d.epoch==normCacheDesc_.epoch && d.input_addr==normCacheDesc_.output_addr;
+        normCacheValid_=false;
+        cacheNorm_=normHandoff_ && allGemmWindow_ && d.op==3 && d.stage==3 &&
+            d.rows<=256 && d.input_dim<=2048 && d.input_dim%64==0 && d.lane*64<d.rows;
+        if(cacheNorm_)normCacheDesc_=d;
+        normCacheWritten_=normCacheReadSaved_=0;
         d_ = d; singleRow_=d.rows==1 && d.op==1;
+        sharedWeights_=allGemmWindow_ && sharing_ && d.op==9;sharedAccounted_=false;
+        if(sharedWeights_)sharing_->begin(d.epoch);
+        if(blockPipeline_ && d.op==9 && (!allGemmWindow_ || ffnLayout_!=2 || sharedWeights_))
+            throw std::invalid_argument("FFN block pipeline requires private all-window layout2");
+        pipelineProducerBlock_=false;
+        arrayOwner_=0;arrayPreferred_=1;arrayWaiting_[0]=arrayWaiting_[1]=false;
+        downTask_={};pipelineWrite_.clear();pipelineWritePending_=false;pipelineProducerTransfers_=pipelineDownTransfers_=pipelineBothActive_=0;pipelinePasses_=0;
+        pipelineLeaseWait_=0;
+        gammaLoaded_=false;
         row_ = singleRow_ ? 0 : d.lane * 64; nt_ = kt_ = 0; active_ = true;
         status_ = 0; started_ = false; hbmRead_ = hbmWrite_ = localRead_ = localWrite_ = 0;
         panels_[0]=Panel{}; panels_[1]=Panel{}; panelIndex_=0; panelCount_=0;
@@ -70,6 +137,8 @@ public:
         ffnState_=FfnState::Idle; ffnConsumer_=0; ffnOffset_=0;
         ffnGateRead_=BackgroundRead{}; ffnUpRead_=BackgroundRead{};
         ffnWrite_.clear(); ffnWritePending_=false;
+        for(auto& chunk:ffnStream_)chunk=FfnChunk{};
+        ffnStreamOverlap_=ffnStreamHighWater_=0;
         ffnProduced_=ffnConsumed_=ffnChunks_=ffnOverlapCycles_=ffnSlotWaitCycles_=0;
         downActive_=false; downNextK_=0; downPartialReady_=0;
         downReady_[0]=downReady_[1]=false; downPanels_[0]=Panel{}; downPanels_[1]=Panel{};
@@ -78,7 +147,16 @@ public:
         residualState_=ResidualState::Idle;residualRead_=BackgroundRead{};residualDownRead_=BackgroundRead{};
         residualPending_=0;residualWritePending_=false;residualWrite_.clear();residualChunks_=residualBytes_=residualOverlap_=0;
         stridedPending_=stridedNext_=stridedDone_=0;
-        defer([this] { loadRows(); });
+        defer([this] {
+            if(!layerConsumer_ && !layerResidualConsumer_){loadRows();return;}
+            readLocal(gm_->getBaseAddr()+SoftwareLayerResidency::record,64,[this](const std::vector<uint8_t>& b){
+                const uint64_t expected=layerResidualConsumer_?d_.input1_addr:d_.input_addr;
+                if(!SoftwareLayerResidency::matches(b,d_.epoch,expected,d_.rows,d_.input_dim,d_.lane,d_.manager)){
+                    finish(false);return;
+                }
+                loadRows();
+            });
+        });
         return true;
     }
     bool active() const { return active_; }
@@ -89,6 +167,15 @@ public:
         cycle_ = cycle; tick_ = tick;
         if (!active_) return;
         if (groupRemaining_[0] && groupRemaining_[1]) ++groupOverlapCycles_;
+        window_.tick(cycle);
+        if(pipelined()){
+            downWindow_.tick(cycle);
+            if(downTask_){auto f=std::move(downTask_);downTask_={};f();}
+            pumpPipelineWrite();
+            if(window_.active() && downWindow_.active())++pipelineBothActive_;
+            if(window_.computing() && downWindow_.transferring())++pipelineDownTransfers_;
+            if(downWindow_.computing() && window_.transferring())++pipelineProducerTransfers_;
+        }
         pumpOutputs();
         for (auto& read:weightReads_) pumpRead(read);
         pumpRead(inputRead_);
@@ -96,6 +183,7 @@ public:
         for (auto& read:downWeightReads_) pumpRead(read);
         pumpRead(downInputRead_);
         if (isFfn()) pumpFfn();
+        if(pipelined())pumpPipelineDown();
         if (d_.op==9 && d_.residual_offset) pumpResidual();
         if (!started_) {
             started_ = true; startTick_ = tick;
@@ -112,7 +200,13 @@ public:
             } else {
             auto bytes = encode(vectorResult_.values);
             vectorResult_.values.clear();
-            writeLocal(outGM(), bytes, [this] { storeVector(); });
+            if(chainJob_==2) {
+                const size_t count=bytes.size();
+                writeLocal(chainGM()+uint64_t(vectorRow_-row_)*d_.input_dim*2,bytes,[this,count]{
+                    chainLocalBytes_+=count;chainWriteSaved_+=count;advanceVectorRows();});
+            } else if(chainJob_==3)cacheNormChunk(bytes);
+            else if(cacheNorm_)writeLocal(outGM(),bytes,[this,bytes]{cacheNormChunk(bytes);});
+            else writeLocal(outGM(), bytes, [this] { storeVector(); });
             }
         }
         if (next_) { auto f = std::move(next_); next_ = {}; f(); }
@@ -122,6 +216,202 @@ private:
     bool reuseDownInput() const { return d_.op==9 && downInputReuse_; }
     uint64_t downInputGM() const { return tileMajorFfn()?panelGM(downConsumer_):upPanelGM(downConsumer_); }
     bool isFfn() const { return d_.op==8 || d_.op==9; }
+
+    bool pipelined() const {return blockPipeline_ && d_.op==9;}
+    bool pipelineProducerSlotAvailable() const {
+        const bool consuming=ffnState_!=FfnState::Idle && ffnConsumer_==panelIndex_;
+        return !panels_[panelIndex_].draining && !ffnReady_[panelIndex_] && !downReady_[panelIndex_] &&
+               !consuming && !(downActive_ && downConsumer_==panelIndex_);
+    }
+    bool acquirePipelineArrays(uint32_t owner) {
+        arrayWaiting_[owner-1]=true;
+        if(arrayOwner_)return false;
+        const bool producerReady=pipelineProducerSlotAvailable();
+        if(owner==1 && !producerReady){++ffnSlotWaitCycles_;return false;}
+        // Finish a Gate/Up pair before lending arrays to Down, so its SFU
+        // work can cover the following consumer pass. Prefetch is independent.
+        if(pipelinePolicy_ && pipelineProducerBlock_ && producerReady){if(owner==2)return false;}
+        else if(arrayPreferred_!=owner && arrayWaiting_[2-owner] && (owner==1 || producerReady))return false;
+        arrayOwner_=owner;arrayWaiting_[owner-1]=false;return true;
+    }
+    void releasePipelineArrays(uint32_t owner) {
+        if(arrayOwner_!=owner)throw std::logic_error("FFN array lease owner");
+        arrayOwner_=0;arrayPreferred_=3-owner;
+    }
+    void accountWindow(const char* name) {accountWindow(name,window_);}
+    void accountWindow(const char* name,ReuseWindowGemm& window_) {
+        if(pipelined())pipelineLeaseWait_+=window_.leaseWaitCycles();
+        window_.trace(core(),d_.epoch,d_.stage,name);
+        localRead_+=window_.localReadBytes(); localWrite_+=window_.localWriteBytes();hbmRead_+=window_.hbmReadBytes();
+        prefetchRequests_+=window_.prefetchRequests();prefetchHits_+=window_.prefetchHits();
+        groupLaunches_+=window_.groupLaunches();groupOverlapCycles_+=window_.groupOverlapCycles();
+        groupProgramCycles_+=window_.groupProgramCycles();groupComputeArrayCycles_+=window_.groupComputeArrayCycles();
+        std::printf("[GEMM_REUSE_WINDOW] core=%u stage=%u epoch=%u operator=%s row=%u reuse_n=4 reuse_m=1 k_window=%u windows=%llu launches=%llu hbm_read=%llu gm_read=%llu gm_write=%llu c_gm_read=%llu c_gm_write=%llu c_drains=%llu c_restores=%llu transfer_compute_overlap=%llu status=0\n",
+            core(),d_.stage,d_.epoch,name,row_,window_.kWindow(),(unsigned long long)window_.windows(),
+            (unsigned long long)window_.launches(),(unsigned long long)window_.hbmReadBytes(),
+            (unsigned long long)window_.localReadBytes(),(unsigned long long)window_.localWriteBytes(),
+            (unsigned long long)window_.cReadBytes(),(unsigned long long)window_.cWriteBytes(),
+            (unsigned long long)window_.drains(),(unsigned long long)window_.restores(),
+            (unsigned long long)window_.transferOverlapCycles());
+    }
+    void startProducerWindow() {
+        if(pipelined() && !ffnUp_)pipelineProducerBlock_=true;
+        std::vector<uint32_t> tiles;
+        const uint32_t first=nt_;
+        const uint32_t limit=panelEnabled()?std::min(d_.output_dim/64,nt_+panelTiles()):d_.output_dim/64;
+        for(uint32_t n=nt_;n<limit;n+=singleRow_?16:1)tiles.push_back(n);
+        const uint32_t after=singleRow_?d_.output_dim/64:limit;
+        const uint64_t local=gm_->getBaseAddr();
+        const char* name=isFfn()?(ffnUp_?"up":"gate"):(singleRow_?"lm_head":"linear");
+        window_.start(activeRows_,d_.input_dim/64,std::move(tiles),
+            inputGM(),
+            local+(pipelined()?DecoderMemoryLayout::decoder_prefetch_gm:DecoderMemoryLayout::decoder_down_weight_gm),
+            local+(pipelined()?DecoderMemoryLayout::decoder_pipeline_producer_c_gm:DecoderMemoryLayout::decoder_prefetch_gm),
+            [this](uint32_t k,ReuseWindowGemm::Loaded done){
+                readLocal(inputGM()+uint64_t(k)*activeRows_*128,activeRows_*128,
+                    [done](const std::vector<uint8_t>& b){done(true,decode(b));});},
+            [this](uint32_t n,uint32_t k){return weightAddress(n,k,ffnUp_);},
+            [this,first](uint32_t n,const std::vector<double>& values){
+                nt_=n;
+                if(chainJob_==1) {
+                    const size_t bytes=values.size()*2;
+                    writePanelTile(chainWoGM(),d_.output_dim/64,n,encode(values),[this,bytes]{
+                        chainLocalBytes_+=bytes;chainWriteSaved_+=bytes;++panelCount_;window_.resumeOutput();});
+                } else if(panelEnabled()) {
+                    writeLocal(producerPanelGM()+uint64_t(n-first)*activeRows_*128,encode(values),
+                        [this]{++panelCount_;window_.resumeOutput();});
+                } else {
+                    // LM owns strided N tiles; retain its original HBM placement.
+                    writeLocal(outGM(),encode(values),[this]{
+                        storeHBM(outGM(),d_.output_addr+uint64_t(nt_)*128,128,[this]{window_.resumeOutput();});});
+                }
+            },
+            [this,after,name](bool ok){if(!ok){finish(false);return;}accountWindow(name);nt_=after;kt_=0;
+                if(chainJob_==1){panelCount_=0;if(nt_<d_.output_dim/64)defer([this]{loadWeight();});else{row_+=256;defer([this]{loadRows();});}}
+                else if(panelEnabled())defer([this]{preparePanel();});
+                else{row_+=256;defer([this]{loadRows();});}}, {},
+            [this](uint32_t k){return inputGM()+uint64_t(k)*activeRows_*128;},true,weightFetcher(),
+            pipelined()?ReuseWindowGemm::Acquire([this]{return acquirePipelineArrays(1);}):ReuseWindowGemm::Acquire{},
+            pipelined()?ReuseWindowGemm::Release([this]{releasePipelineArrays(1);}):ReuseWindowGemm::Release{});
+    }
+    void initialDownWindow(uint32_t n,ReuseWindowGemm::Loaded done) {
+        if(cycle_<downPartialReady_) {defer([this,n,done]{initialDownWindow(n,done);});return;}
+        std::vector<uint8_t> b;uint64_t ready=0;
+        if(!wcp_->readProjectionPartial(uint64_t(n)*activeRows_*128,activeRows_*128,cycle_,b,ready)){
+            done(false,{});return;}
+        downCRead_+=b.size();
+        waitInitialDown(ready,std::move(b),std::move(done));
+    }
+    void waitInitialDown(uint64_t ready,std::vector<uint8_t> b,ReuseWindowGemm::Loaded done) {
+        if(cycle_<ready){defer([this,ready,b,done]{waitInitialDown(ready,b,done);});return;}
+        ++downRestores_;done(true,decode(b));
+    }
+    void startDownWindow() {
+        const bool final=panels_[downConsumer_].firstTile+panels_[downConsumer_].tiles==d_.output_dim/64;
+        if(final && (downPanels_[downOutputIndex_].draining || downPanels_[downOutputIndex_].epilogue)){
+            defer([this]{startDownWindow();});return;}
+        std::vector<uint32_t> tiles;for(uint32_t n=0;n<d_.input_dim/64;++n)tiles.push_back(n);
+        ReuseWindowGemm::Initial initial;
+        if(panels_[downConsumer_].firstTile)initial=[this](uint32_t n,ReuseWindowGemm::Loaded cb){initialDownWindow(n,std::move(cb));};
+        const uint64_t local=gm_->getBaseAddr();
+        window_.start(activeRows_,panels_[downConsumer_].tiles,std::move(tiles),
+            downInputGM(),
+            local+DecoderMemoryLayout::decoder_down_weight_gm,
+            local+DecoderMemoryLayout::decoder_prefetch_gm,
+            [this](uint32_t k,ReuseWindowGemm::Loaded done){readLocal(downInputGM()+uint64_t(k)*activeRows_*128,
+                activeRows_*128,[done](const std::vector<uint8_t>& b){done(true,decode(b));});},
+            [this](uint32_t n,uint32_t k){return downWeightAddress(n,k);},
+            [this](uint32_t n,const std::vector<double>& v){downN_=n;downK_=0;windowDownSink_=true;consumeDownOutput(v);},
+            [this](bool ok){if(!ok){finish(false);return;}accountWindow("down");downN_=d_.input_dim/64; windowDownSink_=false; downActive_=false;
+                defer([this]{downNextOutput();});},std::move(initial),
+            [this](uint32_t k){return downInputGM()+uint64_t(k)*activeRows_*128;},false,weightFetcher());
+    }
+    // Bounded producer/consumer software pipeline. The two engines use
+    // independent weight slots; all 64 arrays are leased for one C tile at a
+    // time. Only acknowledged GM writes publish a gated panel to Down.
+    void pumpPipelineDown() {
+        if(downActive_ || downTask_ || !pipelineWrite_.empty())return;
+        for(uint32_t i=0;i<2;++i){
+            if(!downReady_[i] || panels_[i].firstTile!=downNextK_)continue;
+            downReady_[i]=false;downActive_=true;downConsumer_=i;downN_=0;downK_=0;
+            const auto& p=panels_[i];
+            std::vector<uint32_t> tiles;for(uint32_t n=0;n<d_.input_dim/64;++n)tiles.push_back(n);
+            ReuseWindowGemm::Initial initial;
+            if(p.firstTile)initial=[this](uint32_t n,ReuseWindowGemm::Loaded cb){pipelineInitialDown(n,std::move(cb));};
+            const uint64_t local=gm_->getBaseAddr();
+            downWindow_.start(activeRows_,p.tiles,std::move(tiles),panelGM(i),
+                local+DecoderMemoryLayout::decoder_down_weight_gm,
+                local+DecoderMemoryLayout::decoder_pipeline_down_c_gm,
+                {},[this](uint32_t n,uint32_t k){return downWeightAddress(n,k);},
+                [this](uint32_t n,const std::vector<double>& v){pipelineDownOutput(n,v);},
+                [this](bool ok){
+                    if(!ok){finish(false);return;}accountWindow("down",downWindow_);
+                    downNextK_=panels_[downConsumer_].firstTile+panels_[downConsumer_].tiles;
+                    ++downPasses_;++pipelinePasses_;downActive_=false;
+                },std::move(initial),[this](uint32_t k){return panelGM(downConsumer_)+uint64_t(k)*activeRows_*128;},false,{},
+                [this]{return acquirePipelineArrays(2);},[this]{releasePipelineArrays(2);});
+            return;
+        }
+    }
+    void pipelineInitialDown(uint32_t n,ReuseWindowGemm::Loaded cb) {
+        if(cycle_<downPartialReady_){downTask_=[this,n,cb]{pipelineInitialDown(n,cb);};return;}
+        std::vector<uint8_t> raw;uint64_t ready=0;
+        if(!wcp_->readProjectionPartial(uint64_t(n)*activeRows_*128,activeRows_*128,cycle_,raw,ready)){
+            cb(false,{});return;
+        }
+        downCRead_+=raw.size();
+        pipelineInitialReady(ready,std::move(raw),std::move(cb));
+    }
+    void pipelineInitialReady(uint64_t ready,std::vector<uint8_t> raw,ReuseWindowGemm::Loaded cb) {
+        if(cycle_<ready){downTask_=[this,ready,raw,cb]{pipelineInitialReady(ready,raw,cb);};return;}
+        ++downRestores_;cb(true,decode(raw));
+    }
+    void pipelineDownOutput(uint32_t n,const std::vector<double>& v) {
+        const auto& p=panels_[downConsumer_];
+        if(p.firstTile+p.tiles<d_.output_dim/64){
+            auto raw=encode(v);uint64_t ready=0;
+            if(!wcp_->writeProjectionPartial(uint64_t(n)*activeRows_*128,raw,cycle_,ready)){finish(false);return;}
+            downCWrite_+=raw.size();downPartialReady_=std::max(downPartialReady_,ready);
+            downWindow_.delayUntil(ready);downWindow_.resumeOutput();return;
+        }
+        // One output-tile snapshot, bounded to 8 KiB. Strided writes preserve
+        // the existing row-major Down/residual epilogue and its ACK boundary.
+        pipelineWrite_=encode(v);pipelineWriteN_=n;pipelineWriteOffset_=pipelineWriteNext_=0;
+    }
+    void pumpPipelineWrite() {
+        if(pipelineWrite_.empty())return;
+        if(!downOutputCount_){
+            if(downPanels_[downOutputIndex_].draining || downPanels_[downOutputIndex_].epilogue)return;
+            downOutputStart_=pipelineWriteN_;
+        }
+        const uint32_t tiles=std::min(16u,d_.input_dim/64-downOutputStart_);
+        while(!pipelineWrite_.empty() && pipelineWritePending_<writeWindow_ && pipelineWriteNext_<pipelineWrite_.size()){
+            const size_t offset=pipelineWriteNext_,row=offset/128,inRow=offset%128;
+            const size_t len=std::min<size_t>(128-inRow,gm_->localMaxRequestBytes());
+            const uint64_t addr=downOutputGM(downOutputIndex_)+(row*tiles+downOutputCount_)*128+inRow;
+            std::vector<uint8_t> raw(pipelineWrite_.begin()+offset,pipelineWrite_.begin()+offset+len);
+            ++pipelineWritePending_;pipelineWriteNext_+=len;
+            if(!gm_->localWriteAsync(addr,raw,LocalMemoryClient::RoCC,++tag_,[this,len,tiles](bool ok,uint64_t){
+                --pipelineWritePending_;if(!ok){finish(false);return;}
+                localWrite_+=len;pipelineWriteOffset_+=len;
+                if(pipelineWriteOffset_!=pipelineWrite_.size())return;
+                pipelineWrite_.clear();
+                if(++downOutputCount_==tiles){
+                    auto& p=downPanels_[downOutputIndex_];p.row=row_;p.rows=activeRows_;
+                    p.firstTile=downOutputStart_;p.tiles=tiles;p.nextRow=p.inFlight=0;
+                    p.epilogue=d_.residual_offset!=0;p.draining=!p.epilogue;
+                    downOutputCount_=0;downOutputIndex_=1-downOutputIndex_;
+                }
+                downWindow_.resumeOutput();
+            })){--pipelineWritePending_;pipelineWriteNext_-=len;return;}
+        }
+    }
+    ReuseWindowGemm::Fetch weightFetcher(){
+        if(!sharedWeights_)return {};
+        return [this](uint64_t source,uint64_t destination,std::function<void(bool)> done){
+            sharing_->fetch(d_.epoch,source,destination,std::move(done));
+        };
+    }
     using Task = std::function<void()>;
     struct Panel {
         uint32_t row=0, rows=0, firstTile=0, tiles=0, nextRow=0, inFlight=0;
@@ -138,6 +428,15 @@ private:
         uint64_t submitted=0,dmaDone=0,gmDone=0,source=0;
     };
     enum class FfnState { Idle, Reading, IssueSilu, WaitSilu, IssueMultiply, WaitMultiply, Writing };
+    struct FfnChunk {
+        FfnState state=FfnState::Idle;
+        BackgroundRead gate,up;
+        size_t offset=0,elements=0,writeOffset=0;
+        bool writePending=false;
+        std::vector<double> input,coefficients;
+        std::vector<uint8_t> bytes;
+        SFUVectorResult result{};
+    };
     enum class ResidualState { Idle, Reading, Issue, Wait, Writing };
     static uint32_t option(const char* name,uint32_t fallback,uint32_t minimum,uint32_t maximum) {
         const char* value=std::getenv(name); if (!value) return fallback;
@@ -152,13 +451,46 @@ private:
     uint64_t upPanelGM(uint32_t index) const { return gm_->getBaseAddr()+DecoderMemoryLayout::decoder_ffn_up_gm+index*DecoderMemoryLayout::decoder_panel_bytes; }
     uint64_t producerPanelGM() const { return isFfn() && ffnUp_ ? upPanelGM(panelIndex_) : panelGM(panelIndex_); }
     uint32_t core() const { return 4 + d_.manager + d_.lane * 4; }
-    uint64_t inputGM() const { return gm_->getBaseAddr() + DecoderMemoryLayout::decoder_input_gm; }
+    uint64_t inputGM() const { return gm_->getBaseAddr()+(useNormCache_?
+        DecoderMemoryLayout::decoder_norm_handoff_gm:DecoderMemoryLayout::decoder_input_gm); }
     uint64_t weightGM() const { return gm_->getBaseAddr() + DecoderMemoryLayout::decoder_weight_gm; }
     uint64_t outGM() const { return gm_->getBaseAddr() + DecoderMemoryLayout::decoder_output_gm; }
     void defer(Task f) { next_ = std::move(f); }
+    uint64_t chainGM() const {return gm_->getBaseAddr()+DecoderMemoryLayout::decoder_norm_handoff_gm;}
+    uint64_t chainWoGM() const {return gm_->getBaseAddr()+DecoderMemoryLayout::decoder_wo_handoff_gm;}
     void finish(bool ok) {
+        if(lmInputResidency_ && singleRow_ && d_.stage==11){
+            lmInputValid_=ok;lmInputDesc_=d_;
+            std::printf("[LM_INPUT_RESIDENCY] core=%u epoch=%u hit=%u saved_hbm_read=%llu capacity_added=0 status=%u\n",
+                core(),d_.epoch,useLmInput_?1u:0u,(unsigned long long)lmInputSaved_,ok?0u:1u);
+        }
+        if(layerProducer_ || layerConsumer_)std::printf("[SOFTWARE_LAYER_RESIDENCY] core=%u epoch=%u stage=%u producer=%u bytes=%llu saved_hbm_read=%llu metadata_bytes=64 capacity_added=0 status=%u\n",
+            core(),d_.epoch,d_.stage,layerProducer_?1u:0u,(unsigned long long)layerBytes_,
+            (unsigned long long)layerSaved_,ok?0u:1u);
+        if(layerResidualConsumer_)std::printf("[DECODER_INPUT_RESIDENCY] core=%u epoch=%u stage=%u saved_hbm_read=%llu metadata_bytes=64 status=%u\n",
+            core(),d_.epoch,d_.stage,(unsigned long long)layerResidualSaved_,ok?0u:1u);
+        if(chainJob_) {
+            const uint64_t rowBytes=uint64_t(std::min(64u,d_.rows-d_.lane*64))*d_.input_dim*2;
+            if(ok && chainJob_<4 && chainLocalBytes_!=rowBytes)ok=false;
+            if(ok && chainJob_==1)chainState_=1;
+            else if(ok && chainJob_==2){chainState_=2;chainH1Address_=d_.output_addr;}
+            else if(ok && chainJob_==3){chainState_=3;chainNormAddress_=d_.output_addr;}
+            else chainState_=0;
+            std::printf("[DECODER_STAGE_CHAIN] core=%u epoch=%u stage=%u step=%u state=%u row_bytes=%llu local_produced=%llu saved_hbm_read=%llu saved_hbm_write=%llu capacity_added=0 status=%u\n",
+                core(),d_.epoch,d_.stage,chainJob_,chainState_,(unsigned long long)rowBytes,
+                (unsigned long long)chainLocalBytes_,(unsigned long long)chainReadSaved_,
+                (unsigned long long)chainWriteSaved_,ok?0u:1u);
+        }
+        if(cacheNorm_)normCacheValid_=ok && normCacheWritten_==uint64_t(std::min(64u,d_.rows-d_.lane*64))*d_.input_dim*2;
         if (downOwnedBuffer_) { wcp_->endProjectionPartialBuffer(); downOwnedBuffer_=false; }
         status_ = ok ? 0 : 1; active_ = false; done_ = true; next_ = {};
+        if(cacheNorm_ || useNormCache_)std::printf("[DECODER_NORM_HANDOFF] core=%u epoch=%u stage=%u producer=%u consumer=%u cache_bytes=%llu saved_hbm_read=%llu materialized=1 capacity_added=0\n",
+            core(),d_.epoch,d_.stage,cacheNorm_?1u:0u,useNormCache_?1u:0u,
+            (unsigned long long)normCacheWritten_,(unsigned long long)normCacheReadSaved_);
+        if(allGemmWindow_ && lmGrouped()) std::printf("[GEMM_REUSE_WINDOW] core=%u stage=%u epoch=%u operator=lm_head row=0 reuse_n=%u reuse_m=1 k_window=%u windows=%llu launches=%llu hbm_read=%llu gm_read=%llu gm_write=%llu c_drains=%llu c_restores=0 status=%u\n",
+            core(),d_.stage,d_.epoch,lmParallel_,d_.input_dim/64,(unsigned long long)lmLaunches_,
+            (unsigned long long)lmArrayTiles_,(unsigned long long)hbmRead_,(unsigned long long)localRead_,
+            (unsigned long long)localWrite_,(unsigned long long)(d_.input_dim?lmLaunches_/(d_.input_dim/64):0),ok?0:1);
         if (d_.op==1 || isFfn()) std::printf("[DECODER_DATAFLOW] core=%u stage=%u epoch=%u panel_tiles=%u output_requests=%llu output_high_water=%llu prefetch=%u prefetch_requests=%llu prefetch_hits=%llu prefetch_wait_cycles=%llu\n",
             core(),d_.stage,d_.epoch,panelEnabled()?panelTiles():0,
             (unsigned long long)outputRequests_,(unsigned long long)outputHighWater_,prefetchEnabled_,
@@ -169,6 +501,10 @@ private:
             core(),d_.stage,d_.epoch,(unsigned long long)ffnProduced_,(unsigned long long)ffnConsumed_,
             (unsigned long long)ffnChunks_,(unsigned long long)ffnOverlapCycles_,(unsigned long long)ffnSlotWaitCycles_,
             (unsigned long long)(d_.op==9?DecoderMemoryLayout::decoder_down_required_gm:DecoderMemoryLayout::decoder_required_gm));
+        if(isFfn())std::printf("[DECODER_SFU_STREAM] core=%u stage=%u epoch=%u enabled=%u contexts=2 chunk_elements=%u high_water=%llu io_compute_overlap=%llu drained=%u\n",
+            core(),d_.stage,d_.epoch,streamFfn_?1u:0u,ffnChunkLimit_,
+            (unsigned long long)ffnStreamHighWater_,(unsigned long long)ffnStreamOverlap_,
+            (ffnStream_[0].state==FfnState::Idle && ffnStream_[1].state==FfnState::Idle)?1u:0u);
         if (isFfn()) std::printf("[DECODER_PREFETCH_FLOW] core=%u stage=%u epoch=%u enabled=%u slots=%u requests=%llu hits=%llu wait_total=%llu wait_dma=%llu wait_gm=%llu wait_program=%llu wait_array=%llu dma_sum=%llu gm_sum=%llu program_sum=%llu compute_sum=%llu\n",
             core(),d_.stage,d_.epoch,prefetchEnabled_?1u:0u,prefetchSlots_,
             (unsigned long long)prefetchRequests_,(unsigned long long)prefetchHits_,
@@ -181,6 +517,10 @@ private:
             core(),d_.stage,d_.epoch,arrayGroups_,(unsigned long long)groupLaunches_,
             (unsigned long long)groupProgramCycles_,(unsigned long long)groupComputeArrayCycles_,
             (unsigned long long)groupOverlapCycles_);
+        if(pipelined())std::printf("[DECODER_BLOCK_PIPELINE] core=%u epoch=%u stage=%u panels=%llu both_active=%llu producer_transfer_down_compute=%llu down_transfer_producer_compute=%llu lease_wait=%llu arrays=64 contexts=1 extra_gm_capacity=0 policy=%u owner_at_finish=%u pending_at_finish=%u\n",
+            core(),d_.epoch,d_.stage,(unsigned long long)pipelinePasses_,(unsigned long long)pipelineBothActive_,
+            (unsigned long long)pipelineProducerTransfers_,(unsigned long long)pipelineDownTransfers_,
+            (unsigned long long)pipelineLeaseWait_,pipelinePolicy_,arrayOwner_,pipelineWritePending_);
         if (d_.op==9) std::printf("[DECODER_GM_FLOW] core=%u stage=%u epoch=%u layout=%u down_input_reuse=%u\n",core(),d_.stage,d_.epoch,ffnLayout_,downInputReuse_?1u:0u);
         if (d_.op==9) std::printf("[DECODER_DOWN_FLOW] core=%u stage=%u epoch=%u panels_consumed=%llu cbuffer_bytes=%llu cbuffer_read_bytes=%llu cbuffer_write_bytes=%llu restores=%llu\n",
             core(),d_.stage,d_.epoch,(unsigned long long)downPasses_,(unsigned long long)(64ull*d_.input_dim*2),
@@ -286,6 +626,9 @@ private:
             panelCount_=0;
             nt_=singleRow_ ? d_.manager+d_.lane*4 : 0; kt_=0;
             if (nt_>=d_.output_dim/64) { signal(); return; }
+            if(useLmInput_){lmInputSaved_+=d_.input_dim*2;defer([this]{loadWeight();});return;}
+            if(chainJob_==4){chainReadSaved_+=uint64_t(activeRows_)*d_.input_dim*2;defer([this]{loadWeight();});return;}
+            if(useNormCache_){normCacheReadSaved_+=uint64_t(activeRows_)*d_.input_dim*2;defer([this]{loadWeight();});return;}
             if (d_.op==1 && d_.head_dim) { head_=0; gathered_.assign(activeRows_*d_.input_dim*2,0); gatherHead(); }
             else loadHBM(d_.input_addr+uint64_t(row_)*d_.input_dim*2,inputGM(),activeRows_*d_.input_dim*2,
                 [this] { packInput(); });
@@ -342,17 +685,23 @@ private:
     bool lmGrouped() const { return singleRow_ && lmParallel_>1; }
     void loadWeight() {
         if (lmGrouped()) { lmBegin(); return; }
-        if (d_.op==9 && !ffnUp_ && !panelCount_ && !kt_ &&
+        if (d_.op==9 && !pipelined() && !ffnUp_ && !panelCount_ && !kt_ &&
             startDown([this] { loadWeight(); })) return;
         if (panelEnabled() && !panelCount_) {
             const bool consuming=isFfn() && ffnState_!=FfnState::Idle && ffnConsumer_==panelIndex_;
             if (panels_[panelIndex_].draining || ffnReady_[panelIndex_] || downReady_[panelIndex_] || consuming ||
                 (downActive_ && downConsumer_==panelIndex_)) {
+                if(pipelined() && pipelinePolicy_==2){
+                    // Output is still owned by the consumer. Prepare only A/B;
+                    // the array lease prevents computation until the slot frees.
+                    panelStart_=nt_;startProducerWindow();return;
+                }
                 if (isFfn()) ++ffnSlotWaitCycles_;
                 defer([this] { loadWeight(); }); return;
             }
             panelStart_=nt_;
         }
+        if (allGemmWindow_) { startProducerWindow(); return; }
         if (prefetchEnabled_) {
             auto& read=weightReads_[weightSlot_];
             if (!read.busy && !read.ready && !read.pending) beginWeightRead(weightSlot_,nt_,kt_,ffnUp_);
@@ -613,7 +962,8 @@ private:
                     ffnUp_=true; nt_=panelStart_; kt_=0; panelCount_=0;
                     defer([this] { loadWeight(); }); return;
                 }
-                if (isFfn()) { ffnReady_[index]=true; ffnUp_=false; ++ffnProduced_; }
+                if (isFfn()) { ffnReady_[index]=true; ffnUp_=false; ++ffnProduced_;
+                    if(pipelined())pipelineProducerBlock_=false; }
                 else p.draining=true;
                 panelCount_=0; panelIndex_=1-index;
                 if (nt_<d_.output_dim/64) { kt_=0; defer([this] { loadWeight(); }); }
@@ -631,7 +981,10 @@ private:
                 ++outputRequests_; hbmWrite_+=bytes;
                 outputHighWater_=std::max<uint64_t>(outputHighWater_,totalOutputInFlight());
                 const uint32_t width=d_.op==9?d_.input_dim:d_.output_dim;
-                gm_->dma_write_from_globalmem_to_host((d_.op==9?downOutputGM(index):panelGM(index))+uint64_t(row)*bytes,
+                const uint64_t source=layerProducer_?chainGM()+
+                    ((uint64_t(p.row-d_.lane*64)+row)*width+p.firstTile*64)*2:
+                    (d_.op==9?downOutputGM(index):panelGM(index))+uint64_t(row)*bytes;
+                gm_->dma_write_from_globalmem_to_host(source,
                     d_.output_addr+(uint64_t(p.row+row)*width+p.firstTile*64)*2,bytes,
                     [this,index](bool ok) {
                         auto& panel=d_.op==9?downPanels_[index]:panels_[index]; --panel.inFlight;
@@ -668,6 +1021,12 @@ private:
         return false;
     }
     void waitDownRow() {
+        if(pipelined()){
+            if(downActive_ || downReady_[0] || downReady_[1] || downTask_ ||
+               downNextK_!=d_.output_dim/64 || ffnState_!=FfnState::Idle ||
+               ffnReady_[0] || ffnReady_[1] || cycle_<downPartialReady_){defer([this]{waitDownRow();});return;}
+            row_+=256;defer([this]{loadRows();});return;
+        }
         if (startDown([this] { waitDownRow(); })) return;
         if (downNextK_!=d_.output_dim/64 || ffnState_!=FfnState::Idle ||
             ffnReady_[0] || ffnReady_[1] || cycle_<downPartialReady_) {
@@ -721,6 +1080,7 @@ private:
         }
     }
     void downLoadWeight() {
+        if (allGemmWindow_) { startDownWindow(); return; }
         const bool final=panels_[downConsumer_].firstTile+panels_[downConsumer_].tiles==d_.output_dim/64;
         if (final && !downOutputCount_ && (downPanels_[downOutputIndex_].draining || downPanels_[downOutputIndex_].epilogue)) {
             defer([this] { downLoadWeight(); });return;
@@ -812,11 +1172,16 @@ private:
         if (!wcp_->readGemmOutputGroupClassAsync(arrays_,2,AttentionClusterTrafficClass::ProjectionOutput,
             ++tag_,cycle_,[this](bool ok,uint64_t,const std::vector<double>& values) {
                 if (!ok || values.size()!=activeRows_*64) { finish(false);return; }
+                consumeDownOutput(values);
+            })) defer([this] { downReadOutput(); });
+    }
+    void consumeDownOutput(const std::vector<double>& values) {
                 const auto& p=panels_[downConsumer_];
                 if (p.firstTile+(reuseDownInput()?downK_+1:p.tiles)<d_.output_dim/64) {
                     auto raw=encode(values);uint64_t ready;
                     if (!wcp_->writeProjectionPartial(uint64_t(downN_)*activeRows_*128,raw,cycle_,ready)) { finish(false);return; }
                     downCWrite_+=raw.size();downPartialReady_=std::max(downPartialReady_,ready);
+                    window_.delayUntil(ready);
                     ++downN_;defer([this] { downNextOutput(); });
                 } else {
                     if (!downOutputCount_) downOutputStart_=downN_;
@@ -831,7 +1196,6 @@ private:
                     else writeLocal(downOutputGM(downOutputIndex_)+uint64_t(downOutputCount_)*activeRows_*128,
                         encode(values),ready);
                 }
-            })) defer([this] { downReadOutput(); });
     }
     // A software wave over two disjoint subsets of the EXISTING arrays. Each
     // array still has one operand context. Do not touch a subset until all its
@@ -935,6 +1299,7 @@ private:
     }
 
     void downNextOutput() {
+        if (windowDownSink_) { windowDownSink_=false; window_.resumeOutput(); return; }
         if (downN_<d_.input_dim/64) {
             if (!reuseDownInput()) downK_=0;
             defer([this] { downLoadWeight(); });return;
@@ -968,6 +1333,10 @@ private:
         residualDownRead_.address=downOutputGM(residualPanel_)+uint64_t(residualRow_)*width*2;
         residualDownRead_.data.resize(bytes);residualDownRead_.busy=true;
         residualPending_=residualRows_;residualState_=ResidualState::Reading;
+        if(chainJob_==4){
+            residualRead_.busy=false;residualCacheNext_=residualPending_=0;
+            chainReadSaved_+=bytes;return;
+        }
         for (uint32_t r=0;r<residualRows_;++r) {
             const uint64_t source=(d_.manager+1)*d_.node_stride+d_.residual_offset+
                 ((uint64_t(p.row)+residualRow_+r)*d_.input_dim+p.firstTile*64)*2;
@@ -981,6 +1350,19 @@ private:
     }
     void pumpResidual() {
         if (residualState_!=ResidualState::Idle && wcp_->isBusy()) ++residualOverlap_;
+        if(chainJob_==4 && residualState_==ResidualState::Reading && !residualRead_.ready){
+            const auto& p=downPanels_[residualPanel_];const size_t bytes=p.tiles*128;
+            while(residualCacheNext_<residualRows_ && residualPending_<writeWindow_){
+                const uint32_t r=residualCacheNext_;
+                const uint64_t address=chainGM()+((uint64_t(p.row-d_.lane*64)+residualRow_+r)*d_.input_dim+p.firstTile*64)*2;
+                ++residualCacheNext_;++residualPending_;
+                if(!gm_->localReadAsync(address,bytes,LocalMemoryClient::RoCC,++tag_,[this,r,bytes](bool ok,uint64_t,const std::vector<uint8_t>& b){
+                    --residualPending_;if(!ok || b.size()!=bytes){finish(false);return;}
+                    std::copy(b.begin(),b.end(),residualRead_.data.begin()+r*bytes);localRead_+=bytes;
+                    if(residualCacheNext_==residualRows_ && !residualPending_)residualRead_.ready=true;
+                })){--residualCacheNext_;--residualPending_;break;}
+            }
+        }
         pumpRead(residualRead_);pumpRead(residualDownRead_);
         switch (residualState_) {
         case ResidualState::Idle:
@@ -1012,15 +1394,18 @@ private:
             break;
         case ResidualState::Writing: {
             if (residualWritePending_) break;
-            const size_t len=std::min(gm_->localMaxRequestBytes(),residualWrite_.size()-residualWriteOffset_);
-            const uint64_t address=downOutputGM(residualPanel_)+
-                uint64_t(residualRow_)*downPanels_[residualPanel_].tiles*128+residualWriteOffset_;
+            const auto& p=downPanels_[residualPanel_];const size_t rowBytes=p.tiles*128;
+            const size_t len=std::min({gm_->localMaxRequestBytes(),residualWrite_.size()-residualWriteOffset_,
+                layerProducer_ && p.tiles*64<d_.input_dim?rowBytes-residualWriteOffset_%rowBytes:residualWrite_.size()});
+            const uint64_t address=layerProducer_?chainGM()+
+                ((uint64_t(p.row-d_.lane*64)+residualRow_+residualWriteOffset_/rowBytes)*d_.input_dim+p.firstTile*64)*2+
+                residualWriteOffset_%rowBytes:downOutputGM(residualPanel_)+uint64_t(residualRow_)*rowBytes+residualWriteOffset_;
             std::vector<uint8_t> bytes(residualWrite_.begin()+residualWriteOffset_,residualWrite_.begin()+residualWriteOffset_+len);
             residualWritePending_=true;
             if (!gm_->localWriteAsync(address,bytes,LocalMemoryClient::RoCC,++tag_,[this,len](bool ok,uint64_t) {
                 residualWritePending_=false;
                 if (!ok) { finish(false);return; }
-                localWrite_+=len;residualWriteOffset_+=len;
+                localWrite_+=len;if(layerProducer_)layerBytes_+=len;residualWriteOffset_+=len;
                 if (residualWriteOffset_!=residualWrite_.size()) return;
                 residualWrite_.clear();residualRow_+=residualRows_;++residualChunks_;
                 auto& p=downPanels_[residualPanel_];
@@ -1033,6 +1418,7 @@ private:
     }
     void pumpFfn() {
         if (!active_) return;
+        if(streamFfn_){pumpFfnStream();return;}
         if ((ffnState_==FfnState::WaitSilu || ffnState_==FfnState::WaitMultiply) && wcp_->isBusy()) ++ffnOverlapCycles_;
         switch (ffnState_) {
         case FfnState::Idle:
@@ -1098,24 +1484,112 @@ private:
         }
         }
     }
+    void pumpFfnStream() {
+        if(ffnState_==FfnState::Idle){
+            if(!ffnReady_[ffnConsumer_])return;
+            ffnReady_[ffnConsumer_]=false;ffnOffset_=0;ffnState_=FfnState::Reading;
+        }
+        const auto& panel=panels_[ffnConsumer_];
+        const size_t width=panel.tiles*64,total=size_t(panel.rows)*width;
+        uint32_t occupied=0;bool io=false,compute=false;
+        for(auto& c:ffnStream_){
+            if(c.state==FfnState::Idle && ffnOffset_<total){
+                c=FfnChunk{};c.offset=ffnOffset_;
+                c.elements=std::min(total-ffnOffset_,std::max(width,(size_t(ffnChunkLimit_)/width)*width));
+                ffnOffset_+=c.elements;
+                c.gate.address=panelGM(ffnConsumer_)+c.offset*2;
+                c.up.address=upPanelGM(ffnConsumer_)+c.offset*2;
+                c.gate.data.resize(c.elements*2);c.up.data.resize(c.elements*2);
+                c.gate.busy=c.up.busy=true;c.state=FfnState::Reading;
+            }
+            pumpRead(c.gate);pumpRead(c.up);
+            if(c.state!=FfnState::Idle)++occupied;
+            io|=c.state==FfnState::Reading || c.state==FfnState::Writing;
+            compute|=c.state==FfnState::WaitSilu || c.state==FfnState::WaitMultiply;
+            switch(c.state){
+            case FfnState::Idle:break;
+            case FfnState::Reading:
+                if(c.gate.ready && c.up.ready){
+                    c.input=decode(c.gate.data);c.coefficients=decode(c.up.data);
+                    c.gate=BackgroundRead{};c.up=BackgroundRead{};c.state=FfnState::IssueSilu;
+                }break;
+            case FfnState::IssueSilu:
+            case FfnState::IssueMultiply:{
+                const bool silu=c.state==FfnState::IssueSilu;
+                SFUVectorRequest request{};request.input=&c.input;request.coefficients=&c.coefficients;
+                request.rowWidth=width;request.op=silu?SFUVectorOp::Silu:SFUVectorOp::Multiply;
+                if(sfu_->issueVectorOp(request,&c.result)){
+                    c.input.clear();if(!silu)c.coefficients.clear();
+                    c.state=silu?FfnState::WaitSilu:FfnState::WaitMultiply;
+                }break;
+            }
+            case FfnState::WaitSilu:
+                if(c.result.completed && tick_>=c.result.readyTick){
+                    // Preserve exactly the standalone FP16 SiLU boundary.
+                    c.input=std::move(c.result.values);c.state=FfnState::IssueMultiply;
+                }break;
+            case FfnState::WaitMultiply:
+                if(c.result.completed && tick_>=c.result.readyTick){
+                    c.bytes=encode(c.result.values);c.result.values.clear();c.state=FfnState::Writing;
+                }break;
+            case FfnState::Writing:{
+                if(c.writePending)break;
+                const size_t len=std::min(gm_->localMaxRequestBytes(),c.bytes.size()-c.writeOffset);
+                const uint64_t address=panelGM(ffnConsumer_)+c.offset*2+c.writeOffset;
+                std::vector<uint8_t> bytes(c.bytes.begin()+c.writeOffset,c.bytes.begin()+c.writeOffset+len);
+                c.writePending=true;FfnChunk* chunk=&c;
+                if(!gm_->localWriteAsync(address,bytes,LocalMemoryClient::RoCC,++tag_,[this,chunk,len](bool ok,uint64_t){
+                    chunk->writePending=false;if(!ok){finish(false);return;}
+                    localWrite_+=len;chunk->writeOffset+=len;
+                    if(chunk->writeOffset==chunk->bytes.size()){
+                        chunk->bytes.clear();chunk->state=FfnState::Idle;++ffnChunks_;
+                    }
+                }))c.writePending=false;
+                break;
+            }
+            }
+        }
+        ffnStreamHighWater_=std::max<uint64_t>(ffnStreamHighWater_,occupied);
+        if(io && compute)++ffnStreamOverlap_;
+        if(compute && wcp_->isBusy())++ffnOverlapCycles_;
+        if(ffnOffset_==total && ffnStream_[0].state==FfnState::Idle && ffnStream_[1].state==FfnState::Idle){
+            if(d_.op==9)downReady_[ffnConsumer_]=true;
+            else{auto& p=panels_[ffnConsumer_];p.draining=true;p.nextRow=p.inFlight=0;}
+            ++ffnConsumed_;ffnConsumer_=1-ffnConsumer_;ffnState_=FfnState::Idle;
+        }
+    }
     void loadVector() {
         siluMultiplySecond_=false;
         // At most 8192 FP16 elements fit the bounded vector request.
         vectorRows_=std::min(activeRows_-(vectorRow_-row_), std::max(1u,8192u/d_.input_dim));
         const size_t bytes=vectorRows_*d_.input_dim*2;
-        loadHBM(d_.input_addr+uint64_t(vectorRow_)*d_.input_dim*2,inputGM(),bytes,[this,bytes] {
-            readLocal(inputGM(),bytes,[this](const std::vector<uint8_t>& b) {
+        const auto consume=[this,bytes](uint64_t address) {
+            readLocal(address,bytes,[this](const std::vector<uint8_t>& b) {
                 vectorInput_=decode(b);
                 if (d_.op==4) { vectorCoefficients_.clear(); issueVector(); return; }
                 const bool norm=d_.op==3;
                 const size_t bytes=(norm?d_.input_dim:vectorInput_.size())*2;
-                loadHBM(d_.input1_addr+(norm?0:uint64_t(vectorRow_)*d_.input_dim*2),weightGM(),bytes,[this,bytes] {
+                const auto coefficients=[this,bytes,norm] {
                     readLocal(weightGM(),bytes,[this](const std::vector<uint8_t>& b) {
                         vectorCoefficients_=decode(b); issueVector();
                     });
-                });
+                    if(norm)gammaLoaded_=true;
+                };
+                if(layerResidualConsumer_){
+                    const uint64_t residual=chainGM()+uint64_t(vectorRow_-row_)*d_.input_dim*2;
+                    readLocal(residual,bytes,[this,bytes](const std::vector<uint8_t>& b){
+                        layerResidualSaved_+=bytes;vectorCoefficients_=decode(b);issueVector();
+                    });
+                } else if(norm && reuseGamma_ && gammaLoaded_)coefficients();
+                else loadHBM(d_.input1_addr+(norm?0:uint64_t(vectorRow_)*d_.input_dim*2),weightGM(),bytes,coefficients);
             });
-        });
+        };
+        if(layerConsumer_){layerSaved_+=bytes;consume(chainGM()+uint64_t(vectorRow_-row_)*d_.input_dim*2);}
+        else if(chainJob_==2){
+            chainReadSaved_+=bytes;consume(chainWoGM()+uint64_t(vectorRow_-row_)*d_.input_dim*2);
+        } else if(chainJob_==3){
+            chainReadSaved_+=bytes;consume(chainGM()+uint64_t(vectorRow_-row_)*d_.input_dim*2);
+        } else loadHBM(d_.input_addr+uint64_t(vectorRow_)*d_.input_dim*2,inputGM(),bytes,[this,consume]{consume(inputGM());});
     }
     void issueVector() {
         SFUVectorRequest r{}; r.input=&vectorInput_; r.coefficients=&vectorCoefficients_;
@@ -1123,7 +1597,7 @@ private:
         r.op=d_.op==2?SFUVectorOp::Add:d_.op==3?SFUVectorOp::RmsNorm:
             (d_.op==4 || (d_.op==7 && !siluMultiplySecond_))?SFUVectorOp::Silu:SFUVectorOp::Multiply;
         if (!sfu_->issueVectorOp(r,&vectorResult_)) {
-            if (d_.op==3) finish(false);
+            if (d_.op==3 && !chainJob_) finish(false);
             else defer([this] { issueVector(); }); // finite request queue: retry
             return;
         }
@@ -1131,12 +1605,37 @@ private:
         if (d_.op!=7 || siluMultiplySecond_) vectorCoefficients_.clear();
         vectorWaiting_=true;
     }
+    void advanceVectorRows(){
+        vectorRow_+=vectorRows_;
+        if(vectorRow_<row_+activeRows_)loadVector();else{row_+=256;loadRows();}
+    }
     void storeVector() {
         const size_t bytes=vectorRows_*d_.input_dim*2;
-        storeHBM(outGM(),d_.output_addr+uint64_t(vectorRow_)*d_.input_dim*2,bytes,[this] {
-            vectorRow_+=vectorRows_;
-            if (vectorRow_<row_+activeRows_) loadVector(); else { row_+=256; loadRows(); }
-        });
+        if(chainJob_==3){chainWriteSaved_+=bytes;advanceVectorRows();return;}
+        storeHBM(outGM(),d_.output_addr+uint64_t(vectorRow_)*d_.input_dim*2,bytes,[this]{advanceVectorRows();});
+    }
+    void cacheNormChunk(const std::vector<uint8_t>& bytes){
+        localBuffer_=bytes;normWriteNext_=normWriteDone_=normWritePending_=0;
+        defer([this]{pumpNormCache();});
+    }
+    void pumpNormCache(){
+        const size_t width=d_.input_dim;
+        if(normWriteDone_==localBuffer_.size()){
+            localBuffer_.clear();storeVector();return;
+        }
+        while(normWriteNext_<localBuffer_.size() && normWritePending_<writeWindow_){
+            const size_t offset=normWriteNext_,element=offset/2,r=element/width,k=(element%width)/64;
+            const size_t len=std::min<size_t>(128-offset%128,gm_->localMaxRequestBytes());
+            const uint64_t address=(chainJob_==3?inputGM():gm_->getBaseAddr()+DecoderMemoryLayout::decoder_norm_handoff_gm)+
+                (k*activeRows_+(vectorRow_-row_)+r)*128+offset%128;
+            std::vector<uint8_t> bytes(localBuffer_.begin()+offset,localBuffer_.begin()+offset+len);
+            normWriteNext_+=len;++normWritePending_;
+            if(!gm_->localWriteAsync(address,bytes,LocalMemoryClient::RoCC,++tag_,[this,len](bool ok,uint64_t){
+                --normWritePending_;if(!ok){finish(false);return;}
+                normWriteDone_+=len;normCacheWritten_+=len;localWrite_+=len;if(chainJob_==3)chainLocalBytes_+=len;
+            })){normWriteNext_-=len;--normWritePending_;break;}
+        }
+        defer([this]{pumpNormCache();});
     }
     void signal() {
         if (panels_[0].draining || panels_[1].draining || downPanels_[0].draining || downPanels_[1].draining ||
@@ -1145,12 +1644,46 @@ private:
             downPanels_[0].epilogue || downPanels_[1].epilogue || residualState_!=ResidualState::Idle) {
             defer([this] { signal(); }); return;
         }
+        if(sharedWeights_){
+            if(!sharing_->release(d_.epoch)){defer([this]{signal();});return;}
+            if(!sharedAccounted_){hbmRead_+=sharing_->hbmBytes(d_.epoch);
+                localRead_+=sharing_->localReadBytes(d_.epoch);localWrite_+=sharing_->localWriteBytes(d_.epoch);
+                sharing_->trace(d_.epoch);sharedAccounted_=true;}
+        }
+        if(layerProducer_ && !layerPublished_){
+            const uint64_t expected=uint64_t(std::min(64u,d_.rows-d_.lane*64))*d_.input_dim*2;
+            if(layerBytes_!=expected){finish(false);return;}
+            writeLocal(gm_->getBaseAddr()+SoftwareLayerResidency::record,
+                SoftwareLayerResidency::encode(d_.epoch,d_.output_addr,d_.rows,d_.input_dim,d_.lane,d_.manager),
+                [this]{layerPublished_=true;defer([this]{signal();});});return;
+        }
         if (!d_.completion_addr) { finish(true); return; }
         std::vector<uint8_t> b(8,0); const uint64_t value=d_.epoch ? d_.epoch : 1;
         std::memcpy(b.data(),&value,8);
         writeLocal(outGM(),b,[this] { storeHBM(outGM(),d_.completion_addr,8,[this] { finish(true); }); });
     }
     GlobalMemoryAPI* gm_; WorkerCommandProcessorAPI* wcp_; SFUAPI* sfu_;
+    ReuseWindowGemm window_,downWindow_;
+    bool blockPipeline_=false,pipelineProducerBlock_=false;uint32_t pipelinePolicy_=2;uint32_t arrayOwner_=0,arrayPreferred_=1;bool arrayWaiting_[2]{};
+    Task downTask_;std::vector<uint8_t> pipelineWrite_;size_t pipelineWriteOffset_=0,pipelineWriteNext_=0;
+    uint32_t pipelineWritePending_=0,pipelineWriteN_=0;
+    uint64_t pipelineProducerTransfers_=0,pipelineDownTransfers_=0,pipelineBothActive_=0,pipelinePasses_=0,pipelineLeaseWait_=0;
+    // Software residency metadata only; payload lives in existing timed GM.
+    bool stageChain_=false;uint32_t chainState_=0,chainJob_=0,residualCacheNext_=0;
+    bool layerResidency_=false,layerProducer_=false,layerConsumer_=false,layerPublished_=false;
+    bool inputResidency_=false,layerResidualConsumer_=false;uint64_t layerResidualSaved_=0;
+    uint64_t layerBytes_=0,layerSaved_=0;
+    bool lmInputResidency_=false,lmInputValid_=false,useLmInput_=false;
+    DecoderOpDesc lmInputDesc_{};uint64_t lmInputSaved_=0;
+    DecoderOpDesc chainDesc_{};uint64_t chainH1Address_=0,chainNormAddress_=0;
+    uint64_t chainReadSaved_=0,chainWriteSaved_=0,chainLocalBytes_=0;
+    bool allGemmWindow_=false,windowDownSink_=false;
+    bool reuseGamma_=false,gammaLoaded_=false;
+    bool normHandoff_=false,cacheNorm_=false,useNormCache_=false,normCacheValid_=false;
+    DecoderOpDesc normCacheDesc_{};
+    uint64_t normCacheWritten_=0,normCacheReadSaved_=0;
+    size_t normWriteNext_=0,normWriteDone_=0;uint32_t normWritePending_=0;
+    ReuseWeightInterface* sharing_=nullptr;bool sharedWeights_=false,sharedAccounted_=false;
     bool downOwnedBuffer_=false,downActive_=false,downReady_[2]{};
     uint32_t downConsumer_=0,downNextK_=0,downN_=0,downK_=0,downWeightSlot_=0;
     uint32_t downOutputIndex_=0,downOutputCount_=0,downOutputStart_=0;
@@ -1169,6 +1702,8 @@ private:
     uint32_t lmParallel_=1,lmWidth_=0,lmIndex_=0;
     uint64_t lmLaunches_=0,lmArrayTiles_=0;
     bool siluMultiplySecond_=false;
+    bool streamFfn_=false;uint32_t ffnChunkLimit_=8192;
+    FfnChunk ffnStream_[2];uint64_t ffnStreamOverlap_=0,ffnStreamHighWater_=0;
     bool ffnUp_=false,ffnReady_[2]{},ffnWritePending_=false;
     FfnState ffnState_=FfnState::Idle;
     BackgroundRead ffnGateRead_,ffnUpRead_;

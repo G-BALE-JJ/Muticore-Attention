@@ -29,6 +29,7 @@
 #include <sst/elements/golem/attention/attentionCluster.h>
 #include <sst/elements/golem/attention/projectionJob.h>
 #include <sst/elements/golem/attention/decoderOpJob.h>
+#include <sst/elements/golem/attention/reuseWeightCohort.h>
 #include <sst/elements/golem/attention/decoderMemoryLayout.h>
 #include <sst/elements/vanadis/rocc/vroccinterface.h>
 #include <sst/elements/golem/globalmemory/globalmemory.h>
@@ -655,6 +656,13 @@ public:
                 handleControlTransportMessage(message);
             });
 
+        const char* cohortEnv=std::getenv("GOLEM_REUSE_WEIGHT_COHORT");
+        const uint32_t cohort=cohortEnv?std::stoul(cohortEnv):0;
+        if(cohort!=0 && cohort!=2 && cohort!=4)
+            output->fatal(CALL_INFO,-1,"GOLEM_REUSE_WEIGHT_COHORT must be 0, 2 or 4\n");
+        if(cohort && coreID>=4 && coreID<20)
+            weightCohort_.reset(new ReuseWeightCohort(globalMem,coreID,cohort));
+
         groupCtrl = nullptr;
         if (params.find<int>("groupCtrlEnable", 0) != 0) {
             groupCtrl = loadUserSubComponent<SST::Golem::GroupCtrlAPI>(
@@ -1025,6 +1033,7 @@ public:
             }
         }
         progressAttentionWorkerClusterVBroadcast();
+        if(weightCohort_)weightCohort_->tick();
         if (workerCommandProcessor != nullptr && workerCommandProcessor->isBusy()) {
             workerCommandProcessor->tick(cycle);
         }
@@ -1252,7 +1261,7 @@ public:
                 uint64_t status = 1;
                 if (coreID >= 4 && coreID < 20 && array && globalMem && workerCommandProcessor &&
                     (!projectionJob_ || !projectionJob_->active())) {
-                    if (!decoderOpJob_) decoderOpJob_.reset(new DecoderOpJob(globalMem, workerCommandProcessor, sfu));
+                    if (!decoderOpJob_) decoderOpJob_.reset(new DecoderOpJob(globalMem, workerCommandProcessor, sfu,weightCohort_.get()));
                     std::vector<uint8_t> raw;
                     globalMem->rd_from_globalmem(next_cmd->rs1, sizeof(DecoderOpDesc), raw);
                     if (raw.size() == sizeof(DecoderOpDesc)) {
@@ -12705,6 +12714,10 @@ public:
     }
 
     void handleControlTransportMessage(const ControlTransportMessage& message) {
+        if(ReuseWeightCohort::accepts(message.kind)){
+            if(!weightCohort_)output->fatal(CALL_INFO,-1,"GEMM cohort message without configured software service\n");
+            weightCohort_->receive(message);return;
+        }
         if (message.kind == ControlTransportMessageKind::DiagnosticProjectionReady) {
             if (!oracleEnabled("projection_barrier") || coreID >= 4 || message.workerCore < 4 ||
                 message.workerCore >= 20 || message.value != 1.0 || message.ownerCore != coreID)
@@ -14033,6 +14046,7 @@ private:
     bool traceProjectionReleaseObserved_ = false;
     std::unique_ptr<ProjectionJob> projectionJob_;
     std::unique_ptr<DecoderOpJob> decoderOpJob_;
+    std::unique_ptr<ReuseWeightCohort> weightCohort_;
     bool oracleProjectionStarted_ = false;
     ProjectionJobDesc oracleProjectionDesc_{};
     uint32_t oracleProjectionNotificationMask_ = 0;

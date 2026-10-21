@@ -1,0 +1,505 @@
+{
+  "status": "PASS",
+  "selected": "fixed_candidate",
+  "timing": {
+    "完整端到端": {
+      "control_cycles": 6314118.0,
+      "candidate_cycles": 6303926.0,
+      "reduction_percent": 0.1614160520915231
+    },
+    "两层 decoder": {
+      "control_cycles": 5478964.75,
+      "candidate_cycles": 5463352.75,
+      "reduction_percent": 0.28494434099070043
+    },
+    "最终 RMSNorm": {
+      "control_cycles": 44640.375,
+      "candidate_cycles": 43832.375,
+      "reduction_percent": 1.8100206371474248
+    },
+    "LM head": {
+      "control_cycles": 663626.0,
+      "candidate_cycles": 671248.0,
+      "reduction_percent": -1.1485384840256518
+    },
+    "第 1 层 FFN span": {
+      "control_cycles": 1970102.0,
+      "candidate_cycles": 1963060.0,
+      "reduction_percent": 0.3574434217111566
+    },
+    "第 1 层 attention": {
+      "control_cycles": 452911.75,
+      "candidate_cycles": 453150.75,
+      "reduction_percent": -0.052769662080964785
+    },
+    "第 2 层 FFN span": {
+      "control_cycles": 1964786.0,
+      "candidate_cycles": 1961415.0,
+      "reduction_percent": 0.1715708479193112
+    },
+    "第 2 层 attention": {
+      "control_cycles": 438470.375,
+      "candidate_cycles": 438399.875,
+      "reduction_percent": 0.016078623327742125
+    }
+  },
+  "incremental_saved_hbm_read_bytes": 8388608,
+  "saved_hbm_write_bytes": 0,
+  "previous_selected_bits": {
+    "last_layer_y": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "final_norm": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "logits": {
+      "elements": 128256,
+      "fp16_bit_mismatches": 0
+    }
+  },
+  "paired_bits": {
+    "last_layer_y": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "final_norm": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "logits": {
+      "elements": 128256,
+      "fp16_bit_mismatches": 0
+    }
+  },
+  "environment_changes": {
+    "GOLEM_DECODER_INPUT_RESIDENCY": {
+      "control": "0",
+      "candidate": "1"
+    }
+  },
+  "decoder_job_hbm_totals": {
+    "fixed_control": {
+      "hbm_read": 4036235264,
+      "hbm_write": 17034368
+    },
+    "fixed_candidate": {
+      "hbm_read": 4027846656,
+      "hbm_write": 17034368
+    }
+  },
+  "hardware_sources_unchanged": 48,
+  "original_preserved": true,
+  "allocator_change": "adds Wo scratch alias and bounds assertion; all previous allocations/capacities unchanged",
+  "same_binaries_inputs_hardware": true,
+  "software_only": true,
+  "binaries": {
+    "guest_sha256": "219fb5414eef42ebe5b0130af54b6deda8683bb40c42d3ae01fba9dd66780c28",
+    "sst_library_sha256": "21fec61f74e20ce64163327d53dabae736bc1d19e0d206c495b2d3d75afa98fb",
+    "sst_memhierarchy_sha256": "1c5dba7e50e5035260f4d30c1537a5f6e1df2ae0692d757419890cce7c8e96ed"
+  },
+  "input_residency_audit": {
+    "status": "PASS",
+    "enabled": true,
+    "eligible": true,
+    "flows": [
+      {
+        "core": 4,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 8,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 4,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 8,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 12,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 16,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 12,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 16,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 9,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 5,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 5,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 9,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 13,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 17,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 13,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 17,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 10,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 6,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 6,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 10,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 14,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 18,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 14,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 18,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 11,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 7,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 7,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 11,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 15,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 19,
+        "epoch": 1,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 15,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 19,
+        "epoch": 2,
+        "stage": 2,
+        "saved_hbm_read": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      }
+    ],
+    "projections": [
+      {
+        "core": 4,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 8,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 16,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 12,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 9,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 5,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 17,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 13,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 6,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 10,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 14,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 18,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 7,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 11,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 15,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      },
+      {
+        "core": 19,
+        "epoch": 1,
+        "retained_bytes": 262144,
+        "metadata_bytes": 64,
+        "status": 0
+      }
+    ],
+    "saved_hbm_read_bytes": 8388608,
+    "retained_input_bytes": 4194304,
+    "scope": "projection retains the already-read input; Add uses a timed local GM read",
+    "actual_payload": {
+      "status": "PASS",
+      "verified_jobs": 32,
+      "saved_hbm_read_bytes": 8388608,
+      "scope": "timed complete payload reads; no cross-stage overwrite; per-chunk read ACK before in-place write"
+    }
+  },
+  "runtime_source_sha256": {
+    "src/sst/elements/golem/attention/reuseWindowGemm.h": "834c711057b928ec3a4048ba6f4ce0610b2faeb5ca09c6fb9e473a7dfb0fc134",
+    "src/sst/elements/golem/attention/decoderOpJob.h": "c4cedbe8f321082f0e939dca73a85422e46a88c3aabc1ec2c5e77bb9e6151d37",
+    "src/sst/elements/golem/attention/projectionJob.h": "6a58543713ec00d2c71ede8cea3994536b1d56ff4c4f1c9f540ec608e6786b22",
+    "src/sst/elements/golem/attention/reuseWeightInterface.h": "26087a32bf1162443e076c069703d8aa7110659a3917306288ba4cbebddee841",
+    "src/sst/elements/golem/attention/reuseWeightCohort.h": "a6ae737be6116d6d1ba438d6a66274b0db71c4acd07a804da17884db3577ffff",
+    "src/sst/elements/golem/attention/decoderMemoryLayout.h": "25af49ae2195f182d595386cd44be9369c9b0b6e7826f16d4a0dfc398332e8fb",
+    "src/sst/elements/golem/attention/softwareLayerResidency.h": "8b83b944069c9b51bd0a579313b57cfcb8ff79a2c3887502704cd8bc3b88e0c0",
+    "src/sst/elements/golem/rocc/roccAnalog.h": "0d1bca02b896a1f20f602c93a22a1afad6e063ebe77cef5c700ba044e6f5e935",
+    "src/sst/elements/golem/globalmemory/globalmemory.h": "fe8e73b07a7a548f67bd8bc0bd0f252c0c5c788c58811a17d00e7ee267cc4f73"
+  },
+  "notes": [
+    "Cycles are simulated at 1 GHz; host execution time is excluded.",
+    "Dense GEMM MAC and A/B/C window work are identical.",
+    "HBM layer outputs remain materialized; original residual input rereads are eliminated.",
+    "An earlier candidate with a missing asynchronous phase transition was stopped and excluded."
+  ]
+}

@@ -1,5 +1,7 @@
 #ifndef SST_GOLEM_PROJECTION_JOB_H
 #define SST_GOLEM_PROJECTION_JOB_H
+#include <sst/elements/golem/attention/reuseWindowGemm.h>
+#include <sst/elements/golem/attention/softwareLayerResidency.h>
 
 #include <sst/elements/golem/attention/projectionJobAbi.h>
 #include <sst/elements/golem/fp16.h>
@@ -27,7 +29,9 @@ namespace SST { namespace Golem {
 class ProjectionJob {
 public:
     ProjectionJob(GlobalMemoryAPI* memory, WorkerCommandProcessorAPI* processor, SFUAPI* vectorEngine)
-        : vectorEngine_(vectorEngine), memory_(memory), processor_(processor) {
+        : vectorEngine_(vectorEngine), memory_(memory), processor_(processor), window_(memory,processor) {
+        allGemmWindow_=enabledOptIn("GOLEM_ALL_GEMM_REUSE_WINDOW");
+        windowPackInput_=enabledOptIn("GOLEM_REUSE_WINDOW_QKV_INPUT_PACK");
         const char* width = std::getenv("GOLEM_PROJECTION_ARRAYS");
         uint32_t count = width ? static_cast<uint32_t>(std::strtoul(width, nullptr, 10)) : 16;
         if (count != 16 && count != 32 && count != 64) count = 16;
@@ -53,6 +57,7 @@ public:
             desc.q_panel_addr == 0 || desc.k_panel_addr == 0 ||
             desc.v_panel_addr == 0 || desc.completion_addr == 0) return false;
         desc_ = desc;
+        windowInputPacked_=false;windowPackK_=0;
         std::printf("[PROJECTION_WORKER_OWNER] core=%u manager=%u lane=%u row_offset=%u row_count=64\n",
             executionCore(), desc_.manager_slot, desc_.reserved - 1, (desc_.reserved - 1) * 64);
         kind_ = head_ = dimTile_ = inputTile_ = 0;
@@ -92,6 +97,13 @@ public:
             reuseBytes <= gmSize - 64 - (desc.scratch_addr - gmBase);
         pairedWeights_ = pairedWeights_ && reuseBlock_;
         fuseNorm_ = (desc.flags & GOLEM_PROJECTION_FUSE_NORM) != 0;
+        layerInput_=enabledOptIn("GOLEM_DECODER_LAYER_RESIDENCY") && allGemmWindow_ && fuseNorm_ &&
+            desc.rows_per_node<=256 && desc.hidden_dim<=2048 && desc.completion_value>1;
+        layerInputChecked_=false;layerInputSaved_=0;
+        layerSeed_=enabledOptIn("GOLEM_DECODER_INPUT_RESIDENCY") &&
+            enabledOptIn("GOLEM_DECODER_LAYER_RESIDENCY") && allGemmWindow_ && fuseNorm_ &&
+            desc.rows_per_node<=256 && desc.hidden_dim<=2048 && desc.completion_value==1;
+        layerSeedSaved_=0;layerSeedPublished_=layerSeedPublishing_=false;
         fuseRope_ = (desc.flags & GOLEM_PROJECTION_FUSE_ROPE) != 0;
         audit_ = (desc.flags & GOLEM_PROJECTION_AUDIT_OUTPUT) != 0;
         // Reuse existing scratch below the weight cache. Restrict this execution
@@ -219,6 +231,7 @@ public:
         if (!active()) return;
         nowTick_ = nowTick;
         if (startCycle_ == 0) startCycle_ = cycle;
+        window_.tick(cycle);
         ++phaseCycles_[static_cast<size_t>(phase_)];
         if (phase_ == Phase::LocalRead) ++localRoleCycles_[static_cast<size_t>(localReadRole_)];
         if (phase_ == Phase::ReadOutput) {
@@ -293,7 +306,9 @@ public:
                     });
             }
             break;
+        case Phase::WindowGemm: break;
         case Phase::LoadInput: {
+            if(allGemmWindow_) {beginProjectionWindow();break;}
             if (reuseBlock_) { prepareInput(); break; }
             if (loadedInputRow_ == row_) {
                 prepareInput();
@@ -723,6 +738,16 @@ public:
             break;
         case Phase::WriteCompletion:
             if (cBufferPartial_ && cycle < cBufferReadyCycle_) break;
+            if(layerSeed_ && !layerSeedPublished_){
+                if(!layerSeedPublishing_){
+                    layerSeedPublishing_=true;
+                    beginFusionWrite(memory_->getBaseAddr()+SoftwareLayerResidency::record,
+                        SoftwareLayerResidency::encode(desc_.completion_value-1,desc_.input_addr,
+                            desc_.rows_per_node,desc_.hidden_dim,desc_.reserved-1,desc_.manager_slot),
+                        [this]{layerSeedPublished_=true;layerSeedPublishing_=false;phase_=Phase::WriteCompletion;});
+                }
+                break;
+            }
             pending_ = true;
             memory_->dma_write_to_host(desc_.completion_addr, 8,
                 completionBytes(),
@@ -744,7 +769,7 @@ public:
                         "program_weight_ready", "program_input", "launch", "wait_input_prefetch", "read_output",
                         "restore_output", "restore_output_ready", "prepare_output", "norm_batch", "norm_wait", "rope_wait", "local_read", "local_write", "stage_partial", "write_output",
                         "write_drain", "write_completion", "failed", "complete",
-                        "group_program_weight", "group_program_input", "group_launch", "group_drain"};
+                        "group_program_weight", "group_program_input", "group_launch", "group_drain", "window_gemm"};
                     static_assert(sizeof(phaseNames) / sizeof(*phaseNames) == static_cast<size_t>(Phase::Count), "phase names");
                     std::printf("[PROJECTION_CYCLE_BREAKDOWN] core=%u wrap_prefetch=%u", executionCore(), wrapPrefetch_);
                     for (size_t i = 0; i < phaseCycles_.size(); ++i)
@@ -839,7 +864,7 @@ private:
         static const char* names[] = {"idle", "load_block", "load_input", "load_weight", "load_weight_dma", "program_weight",
             "program_weight_ready", "program_input", "launch", "wait_input_prefetch", "read_output",
             "restore_output", "restore_output_ready", "prepare_output", "norm_batch", "norm_wait", "rope_wait", "local_read", "local_write", "stage_partial", "write_output",
-            "write_drain", "write_completion", "failed", "complete", "group_program_weight", "group_program_input", "group_launch", "group_drain"};
+            "write_drain", "write_completion", "failed", "complete", "group_program_weight", "group_program_input", "group_launch", "group_drain", "window_gemm"};
         const size_t index = static_cast<size_t>(phase);
         return index < sizeof(names) / sizeof(*names) ? names[index] : "unknown";
     }
@@ -949,7 +974,9 @@ private:
         ++restoresAhead_;
     }
     void pumpWeightPrefetch() {
-        if (!weightPrefetchEnabled_ || weightPrefetchBusy_ || !blockLoaded_ ||
+        // The window owns the old weight-cache scratch for A/B/C. Its own
+        // prefetch queue is the sole writer while this execution mode is active.
+        if (allGemmWindow_ || !weightPrefetchEnabled_ || weightPrefetchBusy_ || !blockLoaded_ ||
             kind_ >= 3 || phase_ == Phase::Failed || phase_ == Phase::WriteDrain ||
             phase_ == Phase::WriteCompletion) return;
         // Use existing cache slots for the same head only. A single future
@@ -980,7 +1007,7 @@ private:
             executionCore(), blockStart_, weightHead(), group, tile, event, (unsigned long long)cycle);
     }
     void pumpLocalWeightPrefetch() {
-        if (!localWeightPrefetch_ || prefetchWeight_.active || prefetchWeight_.ready ||
+        if (allGemmWindow_ || !localWeightPrefetch_ || prefetchWeight_.active || prefetchWeight_.ready ||
             inputTile_ + 1 >= desc_.hidden_dim / 64) return;
         if (phase_ != Phase::ProgramWeightReady && phase_ != Phase::ProgramInput &&
             phase_ != Phase::Launch && phase_ != Phase::GroupProgramWeight &&
@@ -1140,7 +1167,7 @@ private:
         ProgramWeightReady, ProgramInput, Launch, WaitInputPrefetch, ReadOutput,
         RestoreOutput, RestoreOutputReady, PrepareOutput, NormBatch, NormWait, RopeWait, LocalRead, LocalWrite, StagePartial, WriteOutput,
         WriteDrain, WriteCompletion, Failed, Complete,
-        GroupProgramWeight, GroupProgramInput, GroupLaunch, GroupDrain, Count };
+        GroupProgramWeight, GroupProgramInput, GroupLaunch, GroupDrain, WindowGemm, Count };
     static double decode(const std::vector<uint8_t>& bytes, size_t index) {
         uint16_t bits;
         std::memcpy(&bits, bytes.data() + index * 2, 2);
@@ -1305,6 +1332,16 @@ private:
         });
     }
     void beginNormBlock() {
+        if(layerInput_ && !layerInputChecked_){
+            beginFusionRead(memory_->getBaseAddr()+SoftwareLayerResidency::record,64,
+                [this](const std::vector<uint8_t>& b){
+                    if(!SoftwareLayerResidency::matches(b,desc_.completion_value,desc_.input_addr,
+                        desc_.rows_per_node,desc_.hidden_dim,desc_.reserved-1,desc_.manager_slot)){
+                        fail();return;
+                    }
+                    layerInputChecked_=true;beginNormBlock();
+                });return;
+        }
         normRow_ = (desc_.reserved - 1) * 64;
         if (gammaReady_) { phase_ = Phase::NormBatch; return; }
         pending_ = true;
@@ -1320,13 +1357,8 @@ private:
         const uint32_t rows = std::min<uint32_t>(8192 / desc_.hidden_dim, (desc_.reserved * 64) - normRow_);
         const size_t bytes = rows * desc_.hidden_dim * 2;
         normIssueTick_ = nowTick_;
-        pending_ = true;
-        memory_->dma_read_from_host_to_globalmem(
-            desc_.input_addr + static_cast<uint64_t>(blockStart_ + normRow_) * desc_.hidden_dim * 2,
-            bytes, desc_.scratch_addr + 0x40000, [this, bytes](bool ok) {
-                pending_ = false;
-                if (!ok) { fail(); return; }
-                beginFusionRead(desc_.scratch_addr + 0x40000, bytes,
+        const auto consume=[this,bytes](uint64_t address){
+                beginFusionRead(address, bytes,
                     [this](const std::vector<uint8_t>& raw) {
                         normInput_.resize(raw.size() / 2);
                         for (size_t i = 0; i < normInput_.size(); ++i) normInput_[i] = decode(raw, i);
@@ -1349,7 +1381,27 @@ private:
                                 phase_ = Phase::NormWait;
                             });
                     });
-            });
+        };
+        if(layerInput_){
+            layerInputSaved_+=bytes;
+            consume(memory_->getBaseAddr()+SoftwareLayerResidency::payload+
+                    uint64_t(normRow_-(desc_.reserved-1)*64)*desc_.hidden_dim*2);
+        }else if(layerSeed_){
+            const uint64_t cached=memory_->getBaseAddr()+SoftwareLayerResidency::payload+
+                uint64_t(normRow_-(desc_.reserved-1)*64)*desc_.hidden_dim*2;
+            layerSeedSaved_+=bytes;
+            pending_=true;
+            memory_->dma_read_from_host_to_globalmem(
+                desc_.input_addr+uint64_t(blockStart_+normRow_)*desc_.hidden_dim*2,bytes,cached,
+                [this,consume,cached](bool ok){pending_=false;if(!ok){fail();return;}consume(cached);});
+        }else{
+            pending_=true;
+            memory_->dma_read_from_host_to_globalmem(
+                desc_.input_addr+uint64_t(blockStart_+normRow_)*desc_.hidden_dim*2,bytes,
+                desc_.scratch_addr+0x40000,[this,consume](bool ok){
+                    pending_=false;if(!ok){fail();return;}consume(desc_.scratch_addr+0x40000);
+                });
+        }
     }
     void finishNormBatch() {
         std::vector<uint8_t> raw(vectorResult_.values.size() * 2);
@@ -1383,6 +1435,10 @@ private:
         normInput_.clear();
         gamma_.clear();
         if (normRow_ == desc_.reserved * 64) {
+            if(layerSeed_)std::printf("[PROJECTION_INPUT_RESIDENCY] core=%u epoch=%llu retained_bytes=%llu metadata_bytes=64 status=0\n",
+                executionCore(),(unsigned long long)desc_.completion_value,(unsigned long long)layerSeedSaved_);
+            if(layerInput_)std::printf("[PROJECTION_LAYER_RESIDENCY] core=%u epoch=%llu saved_hbm_read=%llu metadata_bytes=64 capacity_added=0 status=0\n",
+                executionCore(),(unsigned long long)desc_.completion_value,(unsigned long long)layerInputSaved_);
             ++inputLoads_;
             blockLoaded_ = true;
             phase_ = Phase::LoadInput;
@@ -1482,6 +1538,63 @@ private:
         } else {
             phase_ = Phase::LoadWeight;
         }
+    }
+
+    void beginProjectionWindow() {
+        if(desc_.head_dim!=64 || rowGroup()!=64 || !reuseBlock_){fail();return;}
+        if(windowPackInput_ && !windowInputPacked_){packProjectionWindowInput();return;}
+        phase_=Phase::WindowGemm;
+        std::vector<uint32_t> tiles;
+        for(uint32_t n=0;n<desc_.query_heads+2*desc_.kv_heads;++n)tiles.push_back(n);
+        window_.start(64,desc_.hidden_dim/64,std::move(tiles),desc_.scratch_addr+0x60000,
+            desc_.scratch_addr+0xA0000,desc_.scratch_addr+0xA8000,
+            [this](uint32_t k,ReuseWindowGemm::Loaded done){
+                beginLocalInputPairRead(inputPairAddr(row_,k-k%2),[this,k,done](const std::vector<uint8_t>& raw){
+                    std::vector<double> values(64*64);
+                    for(uint32_t r=0;r<64;++r)for(uint32_t j=0;j<64;++j)
+                        values[r*64+j]=decode(raw,r*128+(k%2)*64+j);
+                    phase_=Phase::WindowGemm;done(true,values);
+                });},
+            [this](uint32_t n,uint32_t k){return desc_.weights_addr+(uint64_t(n)*(desc_.hidden_dim/64)+k)*8192;},
+            [this](uint32_t n,const std::vector<double>& values){
+                kind_=n<desc_.query_heads?0:n<desc_.query_heads+desc_.kv_heads?1:2;
+                head_=kind_==0?n:kind_==1?n-desc_.query_heads:n-desc_.query_heads-desc_.kv_heads;
+                dimTile_=0;inputTile_=desc_.hidden_dim/64-1;outputValues_=values;
+                phase_=Phase::PrepareOutput;
+            },
+            [this](bool ok){
+                if(!ok){fail();return;}
+                window_.trace(executionCore(),desc_.completion_value,0,"qkv");
+                localReadBytes_+=window_.localReadBytes();localWriteBytes_+=window_.localWriteBytes();
+                weightLoads_+=window_.launches();weightPrograms_+=window_.launches();
+                std::printf("[GEMM_REUSE_WINDOW] core=%u operator=qkv row=%u reuse_n=4 reuse_m=1 k_window=%u windows=%llu launches=%llu hbm_read=%llu gm_read=%llu gm_write=%llu c_gm_read=%llu c_gm_write=%llu c_drains=%llu c_restores=%llu transfer_compute_overlap=%llu status=0\n",
+                    executionCore(),row_,window_.kWindow(),(unsigned long long)window_.windows(),(unsigned long long)window_.launches(),
+                    (unsigned long long)window_.hbmReadBytes(),(unsigned long long)window_.localReadBytes(),
+                    (unsigned long long)window_.localWriteBytes(),(unsigned long long)window_.cReadBytes(),
+                    (unsigned long long)window_.cWriteBytes(),(unsigned long long)window_.drains(),
+                    (unsigned long long)window_.restores(),(unsigned long long)window_.transferOverlapCycles());
+                blockStart_+=256;row_=blockStart_+(desc_.reserved-1)*64;kind_=head_=dimTile_=inputTile_=0;
+                blockLoaded_=false;windowInputPacked_=false;windowPackK_=0;
+                phase_=blockStart_>=desc_.rows_per_node?Phase::WriteDrain:Phase::LoadBlock;
+            },{},windowPackInput_?std::function<uint64_t(uint32_t)>([this](uint32_t k){
+                return desc_.scratch_addr+0x60000+uint64_t(k)*64*128;
+            }):std::function<uint64_t(uint32_t)>{});
+    }
+    void packProjectionWindowInput(){
+        // Repack each adjacent K pair exactly once through real GM ports.
+        // The existing 256 KiB A scratch then aliases all four-N windows.
+        const uint32_t k=windowPackK_;
+        beginLocalInputPairRead(inputPairAddr(row_,k),[this,k](const std::vector<uint8_t>& raw){
+            if(raw.size()!=64*256){fail();return;}
+            std::vector<uint8_t> packed(raw.size());
+            for(uint32_t half=0;half<2;++half)for(uint32_t r=0;r<64;++r)
+                std::copy_n(raw.begin()+r*256+half*128,128,packed.begin()+(half*64+r)*128);
+            beginLocalWrite(desc_.scratch_addr+0x60000+uint64_t(k)*64*128,std::move(packed),[this]{
+                windowPackK_+=2;
+                if(windowPackK_==desc_.hidden_dim/64){windowInputPacked_=true;phase_=Phase::LoadInput;}
+                else packProjectionWindowInput();
+            });
+        });
     }
     uint32_t headCount() const { return kind_ == 0 ? desc_.query_heads : desc_.kv_heads; }
     uint32_t weightHead() const {
@@ -1625,6 +1738,7 @@ private:
         }
     }
     void advance() {
+        if(allGemmWindow_ && window_.active()) {phase_=Phase::WindowGemm;window_.resumeOutput();return;}
         if (reuseBlock_) {
             if (rowFirst_) {
                 inputTile_ = 0;
@@ -1716,9 +1830,13 @@ private:
         phase_ = Phase::LoadInput;
     }
 
+    ReuseWindowGemm window_; bool allGemmWindow_=false;
+    bool windowPackInput_=false,windowInputPacked_=false;uint32_t windowPackK_=0;
     SFUAPI* vectorEngine_;
     bool causalTrace_ = false;
     bool fuseNorm_ = false, fuseRope_ = false, audit_ = true, gammaReady_ = false;
+    bool layerInput_=false,layerInputChecked_=false;uint64_t layerInputSaved_=0;
+    bool layerSeed_=false,layerSeedPublished_=false,layerSeedPublishing_=false;uint64_t layerSeedSaved_=0;
     uint32_t normRow_ = 0, ropeCacheBlock_ = ~uint32_t{0};
     uint64_t nowTick_ = 0, normIssueTick_ = 0;
     uint64_t fusionReadBytes_ = 0, fusionWriteBytes_ = 0;

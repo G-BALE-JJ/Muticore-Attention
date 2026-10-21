@@ -35,6 +35,30 @@ struct DecoderMemoryLayout {
     // a later row group loads its input. No new SRAM or layout high-water.
     static constexpr uint64_t decoder_epilogue_gm=decoder_input_gm+64*2048*2;
     static_assert(decoder_epilogue_gm+8192<=decoder_weight_gm,"epilogue scratch overlaps weights");
+    // op9 uses at most 256 KiB of the input arena. Software cohort slots use
+    // a disjoint, otherwise idle 64 KiB range; no change to GM capacity.
+    static constexpr uint64_t decoder_shared_weight_gm=decoder_input_gm+0x60000;
+    static_assert(decoder_shared_weight_gm>=decoder_epilogue_gm+8192 &&
+                  decoder_shared_weight_gm+8*8192<=decoder_weight_gm,"shared weight slots overlap live GM");
+    // Two independent software window C scratch ranges in the unused op9
+    // input arena. Existing SRAM, ports and high-water remain unchanged.
+    static constexpr uint64_t decoder_pipeline_producer_c_gm=0x80000;
+    static constexpr uint64_t decoder_pipeline_down_c_gm=0x90000;
+    // Retain one Norm2 row group in existing, disjoint input-arena space.
+    static constexpr uint64_t decoder_norm_handoff_gm=0xb0000;
+    static constexpr uint64_t decoder_norm_handoff_bytes=64*2048*2;
+    // Stage-chain Wo output temporarily aliases the idle GM interval below
+    // the retained residual input. This changes software lifetimes only.
+    static constexpr uint64_t decoder_wo_handoff_gm=0x70000;
+    static constexpr uint64_t decoder_wo_handoff_bytes=64*2048*2;
+    static_assert(decoder_wo_handoff_gm+decoder_wo_handoff_bytes==decoder_norm_handoff_gm,
+                  "Wo handoff overlaps retained residual input");
+    static_assert(decoder_norm_handoff_gm>=decoder_pipeline_down_c_gm+4*64*256 &&
+                  decoder_norm_handoff_gm+decoder_norm_handoff_bytes<=decoder_weight_gm,
+                  "Norm2 handoff overlaps live scratch");
+    static_assert(decoder_pipeline_producer_c_gm>=decoder_shared_weight_gm+8*8192 &&
+                  decoder_pipeline_producer_c_gm+4*64*256<=decoder_pipeline_down_c_gm &&
+                  decoder_pipeline_down_c_gm+4*64*256<=decoder_weight_gm,"pipeline scratch overlaps live GM");
     static constexpr uint64_t decoder_output_gm=0x112000;
     // Two bounded 64-row x 1024-column FP16 output panels. Input K=8192
     // remains in its existing 1 MiB slot; this does not enlarge worker SRAM.

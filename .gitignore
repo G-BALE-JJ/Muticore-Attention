@@ -70,6 +70,7 @@ src/sst/elements/golem/tests/small/muticore_softmax/figures/**/*.tiff
 
 # Local agent plans and generated performance artifacts
 .planning/
+baseline/attention_cluster_8qk_8pv/.all_gemm_reuse_runner_*/
 
 # Attention cluster simulator runs. Keep only compact final verification JSON.
 /results/**

@@ -1,12 +1,21 @@
 import subprocess
+import json
 import tempfile
 import unittest
 from pathlib import Path
 import numpy as np
-from run_decoder_stack import memory_layout,prepare,validate_inputs,verify_final_norm
+from run_decoder_stack import memory_layout,prepare,validate_inputs,verify_final_norm,verify_epoch_resets
 
 
 class DecoderStackTest(unittest.TestCase):
+    def test_epoch_flags_initialize_first_generation_and_elide_only_later_resets(self):
+        flags={100,200};good=[dict(address=a,value=0,status=0) for a in flags]
+        for enabled in (False,True):verify_epoch_resets(good,flags,1,enabled)
+        verify_epoch_resets(good,flags,2,False)
+        verify_epoch_resets([],flags,2,True)
+        for group,epoch,enabled in (([],1,True),([],2,False),(good,2,True),(good[:1],1,True)):
+            with self.assertRaises(ValueError):verify_epoch_resets(group,flags,epoch,enabled)
+
     def test_two_formal_layers_fit_and_have_no_aliases(self):
         m=memory_layout(32,8)
         self.assertLessEqual(m['used_bytes'],128*2**20)
@@ -76,6 +85,22 @@ class DecoderStackTest(unittest.TestCase):
             result=self.final_fixture(Path(directory))
             self.assertEqual(result['output_ack_bytes'],1024*256*2)
             self.assertEqual(result['last_completion_ack_tick'],395)
+
+    def test_reused_gamma_requires_exact_physical_load_and_complete_coverage(self):
+        for invalid in (False,True):
+            with self.subTest(invalid=invalid),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory)
+                (root/'decoder_stack_provenance.json').write_text(json.dumps(
+                    {'environment':{'GOLEM_DECODER_GAMMA_REUSE':'1'}}))
+                def mutate(lines,events):
+                    lines[:]=[line.replace('hbm_read=33792','hbm_read=33280') for line in lines]
+                    events[:]=[e for e in events if e['start_tick']!=340]
+                    if invalid:
+                        # Preserve the byte count, but read the wrong gamma half.
+                        events[1]['address']+=256
+                if invalid:
+                    with self.assertRaises(ValueError):self.final_fixture(root,mutate)
+                else:self.assertEqual(self.final_fixture(root,mutate)['status'],'PASS')
 
     def test_final_norm_rejects_stale_epoch_early_ack_and_missing_output(self):
         mutations=[lambda lines,events:lines.__setitem__(1,lines[1].replace('epoch=3','epoch=2')),

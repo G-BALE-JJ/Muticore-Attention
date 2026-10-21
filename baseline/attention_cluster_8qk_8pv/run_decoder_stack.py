@@ -283,8 +283,12 @@ def verify_numerics(case,m):
     results['last_attention']=compare(o,attention_reference(rms(x,gamma1),weights['qkv'],hq,hkv,table),3e-4,'last_attention')
     actual={}
     def check(name,want,tolerance=0):
-        actual[name]=read(s[name],want.shape[1])
-        results['last_'+name]=compare(actual[name],want,tolerance,name)
+        if m.get('gm_stage_chain') and sequence<=1024 and name in ('wo','h1','norm2'):
+            actual[name]=want
+            results['last_'+name]={'status':'ELIDED','reason':'consumed from timed GM stage chain; reconstructed independently; complete device Y still checked'}
+        else:
+            actual[name]=read(s[name],want.shape[1])
+            results['last_'+name]=compare(actual[name],want,tolerance,name)
     check('wo',linear_reference(o,weights['wo']))
     check('h1',storage_half(x.astype('f4')+actual['wo'].astype('f4')))
     check('norm2',rms(actual['h1'],gamma2),2e-3)
@@ -326,8 +330,19 @@ def fields(line):
     return {k:int(v) for k,v in re.findall(r'(\w+)=(\d+)',line)}
 
 
+def verify_epoch_resets(group,flags,epoch,epoch_flags):
+    required=not epoch_flags or epoch==1
+    if (len(group)!=(len(flags) if required else 0) or
+        {e['address'] for e in group}!=(flags if required else set()) or
+        any(e['value'] or e['status'] for e in group)):
+        raise ValueError('flag reset not ACKed before projection release')
+
+
 def verify_lifecycle(case,m):
     epochs=range(1,m['layers']+1);jobs=16*m['layers'];groups=m['sequence']//1024
+    provenance=case/'decoder_stack_provenance.json'
+    env=json.loads(provenance.read_text()).get('environment',{}) if provenance.exists() else {}
+    epoch_flags=env.get('GOLEM_DECODER_EPOCH_FLAGS','0')=='1'
     log=next((case/'logs').glob('attention-sst*.log'))
     accepts=[]; ops=[];resets=[];scratch=[];ffn_flow=[];down_flow=[]
     with log.open() as stream:
@@ -350,7 +365,7 @@ def verify_lifecycle(case,m):
     if m.get('ffn_down_fusion'):elided.add(8)
     if m.get('down_residual_fusion'):elided.add(9)
     expected_stages=[stage for stage in range(1,10) if stage not in elided]
-    if len(accepts)!=jobs or len(ops)!=jobs*len(expected_stages) or len(resets)!=2*jobs or len(scratch)!=2*jobs:raise ValueError('missing or duplicate layer jobs/reset ACKs')
+    if len(accepts)!=jobs or len(ops)!=jobs*len(expected_stages) or len(resets)!=(32 if epoch_flags else 2*jobs) or len(scratch)!=2*jobs:raise ValueError('missing or duplicate layer jobs/reset ACKs')
     if m.get('ffn_panel_fusion'):
         panel_tiles=m['ffn_panel_tiles'];panels=(4*m['hidden']//64+panel_tiles-1)//panel_tiles
         expected={(core,epoch) for core in range(4,20) for epoch in epochs}
@@ -365,7 +380,9 @@ def verify_lifecycle(case,m):
                 raise ValueError('missing/duplicate fused down worker generation')
             if any(e['panels_consumed']!=panels*groups or e['cbuffer_bytes']!=partial_bytes or
                    e['cbuffer_read_bytes']!=movement or e['cbuffer_write_bytes']!=movement or
-                   e['restores']!=(passes-1)*(m['hidden']//64)*groups for e in down_flow):
+                   (e['restores']!=(passes-1)*(m['hidden']//64)*groups and
+                    not (os.environ.get('GOLEM_ALL_GEMM_REUSE_WINDOW')=='1' and e['restores']==0))
+                   for e in down_flow):
                 raise ValueError('fused down partial storage/restore lifecycle mismatch')
     begin={};end={};stages={};s=m['layout']['shared'];stride=m['layout']['node_stride']
     flags={node*stride+s[name]+lane*8 for node in range(1,5) for name in ('projection_done','decoder_done') for lane in range(4)}
@@ -387,8 +404,7 @@ def verify_lifecycle(case,m):
                 'workers':16,'hbm_read_bytes':sum(e['hbm_read'] for e in group),'hbm_write_bytes':sum(e['hbm_write'] for e in group)}
         stages[str(epoch)]=stage_summary;end[epoch]=stage_summary['4' if m.get('down_residual_fusion') else '9']['end_tick']
         group=[e for e in resets if (epoch==1 or e['tick']>=end[epoch-1]) and e['tick']<begin[epoch]]
-        if len(group)!=32 or {e['address'] for e in group}!=flags or any(e['value'] or e['status'] for e in group):
-            raise ValueError('flag reset not ACKed before projection release')
+        verify_epoch_resets(group,flags,epoch,epoch_flags)
     for core in range(4,20):
         retires=sorted((e for e in scratch if e['core']==core),key=lambda e:e['tick'])
         if len(retires)!=2*m['layers']:raise ValueError('missing worker scratch ownership transitions')
@@ -432,7 +448,7 @@ def verify_lifecycle(case,m):
     tags=[tag for entry in cluster.values() for tag in entry['root_tags']]
     if len(set(tags))!=len(tags):raise ValueError('layer Attention tag reused')
     (case/'decoder_stack_attention.json').write_text(json.dumps(cluster,indent=2)+'\n')
-    return log,begin,end,{'status':'PASS','projection_jobs':jobs,'decoder_ops':len(ops),'reset_ack_count':2*jobs,
+    return log,begin,end,{'status':'PASS','projection_jobs':jobs,'decoder_ops':len(ops),'reset_ack_count':len(resets),'epoch_flags':epoch_flags,
         'layers':m['layers'],'scratch_retire_count':2*jobs,'distinct_attention_tags':True,'all_attention_jobs_checked':sum(e['completed_jobs'] for e in cluster.values()),'stage_spans':stages,
         'ffn_panel_flow':ffn_flow,'ffn_down_flow':down_flow}
 
@@ -444,14 +460,22 @@ def verify_dma(log,m,begin,end):
     stride=m['layout']['node_stride'];qbytes=(m['sequence']//4)*m['hidden']*2;s=m['layout']['shared']
     layers={epoch:{'first_input':None,'last_o':0,'last_y':0,'o_writes':[],'y_writes':[],'o_bytes':0,'y_bytes':0} for epoch in epochs}
     ranges=lambda offset:[(node*stride+offset,node*stride+offset+qbytes) for node in range(1,5)]
+    resident=m.get('layer_residency',False) and m.get('sequence',1024)<=1024
     with log.with_suffix('.resources.jsonl').open() as stream:
         for line in stream:
-            if 'resource=dma_read_transport ' not in line and 'resource=dma_write_transport ' not in line:continue
+            if ('resource=dma_read_transport ' not in line and 'resource=dma_write_transport ' not in line
+                and not (resident and 'resource=local_read ' in line)):continue
             e={k:int(v) for k,v in FIELDS.findall(line) if k not in ('domain','resource')}
             epoch=next((n for n in epochs if begin[n]<=e['start_tick']<=end[n]),None)
             if epoch is None:continue
             state=layers[epoch];l=m['layout']['layers'][epoch-1]
-            if 'resource=dma_read_transport ' in line and contained(e['address'],e['bytes'],ranges(l['input'])):
+            local_input=(resident and epoch>1 and 'resource=local_read ' in line and 4<=e['core']<20 and
+                         e['core']*0x200000+0xb0000<=e['address'] and
+                         e['address']+e['bytes']<=e['core']*0x200000+0xb0000+64*m['hidden']*2)
+            hbm_input=(not (resident and epoch>1) and 'resource=dma_read_transport ' in line and
+                       contained(e['address'],e['bytes'],ranges(l['input'])))
+            if local_input or hbm_input:
+                if e['ok']!=1:raise ValueError('layer input read failed')
                 state['first_input']=e['start_tick'] if state['first_input'] is None else min(state['first_input'],e['start_tick'])
             if 'resource=dma_write_transport ' in line:
                 for key,offset in [('o',s['o']),('y',l['output'])]:
@@ -467,7 +491,8 @@ def verify_dma(log,m,begin,end):
                 raise ValueError('incomplete or duplicate layer output ACK coverage')
         if state['last_o']>min(v['start_tick'] for v in m['_lifecycle']['stage_spans'][str(epoch)].values()):
             raise ValueError('Wo started before all Attention O ACKs')
-        result[str(epoch)]={'first_input_dma_tick':state['first_input'],'last_attention_o_ack_tick':state['last_o'],
+        if state['first_input']>=state['last_o']:raise ValueError('layer input must precede attention output')
+        result[str(epoch)]={'first_input_dma_tick':state['first_input'],'input_source':'GM' if resident and epoch>1 else 'HBM','last_attention_o_ack_tick':state['last_o'],
             'last_y_ack_tick':state['last_y'],'attention_cycles':(state['last_o']-state['first_input'])/1000,
             'post_attention_cycles':(state['last_y']-state['last_o'])/1000,
             'layer_cycles':(state['last_y']-state['first_input'])/1000,'output_ack_bytes':state['y_bytes']}
@@ -504,11 +529,17 @@ def verify_final_norm(case,m,log,end,timing):
         any(e['status'] or e['value'] or not end[m['layers']]<=e['tick']<start for e in resets)):
         raise ValueError('final RMSNorm flag reset ACK/barrier failed')
     states={e['core']:{'op':e,'reads':[],'writes':[],'read_bytes':0,'write_bytes':0,
-        'gamma_bytes':0,'last_output':0,'flag_acks':[]} for e in ops}
+        'gamma_bytes':0,'gamma_reads':[],'last_output':0,'flag_acks':[]} for e in ops}
+    provenance_path=case/'decoder_stack_provenance.json'
+    recorded_env=json.loads(provenance_path.read_text())['environment'] if provenance_path.exists() else {}
+    gamma_reuse=recorded_env.get('GOLEM_DECODER_GAMMA_REUSE','0')=='1'
+    resident=recorded_env.get('GOLEM_DECODER_LAYER_RESIDENCY','0')=='1' and m.get('sequence',1024)<=1024
+    for state in states.values():state.update(local_reads=[],local_bytes=0)
     first_input=None
     with log.with_suffix('.resources.jsonl').open() as stream:
         for line in stream:
-            if 'resource=dma_read_transport ' not in line and 'resource=dma_write_transport ' not in line:continue
+            if ('resource=dma_read_transport ' not in line and 'resource=dma_write_transport ' not in line
+                and not (resident and 'resource=local_read ' in line)):continue
             e={k:int(v) for k,v in FIELDS.findall(line) if k not in ('domain','resource')}
             if e['core'] not in states:continue
             state=states[e['core']];op=state['op']
@@ -517,7 +548,14 @@ def verify_final_norm(case,m,log,end,timing):
             input_ranges=ranges(node,lane,m['layout']['layers'][-1]['output'])
             output_ranges=ranges(node,lane,final['output'])
             address=e['address'];stop=address+e['bytes']
-            if 'resource=dma_read_transport ' in line:
+            if 'resource=local_read ' in line:
+                base=e['core']*0x200000+0xb0000
+                if base<=address<stop<=base+row_bytes:
+                    if e['ok']!=1 or e['start_tick']<=timing['layers'][str(m['layers'])]['last_y_ack_tick']:
+                        raise ValueError('final RMSNorm GM read before final layer Y ACK')
+                    state['local_reads'].append((address,stop));state['local_bytes']+=e['bytes']
+                    first_input=e['start_tick'] if first_input is None else min(first_input,e['start_tick'])
+            elif 'resource=dma_read_transport ' in line:
                 if any(a<=address<stop<=b for a,b in input_ranges):
                     if e['ok']!=1 or e['start_tick']<=timing['layers'][str(m['layers'])]['last_y_ack_tick']:
                         raise ValueError('final RMSNorm input read before final layer Y ACK')
@@ -526,6 +564,7 @@ def verify_final_norm(case,m,log,end,timing):
                 elif node*stride+final['gamma']<=address<stop<=node*stride+final['gamma']+hidden*2:
                     if e['ok']!=1:raise ValueError('final gamma DMA failure')
                     state['gamma_bytes']+=e['bytes']
+                    state['gamma_reads'].append((address,stop))
                 else:raise ValueError('unexpected final RMSNorm input DMA address')
             else:
                 if any(a<=address<stop<=b for a,b in output_ranges):
@@ -539,10 +578,17 @@ def verify_final_norm(case,m,log,end,timing):
     for core,state in states.items():
         node=1+(core-4)%4;lane=(core-4)//4;op=state['op']
         for key,offset in [('reads',m['layout']['layers'][-1]['output']),('writes',final['output'])]:
-            if merged(state[key])!=merged(ranges(node,lane,offset)):raise ValueError('final RMSNorm DMA coverage incomplete')
-        gamma_bytes=((64*hidden+8191)//8192)*hidden*2*groups
-        if (state['read_bytes']!=row_bytes*groups or state['write_bytes']!=row_bytes*groups or state['gamma_bytes']!=gamma_bytes or
-            op['hbm_read']!=row_bytes*groups+gamma_bytes or op['hbm_write']!=row_bytes*groups+8):
+            expected=[] if resident and key=='reads' else merged(ranges(node,lane,offset))
+            if merged(state[key])!=expected:raise ValueError('final RMSNorm DMA coverage incomplete')
+        if resident and (merged(state['local_reads'])!=[(core*0x200000+0xb0000,core*0x200000+0xb0000+row_bytes)] or state['local_bytes']!=row_bytes):
+            raise ValueError('final RMSNorm retained GM coverage incomplete/duplicate')
+        gamma_bytes=hidden*2 if gamma_reuse else ((64*hidden+8191)//8192)*hidden*2*groups
+        gamma_start=node*stride+final['gamma']
+        if merged(state['gamma_reads'])!=[(gamma_start,gamma_start+hidden*2)]:
+            raise ValueError('final RMSNorm gamma DMA coverage incomplete')
+        input_bytes=0 if resident else row_bytes*groups
+        if (state['read_bytes']!=input_bytes or state['write_bytes']!=row_bytes*groups or state['gamma_bytes']!=gamma_bytes or
+            op['hbm_read']!=input_bytes+gamma_bytes or op['hbm_write']!=row_bytes*groups+8):
             raise ValueError('final RMSNorm duplicate/missing data or gamma DMA')
         if (len(state['flag_acks'])!=1 or state['flag_acks'][0]['start_tick']<state['last_output'] or
             not state['last_output']<=state['flag_acks'][0]['done_tick']<=op['tick']):
@@ -552,7 +598,7 @@ def verify_final_norm(case,m,log,end,timing):
         raise ValueError('final RMSNorm root completion missing/failed')
     last_output=max(s['last_output'] for s in states.values())
     return {'status':'PASS','workers':16,'epoch':epoch,'reset_ack_count':16,
-        'first_input_dma_tick':first_input,'last_output_ack_tick':last_output,
+        'first_input_dma_tick':first_input,'input_source':'GM' if resident else 'HBM','last_output_ack_tick':last_output,
         'last_completion_ack_tick':max(s['flag_acks'][0]['done_tick'] for s in states.values()),
         'output_ack_bytes':16*row_bytes*groups,'rmsnorm_cycles':(last_output-first_input)/1000,
         'handoff_cycles':(first_input-timing['layers'][str(m['layers'])]['last_y_ack_tick'])/1000,
@@ -612,11 +658,18 @@ def main():
     p.add_argument('--down-input-reuse',action='store_true',help='K-major down loop reuses existing array inputs; spills only to existing timed partial SRAM')
     p.add_argument('--ffn-array-groups',type=int,choices=(1,2),default=1,
                    help='software interleave two disjoint 32-array subsets for fused FFN; hardware unchanged')
+    p.add_argument('--gm-stage-chain',action='store_true',help='software residency across Wo/Add/Norm2/FFN in existing GM')
+    p.add_argument('--layer-residency',action='store_true',help='reuse existing GM Y in next Norm1/final Norm')
+    p.add_argument('--input-residency',action='store_true',help='retain layer input in existing GM for residual Add')
+    p.add_argument('--lm-input-residency',action='store_true',help='reuse GM last-token input across adjacent LM descriptors')
     p.add_argument('--lm-n-parallel',type=int,choices=(1,2,4,8),default=1,
                    help='map distinct M=1 vocabulary tiles to existing arrays; hardware unchanged')
     a=p.parse_args();case=a.artifact_root.resolve()
     if not 1<=a.layers<=32:p.error('--layers must be in [1,32]')
     if not 1<=a.sequence<=8192:p.error('--sequence must be in [1,8192]')
+    if a.gm_stage_chain and (not a.down_residual_fusion or a.ffn_layout!=2):p.error('--gm-stage-chain requires --down-residual-fusion --ffn-layout 2')
+    if a.layer_residency and not a.gm_stage_chain:p.error('--layer-residency requires --gm-stage-chain')
+    if a.input_residency and not a.layer_residency:p.error('--input-residency requires --layer-residency')
     if a.down_residual_fusion:a.ffn_down_fusion=True
     if a.ffn_down_fusion:a.ffn_panel_fusion=True
     if a.ffn_array_groups==2 and not a.ffn_panel_fusion:
@@ -675,6 +728,10 @@ def main():
         m['ffn_panel_fusion']=bool(a.ffn_panel_fusion)
         m['ffn_down_fusion']=bool(a.ffn_down_fusion)
         m['down_residual_fusion']=bool(a.down_residual_fusion)
+        m['gm_stage_chain']=bool(a.gm_stage_chain)
+        m['layer_residency']=bool(a.layer_residency)
+        m['input_residency']=bool(a.input_residency)
+        m['lm_input_residency']=bool(a.lm_input_residency)
         m['ffn_layout']=a.ffn_layout
         m['down_input_reuse']=a.down_input_reuse
         if a.ffn_panel_fusion:m['ffn_panel_tiles']=a.ffn_panel_tiles
@@ -688,6 +745,14 @@ def main():
         'GOLEM_RESOURCE_TRACE_DOMAINS':'gm','GOLEM_CRITICAL_PATH_TRACE':'1','OPENBLAS_NUM_THREADS':'1',
         'GOLEM_MPI_RANKS':str(a.mpi_ranks),
         'GOLEM_MPI_ARGS':f'--bind-to core --cpu-set {a.cpu_set or "0-"+str(a.mpi_ranks-1)} --output-filename {case/"mpi_rank_output"}'})
+    # Make checks source/header timestamps; an existing executable alone does
+    # not establish that a guest-side protocol change was compiled.
+    guest_target=Path(env['GOLEM_ATTENTION_GUEST_EXECUTABLE']).parent.name
+    subprocess.run(['make','-C',str(GUEST_DIR),guest_target],check=True)
+    env['GOLEM_DECODER_GM_STAGE_CHAIN']=str(int(a.gm_stage_chain))
+    env['GOLEM_DECODER_LAYER_RESIDENCY']=str(int(a.layer_residency))
+    env['GOLEM_DECODER_INPUT_RESIDENCY']=str(int(a.input_residency))
+    env['GOLEM_DECODER_LM_INPUT_RESIDENCY']=str(int(a.lm_input_residency))
     env['GOLEM_DECODER_NODE_BYTES']=str(node_bytes)
     env['GOLEM_DECODER_OUTPUT_PANEL_TILES']=str(a.output_panel_tiles)
     env['GOLEM_DECODER_OUTPUT_WRITE_WINDOW']=str(a.output_write_window)

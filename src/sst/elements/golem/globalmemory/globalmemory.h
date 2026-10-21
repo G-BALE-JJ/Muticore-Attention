@@ -125,6 +125,11 @@ enum class ControlTransportMessageKind {
     AttentionClusterPvVRequest,
     AttentionClusterPvVDelivery,
     DiagnosticProjectionReady,
+    GemmWeightJoin,
+    GemmWeightRequest,
+    GemmWeightDelivery,
+    GemmWeightFinish,
+    GemmWeightRelease,
 };
 
 struct ControlTransportMessage {

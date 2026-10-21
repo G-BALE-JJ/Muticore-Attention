@@ -127,6 +127,10 @@ def lm_environment(case,args,m,parallel):
     env=configured_environment(case,args,0,16)
     env.update(GOLEM_MEM_NODE_SIZE_BYTES=str(256*2**20),VANADIS_EXE=str(GUEST_DIR/'riscv64/decoder-lm-micro/lm'),
                GOLEM_DECODER_MICRO_CONFIG=f'{args.workers},{m["hidden"]},{m["vocab"]},256',GOLEM_DECODER_LM_N_PARALLEL=str(parallel))
+    if getattr(args,'reuse_window',False):
+        env.update(GOLEM_ALL_GEMM_REUSE_WINDOW='1',GOLEM_REUSE_WINDOW_K_TILES='32',
+                   GOLEM_REUSE_WINDOW_PREFETCH_SLOTS='4',GOLEM_REUSE_WINDOW_ARRAY_GROUPS='1',
+                   GOLEM_REUSE_WINDOW_EARLY_A='1',GOLEM_REUSE_WINDOW_OUTPUT_OVERLAP='1')
     return env
 
 
@@ -192,6 +196,7 @@ def main():
     p.add_argument('--shape',choices=('small','formal'),default='small');p.add_argument('--workers',type=int,choices=(1,16),default=1)
     p.add_argument('--mpi-ranks',type=int,choices=(1,4,8),default=1);p.add_argument('--cpu-set');p.add_argument('--vocab',type=int,default=128256)
     p.add_argument('--parallel',type=int,choices=(1,2,4,8),nargs='+',default=[1,2,4,8]);p.add_argument('--timeout',type=int,default=900)
+    p.add_argument('--reuse-window',action='store_true',help='retain all-window GEMM also for the N=1 control')
     p.add_argument('--verify-only',action='store_true');a=p.parse_args()
     if len(set(a.parallel))!=len(a.parallel) or 1 not in a.parallel:p.error('unique parallel choices including baseline 1 required')
     if not 1<=a.vocab<=128256:p.error('vocab must be in [1,128256]')

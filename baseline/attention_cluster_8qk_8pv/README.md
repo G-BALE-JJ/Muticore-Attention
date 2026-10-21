@@ -688,3 +688,8 @@ Attention 使用同一个 EXP/倒数资源对象。精度契约、竞争测试�
 
 后续优化采用 [局部 SST 筛选与端到端验收](LOCAL_TEST_WORKFLOW_2026-10-14.md)。
 `run_decoder_micro.py` 从预置 Norm2 开始，直接验证实际 FFN 数据通路，支持 1/4/16 worker、正式 K/N 宽度、可选 down 和配对收益报告。
+
+独立 all-GEMM reuse-window 基线及后续 GM 软件驻留优化见
+[Software Input Residency](SOFTWARE_INPUT_RESIDENCY_2026-10-22.md)。
+`--input-residency` 在已有 GM 中保留 Norm1 的原始输入，供残差 Add 复用；
+保留原始硬件资源及输出 ACK 协议，配置约束与正式端到端结果见该报告。
