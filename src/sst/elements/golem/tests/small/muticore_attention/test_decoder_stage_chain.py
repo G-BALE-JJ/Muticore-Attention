@@ -93,7 +93,11 @@ int main(){
 }
 '''
         source=source.replace('int main(){',r'''
-std::vector<uint8_t> wideChain(bool retained){
+std::vector<uint8_t> wideChain(bool retained,bool elide=false,uint32_t layers=8,bool residualInput=true){
+ setenv("GOLEM_DECODER_ELIDE_INTERMEDIATE_OUTPUT",elide?"1":"0",1);
+ setenv("GOLEM_DECODER_LAYERS",std::to_string(layers).c_str(),1);
+ setenv("GOLEM_DECODER_LAYER_RESIDENCY",elide || std::getenv("GOLEM_TEST_LAYER_CHECK")?"1":"0",1);
+ setenv("GOLEM_DECODER_INPUT_RESIDENCY",elide && residualInput?"1":"0",1);
  setenv("GOLEM_DECODER_GM_STAGE_CHAIN",retained?"1":"0",1);
  setenv("GOLEM_ALL_GEMM_REUSE_WINDOW","1",1);setenv("GOLEM_DECODER_FFN_LAYOUT","2",1);
  GlobalMemoryAPI gm;WorkerCommandProcessorAPI wcp;SFUAPI sfu;DecoderOpJob job(&gm,&wcp,&sfu);
@@ -101,6 +105,12 @@ std::vector<uint8_t> wideChain(bool retained){
  constexpr uint64_t in=0x40000000,out=0x50000000,stride=0x08000000,weight=0x01800000;
  constexpr uint64_t h1=stride+0x06000000,norm=0x60000000,gamma=0x70000000,final=0x72000000;
  for(uint32_t r=0;r<rows;++r)for(uint32_t c=0;c<h;++c)gm.put(in+(r*h+c)*2,.125);
+ if(elide && residualInput){
+  for(uint32_t r=0;r<rows;++r)for(uint32_t c=0;c<h;++c)
+   gm.put(DecoderMemoryLayout::decoder_norm_handoff_gm+(r*h+c)*2,.125);
+  const auto record=SoftwareLayerResidency::encode(6,in,rows,h,0,0);
+  for(size_t i=0;i<record.size();++i)gm.bytes[SoftwareLayerResidency::record+i]=record[i];
+ }
  for(uint32_t c=0;c<h;++c)gm.put(gamma+c*2,1);
  for(uint32_t n=0;n<17;++n)for(uint32_t c=0;c<64;++c)
   gm.put((1+n%4)*stride+weight+(n/4*17+n)*8192+(c*64+c)*2,.5);
@@ -134,7 +144,12 @@ std::vector<uint8_t> wideChain(bool retained){
  d.weights_offset=0x01000000;d.down_weights_offset=0x01400000;d.residual_offset=0x06000000;d.output_addr=final;
  d.completion_addr=0x78000000;execute(d);
  std::vector<uint8_t> result;
- for(uint32_t r=0;r<rows;++r)for(uint32_t c=0;c<h*2;++c)result.push_back(gm.bytes[final+r*h*2+c]);
+ const bool omitted=retained && elide && layers>7 && residualInput;
+ size_t outputBytes=0;
+ for(auto e:gm.writes)if(final<=e.first && e.first<final+rows*h*2)outputBytes+=e.second;
+ assert(outputBytes==(omitted?0:rows*h*2));
+ for(uint32_t r=0;r<rows;++r)for(uint32_t c=0;c<h*2;++c)
+  result.push_back(gm.bytes[(omitted?DecoderMemoryLayout::decoder_norm_handoff_gm:final)+r*h*2+c]);
  if(std::getenv("GOLEM_TEST_LAYER_CHECK")){
   if(retained){
    const uint64_t base=DecoderMemoryLayout::decoder_norm_handoff_gm;
@@ -153,7 +168,14 @@ std::vector<uint8_t> wideChain(bool retained){
  }
  return result;
 }
-int main(){assert(wideChain(false)==wideChain(true));
+int main(){
+ const auto wide=wideChain(false);
+ assert(wide==wideChain(true));
+ assert(wide==wideChain(true,true));
+ assert(wide==wideChain(true,true,7)); // Last layer must still materialize Y.
+ assert(wide==wideChain(false,true)); // No GM chain: retain the HBM fallback.
+ assert(wide==wideChain(true,true,8,false)); // HBM residual consumer needs the mirror.
+ setenv("GOLEM_DECODER_ELIDE_INTERMEDIATE_OUTPUT","0",1);
 ''')
         stub=timed_stub().replace(
             'for(size_t i=0;i<data.size();++i)bytes[addr+i]=data[i];cb(true,tag);return true;',

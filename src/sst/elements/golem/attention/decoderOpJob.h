@@ -33,6 +33,7 @@ public:
         layerResidency_=option("GOLEM_DECODER_LAYER_RESIDENCY",0,0,1);
         inputResidency_=option("GOLEM_DECODER_INPUT_RESIDENCY",0,0,1);
         lmInputResidency_=option("GOLEM_DECODER_LM_INPUT_RESIDENCY",0,0,1);
+        elideIntermediateOutput_=option("GOLEM_DECODER_ELIDE_INTERMEDIATE_OUTPUT",0,0,1);
         for (uint32_t i = 0; i < 64; ++i) arrays_.push_back(i);
         panelLimit_=option("GOLEM_DECODER_OUTPUT_PANEL_TILES",16,0,16);
         writeWindow_=option("GOLEM_DECODER_OUTPUT_WRITE_WINDOW",8,1,16);
@@ -87,6 +88,11 @@ public:
         }
         chainReadSaved_=chainWriteSaved_=chainLocalBytes_=0;
         layerProducer_=layerResidency_ && chainJob_==4;
+        const uint32_t layers=configuredLayers();
+        elideOutput_=elideIntermediateOutput_ && inputResidency_ && layerProducer_ && stageChain_ &&
+            allGemmWindow_ && ffnLayout_==2 && !normHandoff_ && !blockPipeline_ &&
+            !sharing_ && layers>1 && d.epoch>0 && d.epoch<layers;
+        elidedOutputBytes_=0;
         layerConsumer_=layerResidency_ && stageChain_ && d.op==3 && d.stage==10 &&
             d.rows<=256 && d.input_dim<=2048 && d.lane*64<d.rows;
         layerResidualConsumer_=inputResidency_ && layerResidency_ && stageChain_ &&
@@ -459,6 +465,13 @@ private:
     uint64_t chainGM() const {return gm_->getBaseAddr()+DecoderMemoryLayout::decoder_norm_handoff_gm;}
     uint64_t chainWoGM() const {return gm_->getBaseAddr()+DecoderMemoryLayout::decoder_wo_handoff_gm;}
     void finish(bool ok) {
+        if(elideOutput_){
+            const uint64_t expected=uint64_t(std::min(64u,d_.rows-d_.lane*64))*d_.input_dim*2;
+            if(ok && (!layerPublished_ || layerBytes_!=expected || elidedOutputBytes_!=expected))ok=false;
+            std::printf("[DECODER_OUTPUT_RESIDENCY] core=%u epoch=%u stage=%u local_produced=%llu saved_hbm_write=%llu published=%u capacity_added=0 status=%u\n",
+                core(),d_.epoch,d_.stage,(unsigned long long)layerBytes_,
+                (unsigned long long)elidedOutputBytes_,layerPublished_?1u:0u,ok?0u:1u);
+        }
         if(lmInputResidency_ && singleRow_ && d_.stage==11){
             lmInputValid_=ok;lmInputDesc_=d_;
             std::printf("[LM_INPUT_RESIDENCY] core=%u epoch=%u hit=%u saved_hbm_read=%llu capacity_added=0 status=%u\n",
@@ -975,6 +988,16 @@ private:
         auto* outputs=d_.op==9?downPanels_:panels_;
         for (uint32_t index=0;index<2;++index) {
             auto& p=outputs[index];
+            if (elideOutput_) {
+                // The residual epilogue sets draining only after every timed
+                // GM write ACK. Keep the payload for the next layer consumer.
+                if (p.draining) {
+                    if(p.inFlight || p.nextRow){finish(false);return;}
+                    elidedOutputBytes_+=uint64_t(p.rows)*p.tiles*128;
+                    p.nextRow=p.rows;p.draining=false;
+                }
+                continue;
+            }
             while (active_ && p.draining && p.nextRow<p.rows && totalOutputInFlight()<writeWindow_) {
                 const uint32_t row=p.nextRow++; ++p.inFlight;
                 const size_t bytes=p.tiles*128;
@@ -993,6 +1016,12 @@ private:
                     });
             }
         }
+    }
+    uint32_t configuredLayers() const {
+        const char* value=std::getenv("GOLEM_DECODER_LAYERS");
+        if (!value || !*value) return 0;
+        char* end=nullptr; const unsigned long parsed=std::strtoul(value,&end,10);
+        return end && *end==0 && parsed<=32 ? static_cast<uint32_t>(parsed) : 0;
     }
     uint32_t totalOutputInFlight() const { const auto* p=d_.op==9?downPanels_:panels_; return p[0].inFlight+p[1].inFlight; }
     uint64_t downOutputGM(uint32_t index) const {
@@ -1671,8 +1700,8 @@ private:
     // Software residency metadata only; payload lives in existing timed GM.
     bool stageChain_=false;uint32_t chainState_=0,chainJob_=0,residualCacheNext_=0;
     bool layerResidency_=false,layerProducer_=false,layerConsumer_=false,layerPublished_=false;
-    bool inputResidency_=false,layerResidualConsumer_=false;uint64_t layerResidualSaved_=0;
-    uint64_t layerBytes_=0,layerSaved_=0;
+    bool inputResidency_=false,layerResidualConsumer_=false,elideIntermediateOutput_=false,elideOutput_=false;uint64_t layerResidualSaved_=0;
+    uint64_t layerBytes_=0,layerSaved_=0,elidedOutputBytes_=0;
     bool lmInputResidency_=false,lmInputValid_=false,useLmInput_=false;
     DecoderOpDesc lmInputDesc_{};uint64_t lmInputSaved_=0;
     DecoderOpDesc chainDesc_{};uint64_t chainH1Address_=0,chainNormAddress_=0;

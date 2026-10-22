@@ -256,7 +256,9 @@ def verify_numerics(case,m):
         if precision is not None:
             from prefill_precision_reference import layer as fp32_layer, error as precision_error
             precision=fp32_layer(precision,weights,gamma1,gamma2,hq,hkv,table)
-        if m.get('retain_outputs') or index>=m['layers']-1:
+        if m.get('elide_intermediate_output') and index<m['layers']:
+            results[f'layer{index}_composed']={'status':'ELIDED','reason':'intermediate Y retained in timed GM; full independent chain composed through final Y'}
+        elif m.get('retain_outputs') or index>=m['layers']-1:
             got=read(l['output'],hidden)
             results[f'layer{index}_composed']=compare(got,expected,4e-3,f'layer{index}_composed')
             if precision is not None:precision_layers[str(index)]=precision_error(got,precision)
@@ -279,7 +281,9 @@ def verify_numerics(case,m):
     # The last layer's scratch survives. Check its nine stages against device
     # inputs so errors cannot cancel between operators or across layers.
     l=m['layout']['layers'][-1]; index=m['layers']
-    x=read(l['input'],hidden);o=read(s['o'],hidden)
+    from verification_retained_input import last_layer_input
+    x,input_proof=last_layer_input(case,m);x=x[:logical];o=read(s['o'],hidden)
+    results['last_layer_input_reference']=input_proof
     results['last_attention']=compare(o,attention_reference(rms(x,gamma1),weights['qkv'],hq,hkv,table),3e-4,'last_attention')
     actual={}
     def check(name,want,tolerance=0):
@@ -459,6 +463,7 @@ def verify_dma(log,m,begin,end):
     epochs=range(1,m['layers']+1)
     stride=m['layout']['node_stride'];qbytes=(m['sequence']//4)*m['hidden']*2;s=m['layout']['shared']
     layers={epoch:{'first_input':None,'last_o':0,'last_y':0,'o_writes':[],'y_writes':[],'o_bytes':0,'y_bytes':0} for epoch in epochs}
+    elide_intermediate=bool(m.get('elide_intermediate_output',False))
     ranges=lambda offset:[(node*stride+offset,node*stride+offset+qbytes) for node in range(1,5)]
     resident=m.get('layer_residency',False) and m.get('sequence',1024)<=1024
     with log.with_suffix('.resources.jsonl').open() as stream:
@@ -487,13 +492,18 @@ def verify_dma(log,m,begin,end):
     for epoch,state in layers.items():
         if state['first_input'] is None:raise ValueError('no layer input DMA')
         for key,offset in [('o',s['o']),('y',m['layout']['layers'][epoch-1]['output'])]:
+            if key=='y' and elide_intermediate and epoch<m['layers']:
+                if state[key+'_writes'] or state[key+'_bytes']:
+                    raise ValueError('elided intermediate layer output still has HBM writes')
+                state['last_y']=m['_lifecycle']['stage_spans'][str(epoch)]['4' if m.get('down_residual_fusion') else '9']['end_tick']
+                continue
             if merged(state[key+'_writes'])!=merged(ranges(offset)) or state[key+'_bytes']!=4*qbytes:
                 raise ValueError('incomplete or duplicate layer output ACK coverage')
         if state['last_o']>min(v['start_tick'] for v in m['_lifecycle']['stage_spans'][str(epoch)].values()):
             raise ValueError('Wo started before all Attention O ACKs')
         if state['first_input']>=state['last_o']:raise ValueError('layer input must precede attention output')
         result[str(epoch)]={'first_input_dma_tick':state['first_input'],'input_source':'GM' if resident and epoch>1 else 'HBM','last_attention_o_ack_tick':state['last_o'],
-            'last_y_ack_tick':state['last_y'],'attention_cycles':(state['last_o']-state['first_input'])/1000,
+            'last_y_ack_tick':state['last_y'],'y_ready_source':'GM publication and completion ACK' if elide_intermediate and epoch<m['layers'] else 'HBM output ACK','attention_cycles':(state['last_o']-state['first_input'])/1000,
             'post_attention_cycles':(state['last_y']-state['last_o'])/1000,
             'layer_cycles':(state['last_y']-state['first_input'])/1000,'output_ack_bytes':state['y_bytes']}
     if any(result[str(n)]['first_input_dma_tick']<=result[str(n-1)]['last_y_ack_tick'] for n in epochs if n>1):raise ValueError('layer input read before previous Y ACK')
@@ -662,6 +672,7 @@ def main():
     p.add_argument('--layer-residency',action='store_true',help='reuse existing GM Y in next Norm1/final Norm')
     p.add_argument('--input-residency',action='store_true',help='retain layer input in existing GM for residual Add')
     p.add_argument('--lm-input-residency',action='store_true',help='reuse GM last-token input across adjacent LM descriptors')
+    p.add_argument('--elide-intermediate-output',action='store_true',help='elide non-final layer output HBM mirror when GM stage chain owns the consumer')
     p.add_argument('--lm-n-parallel',type=int,choices=(1,2,4,8),default=1,
                    help='map distinct M=1 vocabulary tiles to existing arrays; hardware unchanged')
     a=p.parse_args();case=a.artifact_root.resolve()
@@ -670,6 +681,10 @@ def main():
     if a.gm_stage_chain and (not a.down_residual_fusion or a.ffn_layout!=2):p.error('--gm-stage-chain requires --down-residual-fusion --ffn-layout 2')
     if a.layer_residency and not a.gm_stage_chain:p.error('--layer-residency requires --gm-stage-chain')
     if a.input_residency and not a.layer_residency:p.error('--input-residency requires --layer-residency')
+    if a.elide_intermediate_output and not a.layer_residency:p.error('--elide-intermediate-output requires --layer-residency')
+    if a.elide_intermediate_output and not a.input_residency:p.error('--elide-intermediate-output requires --input-residency for the next residual Add')
+    if a.elide_intermediate_output and (a.sequence>1024 or a.retain_layer_outputs):
+        p.error('--elide-intermediate-output requires S<=1024 and excludes --retain-layer-outputs')
     if a.down_residual_fusion:a.ffn_down_fusion=True
     if a.ffn_down_fusion:a.ffn_panel_fusion=True
     if a.ffn_array_groups==2 and not a.ffn_panel_fusion:
@@ -732,6 +747,7 @@ def main():
         m['layer_residency']=bool(a.layer_residency)
         m['input_residency']=bool(a.input_residency)
         m['lm_input_residency']=bool(a.lm_input_residency)
+        m['elide_intermediate_output']=bool(a.elide_intermediate_output)
         m['ffn_layout']=a.ffn_layout
         m['down_input_reuse']=a.down_input_reuse
         if a.ffn_panel_fusion:m['ffn_panel_tiles']=a.ffn_panel_tiles
@@ -753,6 +769,7 @@ def main():
     env['GOLEM_DECODER_LAYER_RESIDENCY']=str(int(a.layer_residency))
     env['GOLEM_DECODER_INPUT_RESIDENCY']=str(int(a.input_residency))
     env['GOLEM_DECODER_LM_INPUT_RESIDENCY']=str(int(a.lm_input_residency))
+    env['GOLEM_DECODER_ELIDE_INTERMEDIATE_OUTPUT']=str(int(a.elide_intermediate_output))
     env['GOLEM_DECODER_NODE_BYTES']=str(node_bytes)
     env['GOLEM_DECODER_OUTPUT_PANEL_TILES']=str(a.output_panel_tiles)
     env['GOLEM_DECODER_OUTPUT_WRITE_WINDOW']=str(a.output_write_window)

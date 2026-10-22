@@ -124,6 +124,8 @@ def verify(case):
     optimizations['layer_residency']['actual_projection_payload']=verify_projection_payload(case,manifest)
     optimizations['input_residency']=audit_input_residency(case,jobs,manifest)
     optimizations['input_residency']['actual_payload']=verify_input_payload(case,jobs,manifest)
+    from verify_output_residency import audit as audit_output_residency
+    optimizations['output_residency']=audit_output_residency(case,jobs,manifest)
     for key,value in chain_savings.items():handoff_savings[key]=handoff_savings.get(key,0)+value
     if manifest.get('ffn_panel_fusion'):
         hidden=manifest['hidden'];width=4*hidden;groups=manifest.get('sequence',1024)//1024
@@ -147,7 +149,9 @@ def verify(case):
                     or j['hbm_read']!=expected_read-weights+f['hbm_bytes']):
                     raise ValueError('shared FFN dense work, physical fetch or release mismatch')
         if len(paired)!=16*manifest.get('layers',2) or any(j['op']!=(9 if fused_down else 8) or
-                (not shared and j['hbm_read']!=expected_read-handoff_savings.get((j['core'],j['epoch']),0)) or j['hbm_write']!=expected_write for j in paired):
+                (not shared and j['hbm_read']!=expected_read-handoff_savings.get((j['core'],j['epoch']),0)) or
+                 j['hbm_write']!=(8 if manifest.get('elide_intermediate_output') and j['epoch']<manifest.get('layers',2) else expected_write)
+                for j in paired):
             raise ValueError('fused FFN must read one Norm2 row group plus all dense weights and write only '+('final residual' if residual else 'down' if fused_down else 'gated'))
     residual_flow=None
     if manifest.get('down_residual_fusion'):

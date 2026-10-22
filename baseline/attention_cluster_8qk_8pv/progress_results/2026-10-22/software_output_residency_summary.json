@@ -1,0 +1,679 @@
+{
+  "status": "PASS",
+  "selected": "final_candidate",
+  "timing": {
+    "完整端到端": {
+      "control_cycles": 6303926.0,
+      "candidate_cycles": 6288746.0,
+      "reduction_percent": 0.24080231906276062
+    },
+    "两层 decoder": {
+      "control_cycles": 5463352.75,
+      "candidate_cycles": 5458951.75,
+      "reduction_percent": 0.08055493030355576
+    },
+    "最终 RMSNorm": {
+      "control_cycles": 43832.375,
+      "candidate_cycles": 44345.375,
+      "reduction_percent": -1.1703677932122014
+    },
+    "LM head": {
+      "control_cycles": 671248.0,
+      "candidate_cycles": 659918.0,
+      "reduction_percent": 1.68790074607299
+    },
+    "第 1 层 FFN span": {
+      "control_cycles": 1963060.0,
+      "candidate_cycles": 1958252.0,
+      "reduction_percent": 0.24492374150560936
+    },
+    "第 1 层 attention": {
+      "control_cycles": 453150.75,
+      "candidate_cycles": 453150.75,
+      "reduction_percent": 0.0
+    },
+    "第 2 层 FFN span": {
+      "control_cycles": 1961415.0,
+      "candidate_cycles": 1965098.0,
+      "reduction_percent": -0.18777260294227105
+    },
+    "第 2 层 attention": {
+      "control_cycles": 438399.875,
+      "candidate_cycles": 438807.875,
+      "reduction_percent": -0.09306571996627877
+    }
+  },
+  "incremental_saved_hbm_read_bytes": 0,
+  "incremental_saved_hbm_write_bytes": 4194304,
+  "previous_selected_bits": {
+    "last_layer_y": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "final_norm": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "logits": {
+      "elements": 128256,
+      "fp16_bit_mismatches": 0
+    }
+  },
+  "paired_bits": {
+    "last_layer_y": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "final_norm": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "logits": {
+      "elements": 128256,
+      "fp16_bit_mismatches": 0
+    }
+  },
+  "environment_changes": {
+    "GOLEM_DECODER_ELIDE_INTERMEDIATE_OUTPUT": {
+      "control": "0",
+      "candidate": "1"
+    }
+  },
+  "decoder_job_hbm_totals": {
+    "final_control": {
+      "hbm_read": 4027846656,
+      "hbm_write": 17034368
+    },
+    "final_candidate": {
+      "hbm_read": 4027846656,
+      "hbm_write": 12840064
+    }
+  },
+  "reuse_window_flow": {
+    "final_control": {
+      "window_records": 1120,
+      "traffic": {
+        "launches": 539264,
+        "hbm_read": 4417650688,
+        "gm_read": 8318173184,
+        "gm_write": 0,
+        "c_gm_read": 0,
+        "c_gm_write": 0,
+        "c_drains": 20948,
+        "c_restores": 7168
+      },
+      "waits": {
+        "wait_a": 205067,
+        "wait_b_gm": 6140821,
+        "wait_b_dma": 3342396,
+        "wait_array": 31502282
+      },
+      "a_prefetch_enabled": 1,
+      "a_snapshot_high_water": 2,
+      "a_ready_hits": 477870,
+      "a_live_at_finish": 0
+    },
+    "final_candidate": {
+      "window_records": 1120,
+      "traffic": {
+        "launches": 539264,
+        "hbm_read": 4417650688,
+        "gm_read": 8318173184,
+        "gm_write": 0,
+        "c_gm_read": 0,
+        "c_gm_write": 0,
+        "c_drains": 20948,
+        "c_restores": 7168
+      },
+      "waits": {
+        "wait_a": 211163,
+        "wait_b_gm": 6096256,
+        "wait_b_dma": 3244574,
+        "wait_array": 31532823
+      },
+      "a_prefetch_enabled": 1,
+      "a_snapshot_high_water": 2,
+      "a_ready_hits": 477509,
+      "a_live_at_finish": 0
+    }
+  },
+  "output_residency_audit": {
+    "status": "PASS",
+    "enabled": true,
+    "verified_jobs": 16,
+    "flows": [
+      {
+        "core": 4,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 8,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 12,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 16,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 9,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 5,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 13,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 17,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 6,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 10,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 14,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 18,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 7,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 11,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 15,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      },
+      {
+        "core": 19,
+        "epoch": 1,
+        "stage": 4,
+        "local_produced": 262144,
+        "saved_hbm_write": 262144,
+        "published": 1,
+        "capacity_added": 0,
+        "status": 0
+      }
+    ],
+    "saved_hbm_write_bytes": 4194304,
+    "actual_gm_payload_bytes": 4194304,
+    "scope": "Timed GM Y write ACK coverage precedes ownership publication and job completion; final layer retains HBM output."
+  },
+  "hardware_sources_unchanged": 48,
+  "original_preserved": true,
+  "all_gemm_coverage": {
+    "final_control": {
+      "status": "PASS",
+      "completed_window_jobs": {
+        "qkv": 32,
+        "wo": 64,
+        "gate": 256,
+        "up": 256,
+        "down": 256,
+        "lm_head": 256
+      },
+      "tile_group_launches": {
+        "qkv": 49152,
+        "wo": 32768,
+        "gate": 131072,
+        "up": 131072,
+        "down": 131072,
+        "lm_head": 64128
+      },
+      "workers": {
+        "qkv": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "wo": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "gate": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "up": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "down": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "lm_head": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ]
+      },
+      "qk_completed_jobs": 128,
+      "pv_completed_windows": 2560,
+      "c_traffic_status": "PASS",
+      "window_flow_status": "PASS",
+      "pipeline_execution_status": "PASS",
+      "input_pipeline_status": "PASS"
+    },
+    "final_candidate": {
+      "status": "PASS",
+      "completed_window_jobs": {
+        "qkv": 32,
+        "wo": 64,
+        "gate": 256,
+        "up": 256,
+        "down": 256,
+        "lm_head": 256
+      },
+      "tile_group_launches": {
+        "qkv": 49152,
+        "wo": 32768,
+        "gate": 131072,
+        "up": 131072,
+        "down": 131072,
+        "lm_head": 64128
+      },
+      "workers": {
+        "qkv": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "wo": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "gate": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "up": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "down": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "lm_head": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ]
+      },
+      "qk_completed_jobs": 128,
+      "pv_completed_windows": 2560,
+      "c_traffic_status": "PASS",
+      "window_flow_status": "PASS",
+      "pipeline_execution_status": "PASS",
+      "input_pipeline_status": "PASS"
+    }
+  },
+  "projection_panels": {
+    "final_control": {
+      "status": "PASS",
+      "layer": 2,
+      "scope": "actual last-layer inputs to materialized unrotated Q/K/V panels",
+      "panels": {
+        "q": {
+          "status": "PASS",
+          "mismatches": 0,
+          "max_abs_error": 0.0,
+          "elements": 2097152
+        },
+        "k": {
+          "status": "PASS",
+          "mismatches": 0,
+          "max_abs_error": 0.0,
+          "elements": 524288
+        },
+        "v": {
+          "status": "PASS",
+          "mismatches": 0,
+          "max_abs_error": 0.0,
+          "elements": 524288
+        }
+      }
+    },
+    "final_candidate": {
+      "status": "PASS",
+      "layer": 2,
+      "scope": "last-layer inputs to materialized unrotated Q/K/V panels",
+      "input_reference": {
+        "source": "verified materialized counterpart; host validation only",
+        "reference_result": "/data/jjgong/LLM/Muticore-Attention-all-gemm/results/software_input_residency_next_20261021/fixed_candidate/reuse_window_probe/decoder_stack_result.json",
+        "reference_result_sha256": "34ed1db0aaf0aeea1e32803e92bb840a17511f50f4b304d9c9a316c07e483484",
+        "input_sha256": "d2e2f39414a4711958d3d8c1167853b5298bb810a8c46f1e521ba0fdb97ad5a1",
+        "elements": 2097152,
+        "candidate_hbm_input_intentionally_absent": true
+      },
+      "panels": {
+        "q": {
+          "status": "PASS",
+          "mismatches": 0,
+          "max_abs_error": 0.0,
+          "elements": 2097152
+        },
+        "k": {
+          "status": "PASS",
+          "mismatches": 0,
+          "max_abs_error": 0.0,
+          "elements": 524288
+        },
+        "v": {
+          "status": "PASS",
+          "mismatches": 0,
+          "max_abs_error": 0.0,
+          "elements": 524288
+        }
+      }
+    }
+  },
+  "host_validation_source_sha256": {
+    "run_decoder_stack.py": "bd086e1cae6d74f6f2ce5ceaef2e4198c1e88f780bd1dba3c0752e4d7923982f",
+    "run_all_gemm_reuse_window_baseline.py": "d7a281c30a1a4a23afc3c8af0c1cd430ebf324e3adcc1f4ecb28677e49371d99",
+    "verification_retained_input.py": "df95d7454061963d1f269aea84f57bcda81d2bab2fa3d68129081c4b072e9909",
+    "verify_output_residency.py": "777cc0bd7b9fafa9def3b7a992cd926324bb975379fedb5f7050e83cf060660c",
+    "verify_decoder_dataflow_resources.py": "1d1ab6fddc382b3b681bde553c2725314ee10f61bd423dfb44f8ce22283f6d59",
+    "summarize_output_residency.py": "3cacd05f273f165f1eb1ed1ec79a2bd34233d94bfd83b55199e27ab9bc550bf7"
+  },
+  "next_token": 99037,
+  "same_binaries_inputs_hardware": true,
+  "software_only": true,
+  "binaries": {
+    "guest_sha256": "219fb5414eef42ebe5b0130af54b6deda8683bb40c42d3ae01fba9dd66780c28",
+    "sst_library_sha256": "710f45338107a850b1ce230f048b195f81266b9ba0b9ac89412192c644cb4366",
+    "sst_memhierarchy_sha256": "1c5dba7e50e5035260f4d30c1537a5f6e1df2ae0692d757419890cce7c8e96ed"
+  },
+  "runtime_source_sha256": {
+    "src/sst/elements/golem/attention/reuseWindowGemm.h": "834c711057b928ec3a4048ba6f4ce0610b2faeb5ca09c6fb9e473a7dfb0fc134",
+    "src/sst/elements/golem/attention/decoderOpJob.h": "0f7b208b22874a3b13ff5a79894cef0cac7c72d517208d1d8bf16eab8708f977",
+    "src/sst/elements/golem/attention/projectionJob.h": "6a58543713ec00d2c71ede8cea3994536b1d56ff4c4f1c9f540ec608e6786b22",
+    "src/sst/elements/golem/attention/reuseWeightInterface.h": "26087a32bf1162443e076c069703d8aa7110659a3917306288ba4cbebddee841",
+    "src/sst/elements/golem/attention/reuseWeightCohort.h": "a6ae737be6116d6d1ba438d6a66274b0db71c4acd07a804da17884db3577ffff",
+    "src/sst/elements/golem/attention/decoderMemoryLayout.h": "25af49ae2195f182d595386cd44be9369c9b0b6e7826f16d4a0dfc398332e8fb",
+    "src/sst/elements/golem/attention/softwareLayerResidency.h": "8b83b944069c9b51bd0a579313b57cfcb8ff79a2c3887502704cd8bc3b88e0c0",
+    "src/sst/elements/golem/rocc/roccAnalog.h": "0d1bca02b896a1f20f602c93a22a1afad6e063ebe77cef5c700ba044e6f5e935",
+    "src/sst/elements/golem/globalmemory/globalmemory.h": "fe8e73b07a7a548f67bd8bc0bd0f252c0c5c788c58811a17d00e7ee267cc4f73"
+  },
+  "notes": [
+    "Simulated cycles at 1 GHz; host runtime excluded.",
+    "Only intermediate Y HBM mirrors are omitted. GM payload/publication and completion DMA remain timed.",
+    "Final Y, final Norm and logits retain their HBM outputs.",
+    "Host-only local checks use a verified materialized counterpart for the elided input; the independent composed reference still checks the complete chain through final Y.",
+    "Host validation was updated after simulation launch to handle absent intermediate HBM data; simulated runtime binaries and measured source hashes did not change.",
+    "The initial pair was stopped before completion to tighten the residual-input residency guard; it is excluded."
+  ]
+}

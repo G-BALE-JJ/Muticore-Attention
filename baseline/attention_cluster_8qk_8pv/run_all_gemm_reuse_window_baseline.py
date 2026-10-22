@@ -257,7 +257,8 @@ def projection_panel_audit(case):
     layer=manifest['layers'];entry=manifest['layout']['layers'][-1]
     hq,hkv=manifest['num_query_heads'],manifest['num_kv_heads']
     rows=manifest['sequence']//4;shared=manifest['layout']['shared']
-    x=read_bands(case,entry['input'],manifest['hidden'],rows=rows)
+    from verification_retained_input import last_layer_input
+    x,input_proof=last_layer_input(case,manifest)
     expected=linear_reference(rms(x,np.fromfile(case/f'layer{layer}_gamma1.bin',dtype='<f2')),
                               np.load(case/f'layer{layer}_qkv.npy')).reshape(-1,hq+2*hkv,64)
     report={}
@@ -277,7 +278,8 @@ def projection_panel_audit(case):
         report[name]=dict(status='PASS' if mismatch==0 else 'FAIL',mismatches=mismatch,
                           max_abs_error=maximum,elements=int(actual.size))
     return dict(status='PASS' if all(v['status']=='PASS' for v in report.values()) else 'FAIL',
-                layer=layer,scope='actual last-layer inputs to materialized unrotated Q/K/V panels',panels=report)
+                layer=layer,scope='last-layer inputs to materialized unrotated Q/K/V panels',
+                input_reference=input_proof,panels=report)
 
 
 def summarize(case, baseline_path):
@@ -349,12 +351,15 @@ def main():
     p.add_argument('--layer-residency',action='store_true',help='retain final residual Y for next Norm1/final Norm')
     p.add_argument('--input-residency',action='store_true',help='retain layer input in existing GM for residual Add')
     p.add_argument('--lm-input-residency',action='store_true',help='retain last-token GM input across LM chunks')
+    p.add_argument('--elide-intermediate-output',action='store_true',help='elide non-final layer output HBM mirror while GM stage-chain owns the consumer')
     p.add_argument('--lm-n-parallel',type=int,choices=(1,2,4,8),default=4)
     p.add_argument('--weight-cohort',type=int,choices=(0,2,4),default=0)
     a=p.parse_args()
     if a.gm_stage_chain and (a.norm_ffn_handoff or a.ffn_block_pipeline or a.weight_cohort):p.error('--gm-stage-chain requires private weights and the original single-window schedule; disable old Norm handoff')
     if a.layer_residency and not a.gm_stage_chain:p.error('--layer-residency requires --gm-stage-chain')
     if a.input_residency and not a.layer_residency:p.error('--input-residency requires --layer-residency')
+    if a.elide_intermediate_output and not a.layer_residency:p.error('--elide-intermediate-output requires --layer-residency')
+    if a.elide_intermediate_output and not a.input_residency:p.error('--elide-intermediate-output requires --input-residency for the next residual Add')
     root=a.artifact_root.resolve();root.mkdir(parents=True,exist_ok=True)
     hidden=2048 if a.shape=='formal' else 256
     if a.input_residency and a.window_k_tiles<hidden//64:
@@ -372,12 +377,16 @@ def main():
     schedule['decoder_window'].update(layer_residency=bool(a.layer_residency),input_residency=bool(a.input_residency),scatter_wave=a.scatter_wave)
     schedule['decoder_window']['b_window_bridge']=a.b_window_bridge
     schedule['decoder_window']['lm_input_residency']=bool(a.lm_input_residency)
+    schedule['decoder_window']['elide_intermediate_output']=bool(a.elide_intermediate_output)
     schedule['operators'][-1]['engine']=('ReuseWindowGemm' if a.lm_n_parallel==1 else f'{a.lm_n_parallel}-array N-parallel input reuse window')
     (root/'all_gemm_reuse_window_schedule.json').write_text(json.dumps(schedule,indent=2)+'\n')
     report=dict(status='SCHEDULE_ONLY',all_gemm_reuse_window_implemented=True)
     if a.run:
         case=root/'reuse_window_probe'
         if case.exists():raise SystemExit(f'refusing to overwrite {case}')
+        if a.elide_intermediate_output:
+            (root/'verification_reference.json').write_text(json.dumps(
+                dict(result=str(a.baseline_result.resolve())),indent=2)+'\n')
         report['status']='RUNNING';save_report(root,report)
         snapshot=root/'experiment_source';snapshot.mkdir()
         for path in SOURCES+[Path(__file__).resolve()]:shutil.copy2(path,snapshot/path.name)
@@ -401,6 +410,7 @@ def main():
                 if a.layer_residency:cmd.append('--layer-residency')
                 if a.input_residency:cmd.append('--input-residency')
                 if a.lm_input_residency:cmd.append('--lm-input-residency')
+                if a.elide_intermediate_output:cmd.append('--elide-intermediate-output')
                 subprocess.run(cmd,cwd=ROOT,env=env,check=True)
             report=summarize(case,a.baseline_result.resolve())
         except Exception as error:

@@ -24,6 +24,11 @@ class InputResidencyConfigTest(unittest.TestCase):
         self.assertNotEqual(result.returncode,0)
         self.assertIn('requires --layer-residency',result.stderr)
 
+    def test_output_elision_requires_resident_residual_input(self):
+        result,_=self.run_case(['--gm-stage-chain','--layer-residency','--elide-intermediate-output'])
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('requires --input-residency',result.stderr)
+
     def test_rejects_projection_c_spills_into_retained_input(self):
         result,_=self.run_case(['--gm-stage-chain','--layer-residency','--input-residency',
                                 '--shape','formal','--window-k-tiles','8'])
@@ -46,6 +51,18 @@ class InputResidencyConfigTest(unittest.TestCase):
         result,schedule=self.run_case([])
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertFalse(schedule['decoder_window']['input_residency'])
+        self.assertFalse(schedule['decoder_window']['elide_intermediate_output'])
+
+    def test_output_elision_requires_layer_residency(self):
+        result,_=self.run_case(['--elide-intermediate-output'])
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('requires --layer-residency',result.stderr)
+
+    def test_output_elision_with_gm_chain(self):
+        result,schedule=self.run_case(['--gm-stage-chain','--layer-residency','--input-residency',
+                                      '--elide-intermediate-output'])
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertTrue(schedule['decoder_window']['elide_intermediate_output'])
 
 
 if __name__=='__main__':unittest.main()
