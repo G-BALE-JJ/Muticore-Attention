@@ -30,6 +30,7 @@ public:
         ffnChunkLimit_=option("GOLEM_DECODER_FFN_SFU_CHUNK",8192,1024,8192);
         normHandoff_=option("GOLEM_DECODER_NORM_FFN_HANDOFF",0,0,1);
         stageChain_=option("GOLEM_DECODER_GM_STAGE_CHAIN",0,0,1);
+        addNormFusion_=option("GOLEM_DECODER_ADD_NORM_FUSION",0,0,1);
         layerResidency_=option("GOLEM_DECODER_LAYER_RESIDENCY",0,0,1);
         inputResidency_=option("GOLEM_DECODER_INPUT_RESIDENCY",0,0,1);
         lmInputResidency_=option("GOLEM_DECODER_LM_INPUT_RESIDENCY",0,0,1);
@@ -86,6 +87,12 @@ public:
                   !normHandoff_ && !blockPipeline_ && !sharing_) {
             chainJob_=1;chainDesc_=d;
         }
+        fusedAddNorm_=addNormFusion_ && chainJob_==2;
+        // Software descriptor extension, using fields unused by residual Add.
+        // Refuse an incomplete fused consumer instead of reading stale HBM.
+        if(fusedAddNorm_ && (!d.weights_offset || !d.head_dim || !d.node_stride || d.completion_addr))return false;
+        if(d.op==2 && d.stage==2 && d.head_dim && !fusedAddNorm_)return false;
+        fusedNormPhase_=false;fusedNormChunks_=fusedNormReadSaved_=0;
         chainReadSaved_=chainWriteSaved_=chainLocalBytes_=0;
         layerProducer_=layerResidency_ && chainJob_==4;
         const uint32_t layers=configuredLayers();
@@ -198,6 +205,9 @@ public:
         }
         if (vectorWaiting_ && vectorResult_.completed && tick >= vectorResult_.readyTick) {
             vectorWaiting_ = false;
+            if(fusedAddNorm_)std::printf("[DECODER_ADD_NORM_SFU] core=%u epoch=%u op=%u elements=%zu submit_tick=%llu done_tick=%llu\n",
+                core(),d_.epoch,fusedNormPhase_?2u:3u,vectorResult_.values.size(),
+                (unsigned long long)fusedVectorSubmit_,(unsigned long long)vectorResult_.readyTick);
             if (d_.op==7 && !siluMultiplySecond_) {
                 // SFU SiLU returns FP16-rounded values. Preserve that boundary
                 // while retaining its bounded 8192-element result on chip.
@@ -206,10 +216,14 @@ public:
             } else {
             auto bytes = encode(vectorResult_.values);
             vectorResult_.values.clear();
-            if(chainJob_==2) {
+            if(fusedAddNorm_ && fusedNormPhase_) {
+                ++fusedNormChunks_;cacheNormChunk(bytes);
+            } else if(chainJob_==2) {
                 const size_t count=bytes.size();
+                if(fusedAddNorm_)vectorInput_=decode(bytes); // Preserve the Add FP16 rounding boundary.
                 writeLocal(chainGM()+uint64_t(vectorRow_-row_)*d_.input_dim*2,bytes,[this,count]{
-                    chainLocalBytes_+=count;chainWriteSaved_+=count;advanceVectorRows();});
+                    chainLocalBytes_+=count;chainWriteSaved_+=count;
+                    if(fusedAddNorm_)loadFusedNormGamma();else advanceVectorRows();});
             } else if(chainJob_==3)cacheNormChunk(bytes);
             else if(cacheNorm_)writeLocal(outGM(),bytes,[this,bytes]{cacheNormChunk(bytes);});
             else writeLocal(outGM(), bytes, [this] { storeVector(); });
@@ -484,9 +498,12 @@ private:
             core(),d_.epoch,d_.stage,(unsigned long long)layerResidualSaved_,ok?0u:1u);
         if(chainJob_) {
             const uint64_t rowBytes=uint64_t(std::min(64u,d_.rows-d_.lane*64))*d_.input_dim*2;
-            if(ok && chainJob_<4 && chainLocalBytes_!=rowBytes)ok=false;
+            if(ok && chainJob_<4 && chainLocalBytes_!=rowBytes*(fusedAddNorm_?2:1))ok=false;
             if(ok && chainJob_==1)chainState_=1;
-            else if(ok && chainJob_==2){chainState_=2;chainH1Address_=d_.output_addr;}
+            else if(ok && chainJob_==2){
+                chainState_=fusedAddNorm_?3:2;chainH1Address_=d_.output_addr;
+                if(fusedAddNorm_)chainNormAddress_=(d_.manager+1)*d_.node_stride+d_.head_dim;
+            }
             else if(ok && chainJob_==3){chainState_=3;chainNormAddress_=d_.output_addr;}
             else chainState_=0;
             std::printf("[DECODER_STAGE_CHAIN] core=%u epoch=%u stage=%u step=%u state=%u row_bytes=%llu local_produced=%llu saved_hbm_read=%llu saved_hbm_write=%llu capacity_added=0 status=%u\n",
@@ -494,6 +511,9 @@ private:
                 (unsigned long long)chainLocalBytes_,(unsigned long long)chainReadSaved_,
                 (unsigned long long)chainWriteSaved_,ok?0u:1u);
         }
+        if(fusedAddNorm_)std::printf("[DECODER_ADD_NORM_FUSION] core=%u epoch=%u stage=%u chunks=%llu saved_gm_read=%llu norm_bytes=%llu fp16_boundary=1 capacity_added=0 status=%u\n",
+            core(),d_.epoch,d_.stage,(unsigned long long)fusedNormChunks_,
+            (unsigned long long)fusedNormReadSaved_,(unsigned long long)normCacheWritten_,ok?0u:1u);
         if(cacheNorm_)normCacheValid_=ok && normCacheWritten_==uint64_t(std::min(64u,d_.rows-d_.lane*64))*d_.input_dim*2;
         if (downOwnedBuffer_) { wcp_->endProjectionPartialBuffer(); downOwnedBuffer_=false; }
         status_ = ok ? 0 : 1; active_ = false; done_ = true; next_ = {};
@@ -1589,6 +1609,7 @@ private:
     }
     void loadVector() {
         siluMultiplySecond_=false;
+        fusedNormPhase_=false;
         // At most 8192 FP16 elements fit the bounded vector request.
         vectorRows_=std::min(activeRows_-(vectorRow_-row_), std::max(1u,8192u/d_.input_dim));
         const size_t bytes=vectorRows_*d_.input_dim*2;
@@ -1610,7 +1631,10 @@ private:
                         layerResidualSaved_+=bytes;vectorCoefficients_=decode(b);issueVector();
                     });
                 } else if(norm && reuseGamma_ && gammaLoaded_)coefficients();
-                else loadHBM(d_.input1_addr+(norm?0:uint64_t(vectorRow_)*d_.input_dim*2),weightGM(),bytes,coefficients);
+                else {
+                    if(fusedAddNorm_ && !norm)gammaLoaded_=false;
+                    loadHBM(d_.input1_addr+(norm?0:uint64_t(vectorRow_)*d_.input_dim*2),weightGM(),bytes,coefficients);
+                }
             });
         };
         if(layerConsumer_){layerSaved_+=bytes;consume(chainGM()+uint64_t(vectorRow_-row_)*d_.input_dim*2);}
@@ -1623,7 +1647,7 @@ private:
     void issueVector() {
         SFUVectorRequest r{}; r.input=&vectorInput_; r.coefficients=&vectorCoefficients_;
         r.rowWidth=d_.input_dim; r.epsilon=1.0e-6f;
-        r.op=d_.op==2?SFUVectorOp::Add:d_.op==3?SFUVectorOp::RmsNorm:
+        r.op=fusedNormPhase_?SFUVectorOp::RmsNorm:d_.op==2?SFUVectorOp::Add:d_.op==3?SFUVectorOp::RmsNorm:
             (d_.op==4 || (d_.op==7 && !siluMultiplySecond_))?SFUVectorOp::Silu:SFUVectorOp::Multiply;
         if (!sfu_->issueVectorOp(r,&vectorResult_)) {
             if (d_.op==3 && !chainJob_) finish(false);
@@ -1633,6 +1657,20 @@ private:
         vectorInput_.clear();
         if (d_.op!=7 || siluMultiplySecond_) vectorCoefficients_.clear();
         vectorWaiting_=true;
+        if(fusedAddNorm_)fusedVectorSubmit_=tick_;
+    }
+    void loadFusedNormGamma() {
+        fusedNormPhase_=true;
+        const size_t bytes=d_.input_dim*2;
+        const auto consume=[this,bytes]{
+            readLocal(weightGM(),bytes,[this](const std::vector<uint8_t>& b){
+                vectorCoefficients_=decode(b);gammaLoaded_=true;
+                const size_t saved=vectorRows_*d_.input_dim*2;
+                fusedNormReadSaved_+=saved;chainReadSaved_+=saved;issueVector();
+            });
+        };
+        if(reuseGamma_ && gammaLoaded_)consume();
+        else loadHBM((d_.manager+1)*d_.node_stride+d_.weights_offset,weightGM(),bytes,consume);
     }
     void advanceVectorRows(){
         vectorRow_+=vectorRows_;
@@ -1640,11 +1678,18 @@ private:
     }
     void storeVector() {
         const size_t bytes=vectorRows_*d_.input_dim*2;
-        if(chainJob_==3){chainWriteSaved_+=bytes;advanceVectorRows();return;}
+        if(chainJob_==3 || fusedAddNorm_){chainWriteSaved_+=bytes;advanceVectorRows();return;}
         storeHBM(outGM(),d_.output_addr+uint64_t(vectorRow_)*d_.input_dim*2,bytes,[this]{advanceVectorRows();});
     }
     void cacheNormChunk(const std::vector<uint8_t>& bytes){
         localBuffer_=bytes;normWriteNext_=normWriteDone_=normWritePending_=0;
+        if(fusedAddNorm_){
+            // Repack only the existing bounded SFU result. Consecutive rows of
+            // each K tile share a timed request, within the existing GM limit.
+            for(size_t k=0;k<d_.input_dim/64;++k)for(size_t r=0;r<vectorRows_;++r)
+                std::copy_n(bytes.begin()+(r*d_.input_dim+k*64)*2,128,
+                            localBuffer_.begin()+(k*vectorRows_+r)*128);
+        }
         defer([this]{pumpNormCache();});
     }
     void pumpNormCache(){
@@ -1654,14 +1699,16 @@ private:
         }
         while(normWriteNext_<localBuffer_.size() && normWritePending_<writeWindow_){
             const size_t offset=normWriteNext_,element=offset/2,r=element/width,k=(element%width)/64;
-            const size_t len=std::min<size_t>(128-offset%128,gm_->localMaxRequestBytes());
-            const uint64_t address=(chainJob_==3?inputGM():gm_->getBaseAddr()+DecoderMemoryLayout::decoder_norm_handoff_gm)+
-                (k*activeRows_+(vectorRow_-row_)+r)*128+offset%128;
+            const size_t span=fusedAddNorm_?vectorRows_*128:128;
+            const size_t len=std::min({span-offset%span,gm_->localMaxRequestBytes(),localBuffer_.size()-offset});
+            const uint64_t address=(chainJob_==3 || fusedAddNorm_?inputGM():gm_->getBaseAddr()+DecoderMemoryLayout::decoder_norm_handoff_gm)+
+                (fusedAddNorm_?(offset/span*activeRows_+vectorRow_-row_)*128+offset%span:
+                 (k*activeRows_+(vectorRow_-row_)+r)*128+offset%128);
             std::vector<uint8_t> bytes(localBuffer_.begin()+offset,localBuffer_.begin()+offset+len);
             normWriteNext_+=len;++normWritePending_;
             if(!gm_->localWriteAsync(address,bytes,LocalMemoryClient::RoCC,++tag_,[this,len](bool ok,uint64_t){
                 --normWritePending_;if(!ok){finish(false);return;}
-                normWriteDone_+=len;normCacheWritten_+=len;localWrite_+=len;if(chainJob_==3)chainLocalBytes_+=len;
+                normWriteDone_+=len;normCacheWritten_+=len;localWrite_+=len;if(chainJob_==3 || fusedAddNorm_)chainLocalBytes_+=len;
             })){normWriteNext_-=len;--normWritePending_;break;}
         }
         defer([this]{pumpNormCache();});
@@ -1699,6 +1746,9 @@ private:
     uint64_t pipelineProducerTransfers_=0,pipelineDownTransfers_=0,pipelineBothActive_=0,pipelinePasses_=0,pipelineLeaseWait_=0;
     // Software residency metadata only; payload lives in existing timed GM.
     bool stageChain_=false;uint32_t chainState_=0,chainJob_=0,residualCacheNext_=0;
+    bool addNormFusion_=false,fusedAddNorm_=false,fusedNormPhase_=false;
+    uint64_t fusedNormChunks_=0,fusedNormReadSaved_=0;
+    uint64_t fusedVectorSubmit_=0;
     bool layerResidency_=false,layerProducer_=false,layerConsumer_=false,layerPublished_=false;
     bool inputResidency_=false,layerResidualConsumer_=false,elideIntermediateOutput_=false,elideOutput_=false;uint64_t layerResidualSaved_=0;
     uint64_t layerBytes_=0,layerSaved_=0,elidedOutputBytes_=0;

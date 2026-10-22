@@ -14,6 +14,10 @@ def _inputs(manifest):
     m=json.loads(json.dumps(manifest))
     m.pop('_lifecycle',None)
     m.pop('elide_intermediate_output',None)
+    # These software schedules preserve the explicit FP16 operator boundaries.
+    # Input/weight hashes, layouts, all other flags and the independent complete
+    # mathematical chain remain mandatory; record the differing flags below.
+    for name in ('add_norm_fusion','eager_final_norm'):m.pop(name,None)
     for item in m.get('preloads',[]):item.pop('path',None)
     return m
 
@@ -37,5 +41,7 @@ def last_layer_input(case,manifest):
                reference_result_sha256=hashlib.sha256(reference.read_bytes()).hexdigest(),
                input_sha256=hashlib.sha256(x.tobytes()).hexdigest(),
                elements=int(x.size),candidate_hbm_input_intentionally_absent=True)
+    proof['equivalent_software_schedules']={name:dict(candidate=bool(manifest.get(name)),reference=bool(m.get(name)))
+        for name in ('add_norm_fusion','eager_final_norm') if bool(manifest.get(name))!=bool(m.get(name))}
     (case/'verification_retained_input.json').write_text(json.dumps(proof,indent=2)+'\n')
     return x,proof

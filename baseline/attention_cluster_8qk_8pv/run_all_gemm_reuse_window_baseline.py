@@ -156,7 +156,9 @@ def coverage(case: Path, result: dict) -> dict:
         gate=layers * workers_by_op['gate'] * max(1, (intermediate_tiles + panel_tiles-1) // panel_tiles),
         up=layers * workers_by_op['up'] * max(1, (intermediate_tiles + panel_tiles-1) // panel_tiles),
         down=layers * workers_by_op['down'] * max(1, (intermediate_tiles + panel_tiles-1) // panel_tiles),
-        lm_head=workers_by_op['lm_head'] * max(1, (vocab_tiles + 127) // 128),
+        # Empty final vocabulary shards have completion descriptors but no
+        # GEMM window. Count actual owners of each existing 128-tile chunk.
+        lm_head=sum(min(16,vocab_tiles-first) for first in range(0,vocab_tiles,128)),
     )
     required = set(expected)
     run_env=json.loads((case/'decoder_stack_provenance.json').read_text())['environment']
@@ -348,6 +350,9 @@ def main():
     p.add_argument('--epoch-flags',type=int,choices=(0,1),default=0)
     p.add_argument('--norm-ffn-handoff',type=int,choices=(0,1),default=0)
     p.add_argument('--gm-stage-chain',action='store_true',help='keep Wo/H1/Norm2 in existing GM; hardware unchanged')
+    p.add_argument('--add-norm-fusion',action='store_true',help='fuse residual Add and RMSNorm2 with bounded SFU result forwarding')
+    p.add_argument('--eager-final-norm',action='store_true',help='start final Norm after each worker local FFN completion')
+    p.add_argument('--verification-reference',type=Path,help='materialized counterpart for host checks of elided intermediate input')
     p.add_argument('--layer-residency',action='store_true',help='retain final residual Y for next Norm1/final Norm')
     p.add_argument('--input-residency',action='store_true',help='retain layer input in existing GM for residual Add')
     p.add_argument('--lm-input-residency',action='store_true',help='retain last-token GM input across LM chunks')
@@ -355,6 +360,8 @@ def main():
     p.add_argument('--lm-n-parallel',type=int,choices=(1,2,4,8),default=4)
     p.add_argument('--weight-cohort',type=int,choices=(0,2,4),default=0)
     a=p.parse_args()
+    if a.add_norm_fusion and not (a.gm_stage_chain and a.input_residency):p.error('--add-norm-fusion requires --gm-stage-chain --input-residency')
+    if a.eager_final_norm and not a.layer_residency:p.error('--eager-final-norm requires --layer-residency')
     if a.gm_stage_chain and (a.norm_ffn_handoff or a.ffn_block_pipeline or a.weight_cohort):p.error('--gm-stage-chain requires private weights and the original single-window schedule; disable old Norm handoff')
     if a.layer_residency and not a.gm_stage_chain:p.error('--layer-residency requires --gm-stage-chain')
     if a.input_residency and not a.layer_residency:p.error('--input-residency requires --layer-residency')
@@ -378,6 +385,7 @@ def main():
     schedule['decoder_window']['b_window_bridge']=a.b_window_bridge
     schedule['decoder_window']['lm_input_residency']=bool(a.lm_input_residency)
     schedule['decoder_window']['elide_intermediate_output']=bool(a.elide_intermediate_output)
+    schedule['decoder_window'].update(add_norm_fusion=bool(a.add_norm_fusion),eager_final_norm=bool(a.eager_final_norm))
     schedule['operators'][-1]['engine']=('ReuseWindowGemm' if a.lm_n_parallel==1 else f'{a.lm_n_parallel}-array N-parallel input reuse window')
     (root/'all_gemm_reuse_window_schedule.json').write_text(json.dumps(schedule,indent=2)+'\n')
     report=dict(status='SCHEDULE_ONLY',all_gemm_reuse_window_implemented=True)
@@ -386,7 +394,7 @@ def main():
         if case.exists():raise SystemExit(f'refusing to overwrite {case}')
         if a.elide_intermediate_output:
             (root/'verification_reference.json').write_text(json.dumps(
-                dict(result=str(a.baseline_result.resolve())),indent=2)+'\n')
+                dict(result=str((a.verification_reference or a.baseline_result).resolve())),indent=2)+'\n')
         report['status']='RUNNING';save_report(root,report)
         snapshot=root/'experiment_source';snapshot.mkdir()
         for path in SOURCES+[Path(__file__).resolve()]:shutil.copy2(path,snapshot/path.name)
@@ -407,6 +415,8 @@ def main():
                      '--ffn-down-fusion','--down-residual-fusion','--ffn-panel-tiles',str(a.ffn_panel_tiles),
                      '--ffn-array-groups','2','--ffn-layout','2','--lm-n-parallel',str(a.lm_n_parallel)]
                 if a.gm_stage_chain:cmd.append('--gm-stage-chain')
+                if a.add_norm_fusion:cmd.append('--add-norm-fusion')
+                if a.eager_final_norm:cmd.append('--eager-final-norm')
                 if a.layer_residency:cmd.append('--layer-residency')
                 if a.input_residency:cmd.append('--input-residency')
                 if a.lm_input_residency:cmd.append('--lm-input-residency')

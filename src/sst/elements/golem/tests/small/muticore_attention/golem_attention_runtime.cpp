@@ -178,8 +178,13 @@ int main(int argc, char** argv) {
         layout=&stack_layout;
         q_offset=layout->q; k_offset=layout->k; v_offset=layout->v; o_offset=layout->o;
     }
+    const char* eager_env=std::getenv("GOLEM_DECODER_EAGER_FINAL_NORM");
+    const bool eager_final_norm=eager_env && std::strcmp(eager_env,"1")==0;
     if (projection_worker) {
         if (!projection) return 0;
+#if GOLEM_DECODER_STAGE
+        const DecoderGuestOptions decoder_options=readDecoderGuestOptions();
+#endif
 #if GOLEM_DECODER_EMBEDDING
         while (gm2reg(uint64_t(core_id)*layout->gm_stride+layout->embedding_release)!=1) asm volatile("nop");
         if (!run_embedding(core_id,manager_query_rows,num_query_heads*head_dim,*layout)) return 1;
@@ -197,7 +202,7 @@ int main(int argc, char** argv) {
 #if GOLEM_DECODER_STAGE
         const uint64_t decoder_release = static_cast<uint64_t>(core_id) * GOLEM_GLOBAL_STRIDE_BYTES + SST::Golem::DecoderMemoryLayout::decoder_release;
         while (gm2reg(decoder_release) != epoch) asm volatile("nop");
-        if (!run_decoder(core_id, manager_query_rows, num_query_heads * head_dim, head_dim, o_offset, layout, layer)) {
+        if (!run_decoder(core_id, manager_query_rows, num_query_heads * head_dim, head_dim, o_offset, layout, layer, decoder_options)) {
             std::fprintf(stderr, "[DECODER_GUEST_FAIL] worker=%u\n", core_id);
             return 1;
         }
@@ -205,7 +210,7 @@ int main(int argc, char** argv) {
         }
 #if GOLEM_DECODER_FINAL_NORM
         const uint64_t release=uint64_t(core_id)*layout->gm_stride+layout->final_norm_release;
-        while (gm2reg(release)!=layer_count+1) asm volatile("nop");
+        if(!eager_final_norm)while (gm2reg(release)!=layer_count+1) asm volatile("nop");
         if (!run_final_norm(core_id,manager_query_rows,num_query_heads*head_dim,*layout)) return 1;
 #endif
 #if GOLEM_DECODER_LM_HEAD
@@ -417,6 +422,18 @@ int main(int argc, char** argv) {
 #if GOLEM_DECODER_STAGE
     if (manager_id == 0 && final_status == 0) {
         // Root attention wait includes all head writes and global completion.
+#if GOLEM_DECODER_FINAL_NORM
+        if(eager_final_norm && layer+1==layer_count){
+            // Reset before releasing the last layer: a fast worker may finish
+            // its local FFN and Norm while another worker is still in FFN.
+            for(uint32_t node=1;node<=4;++node)for(uint32_t lane=0;lane<4;++lane){
+                const uint64_t flag=node*layout->hbm_node_stride+layout->final_done+lane*8;
+                uint64_t status;
+                asm volatile(".insn r 0x0b, 7, 0x28, %0, %1, %2" : "=r"(status) : "r"(flag), "r"(0ull) : "memory");
+                if(status)return 1;
+            }
+        }
+#endif
         reg2gm(epoch, SST::Golem::DecoderMemoryLayout::decoder_release);
         for (uint32_t worker=4; worker<20; ++worker)
             remote_store(SST::Golem::DecoderMemoryLayout::decoder_release, uint64_t(worker)*GOLEM_GLOBAL_STRIDE_BYTES+SST::Golem::DecoderMemoryLayout::decoder_release);
@@ -435,6 +452,7 @@ int main(int argc, char** argv) {
 #if GOLEM_DECODER_FINAL_NORM
     if (manager_id==0) {
         // Layer completion above includes all output and completion DMA ACKs.
+        if(!eager_final_norm){
         for (uint32_t node=1;node<=4;++node) for (uint32_t lane=0;lane<4;++lane) {
             const uint64_t flag=node*layout->hbm_node_stride+layout->final_done+lane*8;
             uint64_t status;
@@ -444,6 +462,7 @@ int main(int argc, char** argv) {
         reg2gm(layer_count+1,layout->final_norm_release);
         for (uint32_t worker=4;worker<20;++worker)
             remote_store(layout->final_norm_release,uint64_t(worker)*layout->gm_stride+layout->final_norm_release);
+        }
         for (uint32_t node=1;node<=4;++node) for (uint32_t lane=0;lane<4;++lane) {
             const uint64_t flag=node*layout->hbm_node_stride+layout->final_done+lane*8;
             uint64_t status;

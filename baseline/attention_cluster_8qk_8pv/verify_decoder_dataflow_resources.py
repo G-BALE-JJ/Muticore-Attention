@@ -119,6 +119,8 @@ def verify(case):
     from verify_software_stage_chain import audit as audit_stage_chain
     chain,chain_savings,residual_savings=audit_stage_chain(case,jobs,manifest)
     optimizations['stage_chain']=chain
+    from verify_add_norm_fusion import audit as audit_add_norm
+    optimizations['add_norm_fusion']=audit_add_norm(case,jobs,manifest)
     from verify_layer_residency import audit as audit_layer_residency, audit_input_residency, verify_input_payload, verify_projection_payload
     optimizations['layer_residency']=audit_layer_residency(case,jobs,manifest)
     optimizations['layer_residency']['actual_projection_payload']=verify_projection_payload(case,manifest)

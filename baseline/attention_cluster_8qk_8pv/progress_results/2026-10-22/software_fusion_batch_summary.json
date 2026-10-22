@@ -1,0 +1,602 @@
+{
+  "status": "PASS",
+  "selected": "final_candidate",
+  "timing": {
+    "完整端到端": {
+      "control_cycles": 6165061.375,
+      "candidate_cycles": 6134778.375,
+      "reduction_percent": 0.49120354458758175
+    },
+    "两层 decoder": {
+      "control_cycles": 5414855.75,
+      "candidate_cycles": 5400835.25,
+      "reduction_percent": 0.2589265651259498
+    },
+    "最终 RMSNorm": {
+      "control_cycles": 44797.375,
+      "candidate_cycles": 81471.75,
+      "reduction_percent": -81.86724110508707
+    },
+    "LM head": {
+      "control_cycles": 580844.375,
+      "candidate_cycles": 582536.375,
+      "reduction_percent": -0.2913000577822622
+    },
+    "第 1 层 FFN span": {
+      "control_cycles": 1981862.0,
+      "candidate_cycles": 1966005.0,
+      "reduction_percent": 0.8001061627903483
+    },
+    "第 1 层 attention": {
+      "control_cycles": 453046.75,
+      "candidate_cycles": 453885.75,
+      "reduction_percent": -0.18519060119071007
+    },
+    "第 2 层 FFN span": {
+      "control_cycles": 1965729.0,
+      "candidate_cycles": 1972762.0,
+      "reduction_percent": -0.35778075207721916
+    },
+    "第 2 层 attention": {
+      "control_cycles": 439008.875,
+      "candidate_cycles": 439440.875,
+      "reduction_percent": -0.0984034776062348
+    }
+  },
+  "previous_selected_timing": {
+    "完整端到端": {
+      "previous_cycles": 6288746.0,
+      "control_cycles": 6165061.375,
+      "candidate_cycles": 6134778.375,
+      "candidate_reduction_percent": 2.448304081608643
+    },
+    "两层 decoder": {
+      "previous_cycles": 5458951.75,
+      "control_cycles": 5414855.75,
+      "candidate_cycles": 5400835.25,
+      "candidate_reduction_percent": 1.0646091532133473
+    },
+    "最终 RMSNorm": {
+      "previous_cycles": 44345.375,
+      "control_cycles": 44797.375,
+      "candidate_cycles": 81471.75,
+      "candidate_reduction_percent": -83.72096300910749
+    },
+    "LM head": {
+      "previous_cycles": 659918.0,
+      "control_cycles": 580844.375,
+      "candidate_cycles": 582536.375,
+      "candidate_reduction_percent": 11.725945496258628
+    },
+    "第 1 层 FFN span": {
+      "previous_cycles": 1958252.0,
+      "control_cycles": 1981862.0,
+      "candidate_cycles": 1966005.0,
+      "candidate_reduction_percent": -0.39591431542007616
+    },
+    "第 1 层 attention": {
+      "previous_cycles": 453150.75,
+      "control_cycles": 453046.75,
+      "candidate_cycles": 453885.75,
+      "candidate_reduction_percent": -0.16219767924912087
+    },
+    "第 2 层 FFN span": {
+      "previous_cycles": 1965098.0,
+      "control_cycles": 1965729.0,
+      "candidate_cycles": 1972762.0,
+      "candidate_reduction_percent": -0.39000599461196384
+    },
+    "第 2 层 attention": {
+      "previous_cycles": 438807.875,
+      "control_cycles": 439008.875,
+      "candidate_cycles": 439440.875,
+      "candidate_reduction_percent": -0.14425447583410467
+    }
+  },
+  "add_norm_spans": {
+    "1": {
+      "control_add_norm_span_cycles": 66371.0,
+      "candidate_fused_span_cycles": 64133.0
+    },
+    "2": {
+      "control_add_norm_span_cycles": 65052.0,
+      "candidate_fused_span_cycles": 64025.0
+    }
+  },
+  "worker_handoffs": {
+    "1": {
+      "final_control": {
+        "wo_done_to_ffn_start_cycles": {
+          "min": 49017.0,
+          "mean": 49031.875,
+          "max": 49052.0
+        },
+        "norm_done_to_ffn_start_cycles": {
+          "min": 476.0,
+          "mean": 476.0,
+          "max": 476.0
+        }
+      },
+      "final_candidate": {
+        "wo_done_to_ffn_start_cycles": {
+          "min": 46334.0,
+          "mean": 46365.5625,
+          "max": 46423.0
+        },
+        "norm_done_to_ffn_start_cycles": {
+          "min": 476.0,
+          "mean": 476.0,
+          "max": 476.0
+        }
+      }
+    },
+    "2": {
+      "final_control": {
+        "wo_done_to_ffn_start_cycles": {
+          "min": 48923.0,
+          "mean": 48937.4375,
+          "max": 48981.0
+        },
+        "norm_done_to_ffn_start_cycles": {
+          "min": 476.0,
+          "mean": 476.0,
+          "max": 476.0
+        }
+      },
+      "final_candidate": {
+        "wo_done_to_ffn_start_cycles": {
+          "min": 46320.0,
+          "mean": 46375.625,
+          "max": 46473.0
+        },
+        "norm_done_to_ffn_start_cycles": {
+          "min": 476.0,
+          "mean": 476.0,
+          "max": 476.0
+        }
+      }
+    }
+  },
+  "decoder_job_totals": {
+    "final_control": {
+      "jobs": 416,
+      "hbm_read": 4027846656,
+      "hbm_write": 12840064,
+      "gm_read": 7637720064,
+      "gm_write": 155513984
+    },
+    "final_candidate": {
+      "jobs": 384,
+      "hbm_read": 4027846656,
+      "hbm_write": 12840064,
+      "gm_read": 7629331456,
+      "gm_write": 155513984
+    }
+  },
+  "incremental_saved_gm_read_bytes": 8388608,
+  "incremental_saved_hbm_read_bytes": 0,
+  "incremental_saved_hbm_write_bytes": 0,
+  "norm_packing": {
+    "previous_requests": 65536,
+    "candidate_requests": 16384
+  },
+  "fusion_payload_audit": {
+    "status": "PASS",
+    "enabled": true,
+    "verified_jobs": 32,
+    "saved_gm_read_bytes": 8388608,
+    "norm_write_requests": 16384,
+    "payload": "one residual GM read, complete packed Norm writes, bounded Add/Norm SFU pairs"
+  },
+  "eager_final_norm": {
+    "eager_worker_handoff": true,
+    "overlap_with_decoder_tail_cycles": 40189.0,
+    "handoff_cycles": -40114.25,
+    "tail_cycles": 41357.5
+  },
+  "paired_bits": {
+    "last_layer_y": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "final_norm": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "logits": {
+      "elements": 128256,
+      "fp16_bit_mismatches": 0
+    }
+  },
+  "previous_selected_bits": {
+    "last_layer_y": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "final_norm": {
+      "elements": 2097152,
+      "fp16_bit_mismatches": 0
+    },
+    "logits": {
+      "elements": 128256,
+      "fp16_bit_mismatches": 0
+    }
+  },
+  "environment_changes": {
+    "GOLEM_DECODER_ADD_NORM_FUSION": {
+      "control": "0",
+      "candidate": "1"
+    },
+    "GOLEM_DECODER_EAGER_FINAL_NORM": {
+      "control": "0",
+      "candidate": "1"
+    }
+  },
+  "hardware": {
+    "source_files_unchanged": 47,
+    "layout_alias_unchanged": true,
+    "system_configuration_change": "only forward two software switches into the guest environment",
+    "original_baseline_preserved": true
+  },
+  "reuse_window_flow": {
+    "final_control": {
+      "window_records": 1120,
+      "traffic": {
+        "launches": 539264,
+        "hbm_read": 4417650688,
+        "gm_read": 8318173184,
+        "gm_write": 0,
+        "c_gm_read": 0,
+        "c_gm_write": 0,
+        "c_drains": 20948,
+        "c_restores": 7168
+      },
+      "waits": {
+        "wait_a": 199549,
+        "wait_b_gm": 6543963,
+        "wait_b_dma": 3563464,
+        "wait_array": 31214082
+      },
+      "a_prefetch_enabled": 1,
+      "a_snapshot_high_water": 2,
+      "a_ready_hits": 479059,
+      "a_live_at_finish": 0
+    },
+    "final_candidate": {
+      "window_records": 1120,
+      "traffic": {
+        "launches": 539264,
+        "hbm_read": 4417650688,
+        "gm_read": 8318173184,
+        "gm_write": 0,
+        "c_gm_read": 0,
+        "c_gm_write": 0,
+        "c_drains": 20948,
+        "c_restores": 7168
+      },
+      "waits": {
+        "wait_a": 203494,
+        "wait_b_gm": 6432787,
+        "wait_b_dma": 3481433,
+        "wait_array": 31301769
+      },
+      "a_prefetch_enabled": 1,
+      "a_snapshot_high_water": 2,
+      "a_ready_hits": 478711,
+      "a_live_at_finish": 0
+    }
+  },
+  "all_gemm_coverage": {
+    "final_control": {
+      "status": "PASS",
+      "completed_window_jobs": {
+        "qkv": 32,
+        "wo": 64,
+        "gate": 256,
+        "up": 256,
+        "down": 256,
+        "lm_head": 256
+      },
+      "tile_group_launches": {
+        "qkv": 49152,
+        "wo": 32768,
+        "gate": 131072,
+        "up": 131072,
+        "down": 131072,
+        "lm_head": 64128
+      },
+      "workers": {
+        "qkv": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "wo": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "gate": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "up": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "down": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "lm_head": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ]
+      },
+      "qk_completed_jobs": 128,
+      "pv_completed_windows": 2560,
+      "c_traffic_status": "PASS",
+      "window_flow_status": "PASS",
+      "pipeline_execution_status": "PASS",
+      "input_pipeline_status": "PASS"
+    },
+    "final_candidate": {
+      "status": "PASS",
+      "completed_window_jobs": {
+        "qkv": 32,
+        "wo": 64,
+        "gate": 256,
+        "up": 256,
+        "down": 256,
+        "lm_head": 256
+      },
+      "tile_group_launches": {
+        "qkv": 49152,
+        "wo": 32768,
+        "gate": 131072,
+        "up": 131072,
+        "down": 131072,
+        "lm_head": 64128
+      },
+      "workers": {
+        "qkv": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "wo": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "gate": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "up": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "down": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "lm_head": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ]
+      },
+      "qk_completed_jobs": 128,
+      "pv_completed_windows": 2560,
+      "c_traffic_status": "PASS",
+      "window_flow_status": "PASS",
+      "pipeline_execution_status": "PASS",
+      "input_pipeline_status": "PASS"
+    }
+  },
+  "next_token": 99037,
+  "binaries": {
+    "guest_sha256": "7ee4f229860f8c83dea431a72f10cbcf58e02d6de4bb76c454807e95f067f57c",
+    "sst_library_sha256": "ebe5bd84dbfffa3baf98780cf214b73c2d01db4b958c268ae9b910e8f0fb48f0",
+    "sst_memhierarchy_sha256": "1c5dba7e50e5035260f4d30c1537a5f6e1df2ae0692d757419890cce7c8e96ed"
+  },
+  "runtime_source_sha256": {
+    "src/sst/elements/golem/attention/reuseWindowGemm.h": "834c711057b928ec3a4048ba6f4ce0610b2faeb5ca09c6fb9e473a7dfb0fc134",
+    "src/sst/elements/golem/attention/decoderOpJob.h": "e9d5397552f6f1adbd84f82f96c2e93865a86964d24afe04d0eb0231d72d038c",
+    "src/sst/elements/golem/attention/projectionJob.h": "6a58543713ec00d2c71ede8cea3994536b1d56ff4c4f1c9f540ec608e6786b22",
+    "src/sst/elements/golem/attention/reuseWeightInterface.h": "26087a32bf1162443e076c069703d8aa7110659a3917306288ba4cbebddee841",
+    "src/sst/elements/golem/attention/reuseWeightCohort.h": "a6ae737be6116d6d1ba438d6a66274b0db71c4acd07a804da17884db3577ffff",
+    "src/sst/elements/golem/attention/decoderMemoryLayout.h": "25af49ae2195f182d595386cd44be9369c9b0b6e7826f16d4a0dfc398332e8fb",
+    "src/sst/elements/golem/attention/softwareLayerResidency.h": "8b83b944069c9b51bd0a579313b57cfcb8ff79a2c3887502704cd8bc3b88e0c0",
+    "src/sst/elements/golem/rocc/roccAnalog.h": "0d1bca02b896a1f20f602c93a22a1afad6e063ebe77cef5c700ba044e6f5e935",
+    "src/sst/elements/golem/globalmemory/globalmemory.h": "fe8e73b07a7a548f67bd8bc0bd0f252c0c5c788c58811a17d00e7ee267cc4f73"
+  },
+  "guest_source_sha256": {
+    "src/sst/elements/golem/tests/small/muticore_attention/golem_decoder_runtime.h": "4d61edd2bdb1f5801b2aec39d64c23e9dbf1785483edbe53c3fbf9d13428d1ec",
+    "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp": "e0d4f5a6b69599cad7772721836625017d663519e1ee9758dde9789ca7d9856a"
+  },
+  "host_validation_source_sha256": {
+    "run_decoder_stack.py": "7ac89f41b3f98aa8190f59b427e270d246e6ff1aa9248bbdbd71e1599274f9a5",
+    "run_all_gemm_reuse_window_baseline.py": "f3e87dfc477dad53514d71c66d834671cd4810b53a9132f79de97bf357ff4bab",
+    "verification_retained_input.py": "f83be6f08b55889cc1c4cf1dc0b991990561ffaac9241a62aec9bbbdd5eff405",
+    "verify_software_stage_chain.py": "a77373a1c81ae54aadcba42b94cc4b9818545f2e1e564fc142e38449f739690e",
+    "verify_add_norm_fusion.py": "787c5527aadbd960696fbb12fd7f6b2ab29ed08805e4aa80cd025c1bd28ac1f0",
+    "verify_layer_residency.py": "2960ad3d3e39d787d326db216a5c7c8dd1a17c1a85a48a6edbe107432d2d025e",
+    "verify_decoder_dataflow_resources.py": "b31fa54fb358251164d3bbbe79de4d3cc578ab9b0a7cc6bfdfee065faa2a1054",
+    "verify_lm_head.py": "a756d2153908b2558b82e900446db32b9ea60e4d7791aca64f2eba1626a2ea01",
+    "summarize_fusion_batch.py": "5b8f53e40e36a8a7763fbbd943e3eba7803e4867944d13d9996c3dd2a5a00fa3"
+  },
+  "notes": [
+    "Simulated cycles at 1 GHz; host runtime is excluded.",
+    "Both runs use the same rebuilt guest and library. Added software branches may change control timing relative to the previous selected binary.",
+    "Add and RMSNorm retain the existing SFU operations, FP16 boundary, bounded result and timed H1/Norm GM writes.",
+    "Eager final Norm starts only after its own worker FFN/output/publication/completion ACKs; root resets flags before releasing the last decoder layer.",
+    "Both runs snapshot immutable decoder environment settings before work and read the LM logical sequence once per worker rather than once per vocabulary descriptor.",
+    "Two initial pairs were stopped and excluded: an old Add descriptor compatibility regression, then missing host-to-guest environment forwarding. They remain under attempt1_* and attempt2_*.",
+    "Q/K/V panels, PV-to-Wo redistribution, final Y/Norm/logits and completion HBM writes remain."
+  ]
+}

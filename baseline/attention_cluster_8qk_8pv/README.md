@@ -1,5 +1,16 @@
 # GM 模型校准
 
+**软件融合整组优化（2026-10-22，独立 all-gemm-reuse-window 分支）：**
+在既有片上驻留基础上实现 Add/RMSNorm2 融合、Norm2 GM 写请求合并、末层
+FFN/final Norm 的 worker 级流水，并把不可变配置解析移出消费交接路径。
+正式 S=1024 两层 decoder **5.458952 → 5.400835 ms（−1.06%）**；
+含 embedding/final Norm/LM 的端到端 **6.288746 → 6.134778 ms（−2.45%）**。
+相对本次同构建对照，端到端再下降 0.49%；减少 8 MiB GM 读取和 75% 的
+Norm2 写请求，新增 HBM 节省为 0 B。240 项回归及两组正式数值/资源审计通过。
+保持原硬件和全部 GEMM 的 reuse-window；完整 S=1024、两层、16 worker
+配对结果、数值/资源审计、复现命令和仍存在的 HBM 边界统一记录在
+[整组实施与测量报告](SOFTWARE_FUSION_BATCH_2026-10-22.md)。
+
 **RTX 5060 GPU 实验交接（2026-10-16）：**
 [SSH 查阅、精简传输、计算图与测量契约](GPU_PREFILL_HANDOFF_2026-10-16.md)。
 当前通用性回归正式两层为 **7,424,562 cycles**；GPU prefill runner 尚待实现。

@@ -125,7 +125,8 @@ def audit_input_residency(case, jobs, manifest):
         raise ValueError('residual Add residency lifecycle missing/duplicate/unexpected')
     for f in flows:
         j=expected[f['core'],f['epoch'],f['stage']]
-        if f['saved_hbm_read']!=row or f['metadata_bytes']!=64 or f['status'] or j['hbm_read']:
+        gamma=manifest['hidden']*2 if manifest.get('add_norm_fusion') else 0
+        if f['saved_hbm_read']!=row or f['metadata_bytes']!=64 or f['status'] or j['hbm_read']!=gamma:
             raise ValueError('residual Add must consume the retained row and issue no HBM reads')
     first={(f['core'],f['epoch']) for f in projections if f['epoch']==1}
     want={(core,1) for core in range(4,20)}

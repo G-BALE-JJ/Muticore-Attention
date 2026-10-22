@@ -368,6 +368,7 @@ def verify_lifecycle(case,m):
     elided={5,6,7} if m.get('ffn_panel_fusion') else ({6} if m.get('silu_multiply_fusion') else set())
     if m.get('ffn_down_fusion'):elided.add(8)
     if m.get('down_residual_fusion'):elided.add(9)
+    if m.get('add_norm_fusion'):elided.add(3)
     expected_stages=[stage for stage in range(1,10) if stage not in elided]
     if len(accepts)!=jobs or len(ops)!=jobs*len(expected_stages) or len(resets)!=(32 if epoch_flags else 2*jobs) or len(scratch)!=2*jobs:raise ValueError('missing or duplicate layer jobs/reset ACKs')
     if m.get('ffn_panel_fusion'):
@@ -522,12 +523,13 @@ def verify_final_norm(case,m,log,end,timing):
     def ranges(node,lane,offset):
         return [(node*stride+offset+(block*256+lane*64)*hidden*2,node*stride+offset+(block*256+lane*64+64)*hidden*2) for block in range(groups)]
     flags={node*stride+final['done']+lane*8 for node in range(1,5) for lane in range(4)}
-    ops=[];resets=[]
+    ops=[];resets=[];last_decoder=[]
     with log.open() as stream:
         for line in stream:
             if '[DECODER_OP] event=done ' in line:
                 e=fields(line)
                 if e['stage']==10:ops.append(e)
+                elif e['epoch']==m['layers'] and e['stage'] in (1,4):last_decoder.append(e)
             if '[DECODER_SYNC] event=flag_write_ack ' in line:
                 e=fields(line)
                 if e['address'] in flags:resets.append(e)
@@ -535,13 +537,26 @@ def verify_final_norm(case,m,log,end,timing):
         any(e['status'] or e['op']!=3 or e['epoch']!=epoch for e in ops)):
         raise ValueError('missing/duplicate/failed final RMSNorm worker generation')
     start=min(e['start_tick'] for e in ops)
+    eager=bool(m.get('eager_final_norm',False))
+    if eager:
+        producers={e['core']:e for e in last_decoder if e['stage']==4}
+        if (len(producers)!=16 or len(last_decoder)!=32 or
+                any(e['status'] for e in last_decoder) or
+                max(e['tick'] for e in producers.values())!=end[m['layers']] or
+                any(e['start_tick']<=producers[e['core']]['tick'] for e in ops)):
+            raise ValueError('eager final Norm must follow each worker complete FFN/output ACK')
+        reset_begin=end.get(m['layers']-1,0)
+        reset_end=min(e['start_tick'] for e in last_decoder if e['stage']==1)
+    else:reset_begin=end[m['layers']];reset_end=start
     if (len(resets)!=16 or {e['address'] for e in resets}!=flags or
-        any(e['status'] or e['value'] or not end[m['layers']]<=e['tick']<start for e in resets)):
+        any(e['status'] or e['value'] or not reset_begin<=e['tick']<reset_end for e in resets)):
         raise ValueError('final RMSNorm flag reset ACK/barrier failed')
     states={e['core']:{'op':e,'reads':[],'writes':[],'read_bytes':0,'write_bytes':0,
         'gamma_bytes':0,'gamma_reads':[],'last_output':0,'flag_acks':[]} for e in ops}
     provenance_path=case/'decoder_stack_provenance.json'
     recorded_env=json.loads(provenance_path.read_text())['environment'] if provenance_path.exists() else {}
+    if eager!=(recorded_env.get('GOLEM_DECODER_EAGER_FINAL_NORM','0')=='1'):
+        raise ValueError('eager final Norm manifest/configuration mismatch')
     gamma_reuse=recorded_env.get('GOLEM_DECODER_GAMMA_REUSE','0')=='1'
     resident=recorded_env.get('GOLEM_DECODER_LAYER_RESIDENCY','0')=='1' and m.get('sequence',1024)<=1024
     for state in states.values():state.update(local_reads=[],local_bytes=0)
@@ -561,13 +576,15 @@ def verify_final_norm(case,m,log,end,timing):
             if 'resource=local_read ' in line:
                 base=e['core']*0x200000+0xb0000
                 if base<=address<stop<=base+row_bytes:
-                    if e['ok']!=1 or e['start_tick']<=timing['layers'][str(m['layers'])]['last_y_ack_tick']:
+                    ready=producers[e['core']]['tick'] if eager else timing['layers'][str(m['layers'])]['last_y_ack_tick']
+                    if e['ok']!=1 or e['start_tick']<=ready:
                         raise ValueError('final RMSNorm GM read before final layer Y ACK')
                     state['local_reads'].append((address,stop));state['local_bytes']+=e['bytes']
                     first_input=e['start_tick'] if first_input is None else min(first_input,e['start_tick'])
             elif 'resource=dma_read_transport ' in line:
                 if any(a<=address<stop<=b for a,b in input_ranges):
-                    if e['ok']!=1 or e['start_tick']<=timing['layers'][str(m['layers'])]['last_y_ack_tick']:
+                    ready=producers[e['core']]['tick'] if eager else timing['layers'][str(m['layers'])]['last_y_ack_tick']
+                    if e['ok']!=1 or e['start_tick']<=ready:
                         raise ValueError('final RMSNorm input read before final layer Y ACK')
                     state['reads'].append((address,stop));state['read_bytes']+=e['bytes']
                     first_input=e['start_tick'] if first_input is None else min(first_input,e['start_tick'])
@@ -607,7 +624,8 @@ def verify_final_norm(case,m,log,end,timing):
     if re.findall(r'DECODER_FINAL_NORM status=(\d+) hidden=(\d+) epoch=(\d+)',stdout)!=[('0',str(hidden),str(epoch))]:
         raise ValueError('final RMSNorm root completion missing/failed')
     last_output=max(s['last_output'] for s in states.values())
-    return {'status':'PASS','workers':16,'epoch':epoch,'reset_ack_count':16,
+    return {'status':'PASS','workers':16,'epoch':epoch,'reset_ack_count':16,'eager_worker_handoff':eager,
+        'overlap_with_decoder_tail_cycles':max(0,(end[m['layers']]-start)/1000) if eager else 0,
         'first_input_dma_tick':first_input,'input_source':'GM' if resident else 'HBM','last_output_ack_tick':last_output,
         'last_completion_ack_tick':max(s['flag_acks'][0]['done_tick'] for s in states.values()),
         'output_ack_bytes':16*row_bytes*groups,'rmsnorm_cycles':(last_output-first_input)/1000,
@@ -669,6 +687,8 @@ def main():
     p.add_argument('--ffn-array-groups',type=int,choices=(1,2),default=1,
                    help='software interleave two disjoint 32-array subsets for fused FFN; hardware unchanged')
     p.add_argument('--gm-stage-chain',action='store_true',help='software residency across Wo/Add/Norm2/FFN in existing GM')
+    p.add_argument('--add-norm-fusion',action='store_true',help='forward rounded Add result directly to RMSNorm2')
+    p.add_argument('--eager-final-norm',action='store_true',help='overlap per-worker final Norm with the last decoder tail')
     p.add_argument('--layer-residency',action='store_true',help='reuse existing GM Y in next Norm1/final Norm')
     p.add_argument('--input-residency',action='store_true',help='retain layer input in existing GM for residual Add')
     p.add_argument('--lm-input-residency',action='store_true',help='reuse GM last-token input across adjacent LM descriptors')
@@ -680,6 +700,9 @@ def main():
     if not 1<=a.sequence<=8192:p.error('--sequence must be in [1,8192]')
     if a.gm_stage_chain and (not a.down_residual_fusion or a.ffn_layout!=2):p.error('--gm-stage-chain requires --down-residual-fusion --ffn-layout 2')
     if a.layer_residency and not a.gm_stage_chain:p.error('--layer-residency requires --gm-stage-chain')
+    if a.add_norm_fusion and not (a.gm_stage_chain and a.input_residency):p.error('--add-norm-fusion requires --gm-stage-chain --input-residency')
+    if a.add_norm_fusion and a.sequence>1024:p.error('--add-norm-fusion requires S<=1024')
+    if a.eager_final_norm and not (a.layer_residency and (a.final_norm or a.lm_head or a.embedding)):p.error('--eager-final-norm requires --layer-residency and final Norm')
     if a.input_residency and not a.layer_residency:p.error('--input-residency requires --layer-residency')
     if a.elide_intermediate_output and not a.layer_residency:p.error('--elide-intermediate-output requires --layer-residency')
     if a.elide_intermediate_output and not a.input_residency:p.error('--elide-intermediate-output requires --input-residency for the next residual Add')
@@ -744,6 +767,8 @@ def main():
         m['ffn_down_fusion']=bool(a.ffn_down_fusion)
         m['down_residual_fusion']=bool(a.down_residual_fusion)
         m['gm_stage_chain']=bool(a.gm_stage_chain)
+        m['add_norm_fusion']=bool(a.add_norm_fusion)
+        m['eager_final_norm']=bool(a.eager_final_norm)
         m['layer_residency']=bool(a.layer_residency)
         m['input_residency']=bool(a.input_residency)
         m['lm_input_residency']=bool(a.lm_input_residency)
@@ -766,6 +791,8 @@ def main():
     guest_target=Path(env['GOLEM_ATTENTION_GUEST_EXECUTABLE']).parent.name
     subprocess.run(['make','-C',str(GUEST_DIR),guest_target],check=True)
     env['GOLEM_DECODER_GM_STAGE_CHAIN']=str(int(a.gm_stage_chain))
+    env['GOLEM_DECODER_ADD_NORM_FUSION']=str(int(a.add_norm_fusion))
+    env['GOLEM_DECODER_EAGER_FINAL_NORM']=str(int(a.eager_final_norm))
     env['GOLEM_DECODER_LAYER_RESIDENCY']=str(int(a.layer_residency))
     env['GOLEM_DECODER_INPUT_RESIDENCY']=str(int(a.input_residency))
     env['GOLEM_DECODER_LM_INPUT_RESIDENCY']=str(int(a.lm_input_residency))

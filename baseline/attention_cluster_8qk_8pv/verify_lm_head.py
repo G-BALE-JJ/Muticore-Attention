@@ -79,10 +79,14 @@ def verify_lm_head(case,m,log,final,timing):
         if (merged(state['writes'])!=merged(wanted_writes) or sum(b-a for a,b in state['writes'])!=len(tiles)*128 or
             merged(state['weight_reads'])!=merged(wanted_reads) or sum(b-a for a,b in state['weight_reads'])!=len(tiles)*hidden*128):
             raise ValueError('LM head incomplete/duplicate output or weight tile coverage')
-        hit=resident and chunk>0 and bool(tiles)
+        cache_eligible=resident and chunk>0
+        hit=cache_eligible and bool(tiles)
         if resident:
             f=resident_by_key[core,epoch]
-            if f['hit']!=int(hit) or f['saved_hbm_read']!=(hidden*2 if hit else 0) or f['capacity_added'] or f['status']:
+            # The runtime's hit flag denotes a valid retained-input mapping.
+            # An empty final vocabulary shard issues no input read or GEMM,
+            # so its actual saved bytes remain zero despite that mapping.
+            if f['hit']!=int(cache_eligible) or f['saved_hbm_read']!=(hidden*2 if hit else 0) or f['capacity_added'] or f['status']:
                 raise ValueError('LM input residency ownership/bytes mismatch')
         if len(state['inputs'])!=int(bool(tiles) and not hit):raise ValueError('LM head last-token read/cache-hit mismatch')
         expected_read=(hidden*2 if tiles and not hit else 0)+len(tiles)*hidden*128
