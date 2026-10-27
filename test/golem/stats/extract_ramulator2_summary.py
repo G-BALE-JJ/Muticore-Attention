@@ -7,10 +7,23 @@ from pathlib import Path
 
 
 KEY_VALUE_RE = re.compile(r"([a-zA-Z0-9_]+)=([^\s]+)")
+SUMMARY_RE = re.compile(
+    r"RAMULATOR2_(BACKEND|COMMAND|CONTROLLER)_SUMMARY"
+)
 
 
 def parse_key_values(line):
     return {key: value for key, value in KEY_VALUE_RE.findall(line)}
+
+
+def parse_numeric_values(line):
+    values = {}
+    for key, value in parse_key_values(line).items():
+        try:
+            values[key] = float(value) if "." in value else int(value)
+        except ValueError:
+            continue
+    return values
 
 
 def parse_records(paths):
@@ -21,21 +34,20 @@ def parse_records(paths):
         if not path.exists() or not path.is_file():
             continue
         for line in path.read_text(errors="ignore").splitlines():
-            if "RAMULATOR2_BACKEND_SUMMARY" in line:
-                raw = parse_key_values(line)
-                record = {key: int(value) for key, value in raw.items()}
-                records[record["node"]] = record
-            elif "RAMULATOR2_COMMAND_SUMMARY" in line:
-                raw = parse_key_values(line)
-                record = {key: int(value) for key, value in raw.items()}
-                commands[(record["node"], record["channel"])] = record
-            elif "RAMULATOR2_CONTROLLER_SUMMARY" in line:
-                raw = parse_key_values(line)
-                record = {
-                    key: (float(value) if "." in value else int(value))
-                    for key, value in raw.items()
-                }
-                controllers[(record["node"], record["channel"])] = record
+            matches = list(SUMMARY_RE.finditer(line))
+            for index, match in enumerate(matches):
+                end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
+                record = parse_numeric_values(line[match.start():end])
+                kind = match.group(1)
+                if kind == "BACKEND":
+                    if "node" in record:
+                        records[record["node"]] = record
+                elif kind == "COMMAND":
+                    if "node" in record and "channel" in record:
+                        commands[(record["node"], record["channel"])] = record
+                else:
+                    if "node" in record and "channel" in record:
+                        controllers[(record["node"], record["channel"])] = record
     return records, commands, controllers
 
 
@@ -58,19 +70,33 @@ def main():
     parser = argparse.ArgumentParser(description="Extract Ramulator2 HBM backend summaries")
     parser.add_argument("--log", action="append", required=True)
     parser.add_argument("--exclude-node", action="append", type=int, default=[])
-    parser.add_argument("--memory-clock-ghz", type=float, default=1.25)
+    clocks = parser.add_mutually_exclusive_group()
+    clocks.add_argument("--memory-clock-ghz", type=float, default=1.25)
+    clocks.add_argument("--memory-clock", help="SST memory controller frequency, e.g. 1.25GHz")
     parser.add_argument("--channels-per-stack", type=int, default=8)
     parser.add_argument("--transaction-bytes", type=int, default=32)
     parser.add_argument("--memory-summary", required=True)
     parser.add_argument("--hbm-summary", required=True)
     parser.add_argument("--hbm-nodes", required=True)
     args = parser.parse_args()
+    if args.memory_clock is not None:
+        match = re.fullmatch(r"\s*([0-9]+(?:\.[0-9]+)?)\s*(GHz|MHz|kHz|Hz)\s*", args.memory_clock)
+        if not match:
+            parser.error(f"invalid memory clock: {args.memory_clock!r}")
+        args.memory_clock_ghz = float(match[1]) * {"GHz": 1, "MHz": 1e-3, "kHz": 1e-6, "Hz": 1e-9}[match[2]]
+    if not math.isfinite(args.memory_clock_ghz) or args.memory_clock_ghz <= 0:
+        parser.error("memory clock must be positive and finite")
 
     records, commands, controllers = parse_records([Path(name) for name in args.log])
     excluded = set(args.exclude_node)
     rows = [records[node] for node in sorted(records) if node not in excluded]
     if not rows:
         raise RuntimeError("no Ramulator2 backend summary records found after exclusions")
+    versions = {command.get("tccd_stats_version", 1)
+                for (node, _), command in commands.items() if node not in excluded}
+    if len(versions) != 1 or not versions <= {1, 2}:
+        raise RuntimeError(f"incompatible tCCD statistics versions: {versions}")
+    stats_version = next(iter(versions))
 
     peak_bytes_per_cycle = args.channels_per_stack * args.transaction_bytes
     node_rows = []
@@ -93,6 +119,12 @@ def main():
                 f"node {row['node']}: expected {args.channels_per_stack} command summaries, "
                 f"found {len(node_commands)}"
             )
+        if stats_version == 2:
+            for command in node_commands:
+                if command["tccd_l_pairs"] + command["tccd_s_pairs"] != command["rd"] - command["pc_read_sequences"]:
+                    raise RuntimeError(f"node {row['node']}: per-PC read pair conservation failed")
+                if command["cross_pc_pairs"] > command["global_read_pairs"]:
+                    raise RuntimeError(f"node {row['node']}: cross-PC pair conservation failed")
         if read_commands != row["read_count"] or write_commands != row["write_count"]:
             raise RuntimeError(
                 f"node {row['node']}: command/completion conservation failed: "
@@ -120,7 +152,9 @@ def main():
         tccd_l = sum(command["tccd_l_pairs"] for command in node_commands)
         cross_pc = sum(command["cross_pc_pairs"] for command in node_commands)
         same_pc_pairs = tccd_s + tccd_l
-        all_read_pairs = same_pc_pairs + cross_pc
+        # L/S now follows each PC independently. Cross-PC alternation still
+        # follows adjacent read columns on the whole physical channel.
+        all_read_pairs = sum(command["global_read_pairs"] for command in node_commands) if stats_version == 2 else same_pc_pairs + cross_pc
         controller_rows = [
             controller for (node, _), controller in sorted(controllers.items())
             if node == row["node"]
@@ -162,6 +196,8 @@ def main():
                 "tccd_s_pairs": tccd_s,
                 "tccd_l_pairs": tccd_l,
                 "cross_pseudo_channel_pairs": cross_pc,
+                "global_read_pairs": all_read_pairs,
+                "tccd_stats_version": stats_version,
                 "tccd_s_pair_pct": f"{100.0 * tccd_s / same_pc_pairs:.6f}" if same_pc_pairs else "",
                 "tccd_l_pair_pct": f"{100.0 * tccd_l / same_pc_pairs:.6f}" if same_pc_pairs else "",
                 "cross_pseudo_channel_pair_pct": f"{100.0 * cross_pc / all_read_pairs:.6f}" if all_read_pairs else "",
@@ -228,10 +264,12 @@ def main():
     total_l = sum(row["tccd_l_pairs"] for row in node_rows)
     total_cross_pc = sum(row["cross_pseudo_channel_pairs"] for row in node_rows)
     total_same_pc = total_s + total_l
-    total_read_pairs = total_same_pc + total_cross_pc
+    total_read_pairs = sum(row["global_read_pairs"] for row in node_rows)
     write_metric_csv(
         Path(args.hbm_summary),
         [
+            ("hbm_read_command_tccd_stats_version", stats_version),
+            ("hbm_read_command_tccd_pair_scope", "per_pc_reads" if stats_version == 2 else "adjacent_channel_read_columns"),
             ("hbm_read_command_utilization_pct", f"{command_util:.6f}"),
             ("hbm_read_command_node_utilization_pct_array", command_node_util_array),
             ("hbm_read_command_count", total_read_commands),

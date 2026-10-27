@@ -18,6 +18,7 @@
 #include <sst/elements/golem/attention/resourceTrace.h>
 #include "sst/elements/memHierarchy/util.h"
 #include "membackend/ramulator2Backend.h"
+#include "membackend/ramulator2ReadCommandStats.h"
 #include "ramulator/base/config.h"
 #include "ramulator/base/factory.h"
 #include "ramulator/base/base.h"
@@ -125,17 +126,20 @@ public:
                 << " first_rd=" << (readCommands_ == 0 ? 0 : firstReadCycle_)
                 << " last_rd=" << (readCommands_ == 0 ? 0 : lastReadCycle_)
                 << " read_window=" << readWindow
-                << " tccd_l_pairs=" << tccdLongPairs_
-                << " tccd_l_gap_sum=" << tccdLongGapSum_
-                << " tccd_l_min_gap=" << finiteMin(tccdLongMinGap_)
-                << " tccd_l_violations=" << tccdLongViolations_
-                << " tccd_s_pairs=" << tccdShortPairs_
-                << " tccd_s_gap_sum=" << tccdShortGapSum_
-                << " tccd_s_min_gap=" << finiteMin(tccdShortMinGap_)
-                << " tccd_s_violations=" << tccdShortViolations_
-                << " cross_pc_pairs=" << crossPseudoChannelPairs_
-                << " cross_pc_gap_sum=" << crossPseudoChannelGapSum_
-                << " cross_pc_min_gap=" << finiteMin(crossPseudoChannelMinGap_)
+                << " tccd_stats_version=2"
+                << " pc_read_sequences=" << readStats_.pcReadSequences
+                << " global_read_pairs=" << readStats_.globalReadPairs
+                << " tccd_l_pairs=" << readStats_.longPairs.count
+                << " tccd_l_gap_sum=" << readStats_.longPairs.gapSum
+                << " tccd_l_min_gap=" << finiteMin(readStats_.longPairs.minGap)
+                << " tccd_l_violations=" << readStats_.longPairs.violations
+                << " tccd_s_pairs=" << readStats_.shortPairs.count
+                << " tccd_s_gap_sum=" << readStats_.shortPairs.gapSum
+                << " tccd_s_min_gap=" << finiteMin(readStats_.shortPairs.minGap)
+                << " tccd_s_violations=" << readStats_.shortPairs.violations
+                << " cross_pc_pairs=" << readStats_.crossPcPairs.count
+                << " cross_pc_gap_sum=" << readStats_.crossPcPairs.gapSum
+                << " cross_pc_min_gap=" << finiteMin(readStats_.crossPcPairs.minGap)
                 << " rw_switches=" << readWriteSwitches_
                 << " rw_switch_gap_sum=" << readWriteSwitchGapSum_
                 << " column_pairs=" << columnPairCount_
@@ -158,28 +162,8 @@ private:
         lastReadCycle_ = cycle;
         readCommands_++;
 
-        if (haveLastRead_ && lastColumnWasRead_) {
-            const uint64_t gap = cycle - lastReadCycleForPair_;
-            if (pseudoChannel != lastReadPseudoChannel_) {
-                crossPseudoChannelPairs_++;
-                crossPseudoChannelGapSum_ += gap;
-                crossPseudoChannelMinGap_ = std::min(crossPseudoChannelMinGap_, gap);
-            } else if (bankGroup == lastReadBankGroup_) {
-                tccdLongPairs_++;
-                tccdLongGapSum_ += gap;
-                tccdLongMinGap_ = std::min(tccdLongMinGap_, gap);
-                if (gap < tccdLongCycles_) tccdLongViolations_++;
-            } else {
-                tccdShortPairs_++;
-                tccdShortGapSum_ += gap;
-                tccdShortMinGap_ = std::min(tccdShortMinGap_, gap);
-                if (gap < tccdShortCycles_) tccdShortViolations_++;
-            }
-        }
-        haveLastRead_ = true;
-        lastReadCycleForPair_ = cycle;
-        lastReadPseudoChannel_ = pseudoChannel;
-        lastReadBankGroup_ = bankGroup;
+        readStats_.recordRead(cycle, pseudoChannel, bankGroup,
+                              tccdShortCycles_, tccdLongCycles_, lastColumnWasRead_);
     }
 
     ControllerBase* controller_ = nullptr;
@@ -197,27 +181,13 @@ private:
     uint64_t tccdShortCycles_ = 0;
     uint64_t tccdLongCycles_ = 0;
     std::unordered_map<int, uint64_t> commandCounts_;
-    bool haveLastRead_ = false;
+    SST::MemHierarchy::Ramulator2ReadCommandStats readStats_;
     bool haveLastColumn_ = false;
     bool lastColumnWasRead_ = false;
     uint64_t firstReadCycle_ = 0;
     uint64_t lastReadCycle_ = 0;
-    uint64_t lastReadCycleForPair_ = 0;
     uint64_t lastColumnCycle_ = 0;
-    int lastReadPseudoChannel_ = -1;
-    int lastReadBankGroup_ = -1;
     uint64_t readCommands_ = 0;
-    uint64_t tccdLongPairs_ = 0;
-    uint64_t tccdLongGapSum_ = 0;
-    uint64_t tccdLongMinGap_ = std::numeric_limits<uint64_t>::max();
-    uint64_t tccdLongViolations_ = 0;
-    uint64_t tccdShortPairs_ = 0;
-    uint64_t tccdShortGapSum_ = 0;
-    uint64_t tccdShortMinGap_ = std::numeric_limits<uint64_t>::max();
-    uint64_t tccdShortViolations_ = 0;
-    uint64_t crossPseudoChannelPairs_ = 0;
-    uint64_t crossPseudoChannelGapSum_ = 0;
-    uint64_t crossPseudoChannelMinGap_ = std::numeric_limits<uint64_t>::max();
     uint64_t readWriteSwitches_ = 0;
     uint64_t readWriteSwitchGapSum_ = 0;
     uint64_t columnPairCount_ = 0;

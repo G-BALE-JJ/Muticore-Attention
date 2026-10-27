@@ -439,7 +439,7 @@ libmemHierarchy_la_LDFLAGS += $(RAMULATOR2_LDFLAGS)
 libmemHierarchy_la_LIBADD += $(RAMULATOR2_LIB)
 libmemHierarchy_la_SOURCES += membackend/ramulator2Backend.cc \
 	membackend/ramulator2Backend.h
-nobase_sst_HEADERS += membackend/ramulator2Backend.h
+nobase_sst_HEADERS += membackend/ramulator2Backend.h membackend/ramulator2ReadCommandStats.h
 AM_CPPFLAGS += $(RAMULATOR2_CPPFLAGS) -DHAVE_LIBRAMULATOR2
 AM_CXXFLAGS += $(RAMULATOR2_CXXFLAGS)
 endif
