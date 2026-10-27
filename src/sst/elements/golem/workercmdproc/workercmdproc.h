@@ -28,6 +28,7 @@
 #include <sst/elements/golem/sfu/sfu.h>
 #include <sst/elements/golem/globalmemory/globalmemory.h>
 #include <sst/elements/golem/requestscheduler/requestscheduler.h>
+#include <sst/elements/golem/workercmdproc/partialCPrefetch.h>
 
 namespace SST {
 namespace Golem {
@@ -4669,11 +4670,7 @@ private:
             return;
         }
         const size_t current = currentPartialIndex();
-        for (size_t idx = 0; idx < windowReuseDone_.size(); ++idx) {
-            if (idx != current && windowReuseDone_[idx] == 0) {
-                return;
-            }
-        }
+        if (!firstPartialReadyForNextWindow(windowReuseDone_, current)) return;
         issueCBufferPrefetch(nextKBegin, 0, cycle);
     }
 

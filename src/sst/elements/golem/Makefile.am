@@ -30,6 +30,7 @@ libgolem_la_SOURCES = \
 	sfu/vector_pipeline.h \
 	sfu/sfu.cc \
 	workercmdproc/workercmdproc.h \
+	workercmdproc/partialCPrefetch.h \
 	attention/attentionCluster.h \
 	attention/decoderMemoryLayout.h \
 	attention/decoderOpAbi.h \
