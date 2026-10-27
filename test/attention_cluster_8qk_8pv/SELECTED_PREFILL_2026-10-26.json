@@ -41,7 +41,7 @@
   ],
   "baseline_result": "results/ffn_critical_path_20261025/formal_control/reuse_window_probe/decoder_stack_result.json",
   "verification_reference": "results/software_output_residency_20261022/final_control/reuse_window_probe/decoder_stack_result.json",
-  "measured_library_sha256": "cb211e1a1b2eb88715d236284ca3346675908b32271eb9682bd7deba63340e60",
+  "measured_library_sha256": "82d12d42b8091e5c12fa6982ce5fdb30bc74753d273021831f0077eea91042e2",
   "scope": "Synthetic S1024/H2048/FFN8192, 2 layers, vocab128256, 16 workers, MPI8; all dense tiles executed.",
   "boundary": "First token-ID DMA send to final valid-token full-logits DMA ACK; host argmax excluded.",
   "measured_guest_sha256": "7ee4f229860f8c83dea431a72f10cbcf58e02d6de4bb76c454807e95f067f57c",

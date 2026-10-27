@@ -41,3 +41,7 @@ Raw artifacts remain in the experimental worktree paths recorded there.
 Interrupted phase 01 and initial phase 04 runs are retained separately and are not counted.
 The phase 01 report finalization, phase 04 active-K and native API repairs are explained in
 [RECOVERY.md](../../maintenance/mechanism_alignment/RECOVERY.md).
+
+## Main integration
+
+All seven candidate gates and the rebuilt `main` four-stage gate PASS. Main was rebuilt from source, native fixtures passed, and the final GEMM/Attention/GQA/prefill cycles remain 3500/12852/37928/6084167.75. The selected public library pin now matches the tested main installation. Changes remain local; no remote push was performed.
