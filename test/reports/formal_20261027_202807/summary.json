@@ -1,0 +1,531 @@
+{
+  "status": "PASS",
+  "generated_at": "2026-10-27T20:49:36.183129+08:00",
+  "latency_unit": "cycles",
+  "reference_clock_hz": 1000000000,
+  "ticks_per_cycle": 1000,
+  "library_sha256": "cb211e1a1b2eb88715d236284ca3346675908b32271eb9682bd7deba63340e60",
+  "guest_sha256": "7ee4f229860f8c83dea431a72f10cbcf58e02d6de4bb76c454807e95f067f57c",
+  "stages": [
+    {
+      "stage": "GEMM",
+      "status": "PASS",
+      "shape": {
+        "M": 128,
+        "N": 128,
+        "K": 128,
+        "dtype": "fp32"
+      },
+      "start_cycle": 207810.0,
+      "end_cycle": 211309.0,
+      "end_to_end_cycles": 3500.0,
+      "boundary": "first descriptor start -> last WCP completion (includes C writeback), inclusive +1",
+      "reference_clock_hz": 1000000000,
+      "host_sst_wall_seconds": 15.0,
+      "validation": {
+        "status": "PASS",
+        "checked_elements": 16384,
+        "mismatches": 0,
+        "max_abs_error": 0.0,
+        "atol": 1e-05,
+        "rtol": 0.0001,
+        "inputs_sha256": {
+          "/data/jjgong/LLM/test/GEMM/results/formal_verified_20261027_202807/inputs/a.bin": "e67eed3ab5121c125b16fbc27d2bf78486272705889b653438b110484b1d7acb",
+          "/data/jjgong/LLM/test/GEMM/results/formal_verified_20261027_202807/inputs/b.bin": "c45a8fefc73b74480db988e34b08e51e9271fd38eceefeb118e050bd46a1a57f",
+          "/data/jjgong/LLM/test/GEMM/results/formal_verified_20261027_202807/stats/overlap0/run_20261027_203051_923958/c_out.csv": "ff904161db9db3f2ee15fdf2730b052f197ca9a06ead8b4252969b7c63303076"
+        }
+      },
+      "artifacts": "test/GEMM/results/formal_verified_20261027_202807"
+    },
+    {
+      "stage": "Attention",
+      "status": "PASS",
+      "shape": {
+        "Hq": 1,
+        "Hkv": 1,
+        "query_length": 1024,
+        "kv_length": 1024,
+        "head_dim": 128,
+        "causal": false
+      },
+      "start_cycle": 180484,
+      "end_cycle": 193336,
+      "end_to_end_cycles": 12852,
+      "boundary": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+      "reference_clock_hz": 1000000000,
+      "host_sst_wall_seconds": 7.0,
+      "validation": {
+        "sst_qk_bridge_result": "PASS",
+        "fused_attention_result": "PASS",
+        "attention_mpi_partition": "PASS",
+        "attention_hbm_layout": "PASS"
+      },
+      "artifacts": "test/Attention/results/formal_20261027_202807"
+    },
+    {
+      "stage": "GQA",
+      "status": "PASS",
+      "shape": {
+        "Hq": 4,
+        "Hkv": 2,
+        "query_length": 1024,
+        "kv_length": 1024,
+        "head_dim": 128,
+        "causal": false
+      },
+      "start_cycle": 181176,
+      "end_cycle": 219104,
+      "end_to_end_cycles": 37928,
+      "boundary": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+      "reference_clock_hz": 1000000000,
+      "host_sst_wall_seconds": 12.0,
+      "validation": {
+        "sst_qk_bridge_result": "PASS",
+        "fused_attention_result": "PASS",
+        "attention_mpi_partition": "PASS",
+        "attention_hbm_layout": "PASS"
+      },
+      "artifacts": "test/GQA/results/formal_20261027_202807"
+    },
+    {
+      "stage": "prefill",
+      "status": "PASS",
+      "shape": {
+        "S": 1024,
+        "padded_S": 1024,
+        "hidden": 2048,
+        "intermediate": 8192,
+        "layers": 2
+      },
+      "start_cycle": 291547.0,
+      "end_cycle": 6375714.75,
+      "end_to_end_cycles": 6084167.75,
+      "boundary": "first token-ID DMA send to last-token logits final output DMA ACK",
+      "reference_clock_hz": 1000000000,
+      "host_sst_wall_seconds": 1003.0,
+      "validation": {
+        "lifecycle": "PASS",
+        "resources": "PASS",
+        "gm_banks": "PASS",
+        "final_norm": "PASS",
+        "lm_head": "PASS",
+        "embedding": "PASS",
+        "coverage": "PASS",
+        "projection_panels": "PASS"
+      },
+      "artifacts": "test/prefill/results/formal_20261027_202807"
+    }
+  ],
+  "prefill_disjoint_breakdown": [
+    {
+      "stage": "embedding",
+      "start_tick": 291547000,
+      "end_tick": 320375375,
+      "cycles": 28828.375
+    },
+    {
+      "stage": "embedding -> decoder handoff",
+      "start_tick": 320375375,
+      "end_tick": 385453000,
+      "cycles": 65077.625
+    },
+    {
+      "stage": "layer 1 norm/QKV/RoPE/Attention to O ACK",
+      "start_tick": 385453000,
+      "end_tick": 829057250,
+      "cycles": 443604.25
+    },
+    {
+      "stage": "layer 1 Wo/residual/norm/FFN to Y ready",
+      "start_tick": 829057250,
+      "end_tick": 3022421000,
+      "cycles": 2193363.75
+    },
+    {
+      "stage": "layer 1 -> 2 handoff",
+      "start_tick": 3022421000,
+      "end_tick": 3083485000,
+      "cycles": 61064.0
+    },
+    {
+      "stage": "layer 2 norm/QKV/RoPE/Attention to O ACK",
+      "start_tick": 3083485000,
+      "end_tick": 3512539875,
+      "cycles": 429054.875
+    },
+    {
+      "stage": "layer 2 Wo/residual/norm/FFN to Y ready",
+      "start_tick": 3512539875,
+      "end_tick": 5729250750,
+      "cycles": 2216710.875
+    },
+    {
+      "stage": "final RMSNorm tail after decoder Y",
+      "start_tick": 5729250750,
+      "end_tick": 5770813750,
+      "cycles": 41563.0
+    },
+    {
+      "stage": "final norm -> LM head handoff",
+      "start_tick": 5770813750,
+      "end_tick": 5787780000,
+      "cycles": 16966.25
+    },
+    {
+      "stage": "last-token LM head, all vocabulary logits",
+      "start_tick": 5787780000,
+      "end_tick": 6375714750,
+      "cycles": 587934.75
+    }
+  ],
+  "prefill_decoder_cycles": 5343797.75,
+  "prefill_operator_spans": {
+    "1": {
+      "1": {
+        "start_tick": 852307000,
+        "end_tick": 1054284000,
+        "span_cycles": 201977.0,
+        "workers": 16,
+        "hbm_read_bytes": 138412032,
+        "hbm_write_bytes": 0
+      },
+      "2": {
+        "start_tick": 1037548000,
+        "end_tick": 1100154000,
+        "span_cycles": 62606.0,
+        "workers": 16,
+        "hbm_read_bytes": 65536,
+        "hbm_write_bytes": 0
+      },
+      "4": {
+        "start_tick": 1083540000,
+        "end_tick": 3022421000,
+        "span_cycles": 1938881.0,
+        "workers": 16,
+        "hbm_read_bytes": 1610612736,
+        "hbm_write_bytes": 128
+      }
+    },
+    "2": {
+      "1": {
+        "start_tick": 3536703000,
+        "end_tick": 3740104000,
+        "span_cycles": 203401.0,
+        "workers": 16,
+        "hbm_read_bytes": 138412032,
+        "hbm_write_bytes": 0
+      },
+      "2": {
+        "start_tick": 3723015000,
+        "end_tick": 3785974000,
+        "span_cycles": 62959.0,
+        "workers": 16,
+        "hbm_read_bytes": 65536,
+        "hbm_write_bytes": 0
+      },
+      "4": {
+        "start_tick": 3768960000,
+        "end_tick": 5729344000,
+        "span_cycles": 1960384.0,
+        "workers": 16,
+        "hbm_read_bytes": 1610612736,
+        "hbm_write_bytes": 4194432
+      }
+    }
+  },
+  "prefill_numerical_checks": {
+    "layer1_composed": {
+      "status": "ELIDED",
+      "reason": "intermediate Y retained in timed GM; full independent chain composed through final Y"
+    },
+    "layer2_composed": {
+      "status": "PASS",
+      "max_abs_error": 0.0009765625,
+      "tolerance": 0.004,
+      "elements": 2097152,
+      "rms_error": 1.0914304044425442e-05
+    },
+    "final_norm_composed": {
+      "status": "PASS",
+      "criterion": "bounded layer-input error propagated through RMSNorm plus storage/local budgets",
+      "max_abs_error": 0.00390625,
+      "rms_error": 4.4503891187840894e-05,
+      "elements": 2097152,
+      "input_absolute_budget": 0.004,
+      "local_operator_budget": 0.002,
+      "local_max_abs_error": 0.0,
+      "max_error_to_bound_ratio": 0.07974833102811249,
+      "legacy_fixed_006_exceeded": false
+    },
+    "final_norm_local": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0.002,
+      "elements": 2097152,
+      "rms_error": 0.0
+    },
+    "last_layer_input_reference": {
+      "source": "verified materialized counterpart; host validation only",
+      "reference_result": "/data/jjgong/LLM/test/history/Muticore-Attention-all-gemm/results/software_output_residency_20261022/final_control/reuse_window_probe/decoder_stack_result.json",
+      "reference_result_sha256": "59a317432437d9385339896e16171ae1cb2dbbc4a3b86c6f44d1a773784ebdb0",
+      "input_sha256": "d2e2f39414a4711958d3d8c1167853b5298bb810a8c46f1e521ba0fdb97ad5a1",
+      "elements": 2097152,
+      "candidate_hbm_input_intentionally_absent": true,
+      "equivalent_software_schedules": {
+        "add_norm_fusion": {
+          "candidate": true,
+          "reference": false
+        },
+        "eager_final_norm": {
+          "candidate": true,
+          "reference": false
+        }
+      }
+    },
+    "last_attention": {
+      "status": "PASS",
+      "max_abs_error": 0.0001220703125,
+      "tolerance": 0.0003,
+      "elements": 2097152,
+      "rms_error": 1.6952181039199178e-06
+    },
+    "last_wo": {
+      "status": "ELIDED",
+      "reason": "consumed from timed GM stage chain; reconstructed independently; complete device Y still checked"
+    },
+    "last_h1": {
+      "status": "ELIDED",
+      "reason": "consumed from timed GM stage chain; reconstructed independently; complete device Y still checked"
+    },
+    "last_norm2": {
+      "status": "ELIDED",
+      "reason": "consumed from timed GM stage chain; reconstructed independently; complete device Y still checked"
+    },
+    "last_gate": {
+      "status": "ELIDED",
+      "reason": "producer panel consumed on chip; independently reconstructed for gated validation"
+    },
+    "last_up": {
+      "status": "ELIDED",
+      "reason": "producer panel consumed on chip; independently reconstructed for gated validation"
+    },
+    "last_act": {
+      "status": "ELIDED",
+      "reason": "FP16-rounded bounded SiLU result consumed directly by Multiply"
+    },
+    "last_gated": {
+      "status": "ELIDED",
+      "reason": "gated panel consumed directly by down; independently reconstructed for down validation"
+    },
+    "last_down": {
+      "status": "ELIDED",
+      "reason": "FP16 down output consumed directly by residual Add; independently reconstructed"
+    },
+    "last_residual2": {
+      "status": "PASS",
+      "max_abs_error": 0.0,
+      "tolerance": 0,
+      "elements": 2097152,
+      "rms_error": 0.0
+    }
+  },
+  "prefill_verified_decoder_jobs": 384,
+  "prefill_memory": {
+    "per_node_used_bytes": 373198880,
+    "per_node_capacity_bytes": 2147483648,
+    "activation_slots": 2,
+    "shared_scratch": true,
+    "weight_sets": 2
+  },
+  "final_norm_span_cycles": 88343.75,
+  "final_norm_overlaps_decoder": true,
+  "selected_reference_cycles": 6084167.75,
+  "delta_from_selected_cycles": 0.0,
+  "next_token": {
+    "method": "greedy_argmax",
+    "token_id": 99037,
+    "logit": 0.6982421875,
+    "vocab": 128256,
+    "tie_break": "lowest token ID",
+    "host_selection_seconds": 0.000766467,
+    "status": "PASS",
+    "local_reference_token_id": 99037,
+    "composed_reference_token_id": 99037,
+    "composed_reference_agrees": true,
+    "timing_scope": "host argmax only; excluded from accelerator cycles"
+  },
+  "evidence_sha256": {
+    "GEMM": {
+      "test/GEMM/results/formal_verified_20261027_202807/stage_invocation.json": "2dec69d14969a89e1971eb5a9143284234af49833fa80909fe9dc771ea8b977a",
+      "test/GEMM/results/formal_verified_20261027_202807/gemm_numerical_verification.json": "f425016ec11df72b03378f24174c5888684ff4693944b51c72bac0680ea4a5a3",
+      "test/GEMM/results/formal_verified_20261027_202807/stats/overlap0/run_20261027_203051_923958/execution_summary.csv": "91610435ab73c3210e0badd521b7718bb7ac7f7cdeb7e93fd8926c3a680fdb5e",
+      "test/GEMM/results/formal_verified_20261027_202807/stats/overlap0/run_20261027_203051_923958/terminal_summary.csv": "210c011be85802b5ffa7168148b87936bf6667c20f2d52572895e3c1d3037594"
+    },
+    "Attention": {
+      "test/Attention/results/formal_20261027_202807/stage_invocation.json": "218261acad3de1fda9c143bfc6c29413e73d600c6740242e2c06774bcc716e42",
+      "test/Attention/results/formal_20261027_202807/sst_qk_bridge_result.json": "a1cc5a96b6f5762abd7426fc9843b5523c78c2eeff4943b144892ecfbdbe5abd",
+      "test/Attention/results/formal_20261027_202807/fused_attention_result.json": "22e1de626f311abf2c10d6ca1261866cd496cd3576ce2a85ae6339a57149a6a1",
+      "test/Attention/results/formal_20261027_202807/attention_mpi_partition.json": "380504659d65bd8e381117d06150f0e5e3618cde52791c74dd6412853b8c3105",
+      "test/Attention/results/formal_20261027_202807/attention_hbm_layout.json": "0580395ee0d6cbf0c6b6f23fdd2462f454e6f2141216403b8e8665d02aa93f4b"
+    },
+    "GQA": {
+      "test/GQA/results/formal_20261027_202807/stage_invocation.json": "5d5a2f3ba01070e3722d9670e158b2f7a8c1d391d31700896be2ec6a536a4624",
+      "test/GQA/results/formal_20261027_202807/sst_qk_bridge_result.json": "a04bfa861201adbe7afc67c3f9100e4d8cacff92a70c07d07dfed02be05f3f76",
+      "test/GQA/results/formal_20261027_202807/fused_attention_result.json": "6a1c2233b9399eff5a69ff4784464de399db9819ebbc11566eef8caba757f00b",
+      "test/GQA/results/formal_20261027_202807/attention_mpi_partition.json": "ef330d606aafc15ce4bd760bf7fa890a8782f62cd292da1b91ea21cf806f7e48",
+      "test/GQA/results/formal_20261027_202807/attention_hbm_layout.json": "5745c3beb7d8868a093d1b7003a3f894e80b1d303576cf52d9f4676236a97162"
+    },
+    "prefill": {
+      "test/prefill/results/formal_20261027_202807/stage_invocation.json": "facdb85a7a47b7c934e1097ab84ce13b494bb0cde997feb0d761582e38271a02",
+      "test/prefill/results/formal_20261027_202807/reuse_window_probe/decoder_stack_result.json": "ec726b9daf865e9400357918f05723ccb0459faf4d1fe8974f598373bd6ec4f6",
+      "test/prefill/results/formal_20261027_202807/all_gemm_reuse_window_report.json": "e8bb943c5a0b8c0fe19945d6e120555d420fc8d67deecce92fccc542240ece67"
+    }
+  },
+  "invocations": {
+    "GEMM": {
+      "stage": "GEMM",
+      "workspace": "/data/jjgong/LLM",
+      "artifact_root": "/data/jjgong/LLM/test/GEMM/results/formal_verified_20261027_202807",
+      "command": [
+        "bash",
+        "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+        "--groups",
+        "4",
+        "--num-cores",
+        "20",
+        "--gemm-cores",
+        "20",
+        "--num-mem-nodes",
+        "5",
+        "--mesh-dim-x",
+        "4",
+        "--gemm-m",
+        "128",
+        "--gemm-n",
+        "128",
+        "--gemm-k",
+        "128",
+        "--gemm-block-m",
+        "64",
+        "--gemm-block-n",
+        "64",
+        "--gemm-block-k",
+        "64",
+        "--mpi-ranks",
+        "1",
+        "--output-mode",
+        "hbm",
+        "--cpuset",
+        "16",
+        "--tensor-source",
+        "sample",
+        "--tensor-dir",
+        "/data/jjgong/LLM/test/GEMM/results/formal_verified_20261027_202807/inputs",
+        "--verify-c"
+      ],
+      "environment_overrides": {
+        "GOLEM_ARCH_SCRIPT": "architecture/ncores_selfcom_dma_ctrl.py",
+        "GOLEM_CTRL_LINK_ENABLE": "1",
+        "GOLEM_GROUP_MANAGER_ENABLE": "1",
+        "GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE": "1",
+        "GOLEM_REQUEST_SCHEDULER_ENABLE": "1",
+        "GOLEM_ATTENTION_KV_BUFFER_COUNT": "1",
+        "GOLEM_ATTENTION_KV_SECOND_LOOKAHEAD": "0"
+      },
+      "latency_unit": "cycles",
+      "mode": "run",
+      "library_sha256": "cb211e1a1b2eb88715d236284ca3346675908b32271eb9682bd7deba63340e60",
+      "git_head": "b8d51438ac25a89ed13fe54be2aa31966a3b1c6c",
+      "git_status": "",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "Attention": {
+      "stage": "Attention",
+      "workspace": "/data/jjgong/LLM",
+      "artifact_root": "/data/jjgong/LLM/test/Attention/results/formal_20261027_202807",
+      "command": [
+        "bash",
+        "/data/jjgong/LLM/scripts/test_flash_attention.sh",
+        "--query-length",
+        "1024",
+        "--kv-length",
+        "1024",
+        "--num-query-heads",
+        "1",
+        "--num-kv-heads",
+        "1",
+        "--head-dim",
+        "128",
+        "--mpi-ranks",
+        "4",
+        "--artifact-root",
+        "/data/jjgong/LLM/test/Attention/results/formal_20261027_202807"
+      ],
+      "environment_overrides": {},
+      "latency_unit": "cycles",
+      "mode": "run",
+      "library_sha256": "cb211e1a1b2eb88715d236284ca3346675908b32271eb9682bd7deba63340e60",
+      "git_head": "b8d51438ac25a89ed13fe54be2aa31966a3b1c6c",
+      "git_status": "",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "GQA": {
+      "stage": "GQA",
+      "workspace": "/data/jjgong/LLM",
+      "artifact_root": "/data/jjgong/LLM/test/GQA/results/formal_20261027_202807",
+      "command": [
+        "bash",
+        "/data/jjgong/LLM/scripts/test_flash_attention.sh",
+        "--query-length",
+        "1024",
+        "--kv-length",
+        "1024",
+        "--num-query-heads",
+        "4",
+        "--num-kv-heads",
+        "2",
+        "--head-dim",
+        "128",
+        "--mpi-ranks",
+        "4",
+        "--artifact-root",
+        "/data/jjgong/LLM/test/GQA/results/formal_20261027_202807"
+      ],
+      "environment_overrides": {},
+      "latency_unit": "cycles",
+      "mode": "run",
+      "library_sha256": "cb211e1a1b2eb88715d236284ca3346675908b32271eb9682bd7deba63340e60",
+      "git_head": "b8d51438ac25a89ed13fe54be2aa31966a3b1c6c",
+      "git_status": "",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "prefill": {
+      "stage": "prefill",
+      "workspace": "/data/jjgong/LLM",
+      "artifact_root": "/data/jjgong/LLM/test/prefill/results/formal_20261027_202807",
+      "command": [
+        "/usr/bin/python3",
+        "/data/jjgong/LLM/test/attention_cluster_8qk_8pv/run_selected_prefill.py",
+        "--artifact-root",
+        "/data/jjgong/LLM/test/prefill/results/formal_20261027_202807"
+      ],
+      "environment_overrides": {},
+      "latency_unit": "cycles",
+      "mode": "run",
+      "library_sha256": "cb211e1a1b2eb88715d236284ca3346675908b32271eb9682bd7deba63340e60",
+      "git_head": "b8d51438ac25a89ed13fe54be2aa31966a3b1c6c",
+      "git_status": "",
+      "exit_code": 0,
+      "status": "PASS"
+    }
+  },
+  "notes": [
+    "Four standalone workloads have different shapes and boundaries; their latencies must not be added.",
+    "prefill uses synthetic sparse-valued weights; all dense hardware tiles execute. This is a two-layer workload.",
+    "Host preparation, simulation wall time, verification, and host argmax are excluded from accelerator cycles.",
+    "Operator activity spans overlap; use the disjoint DMA boundary partition for the complete latency sum."
+  ]
+}

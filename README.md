@@ -93,3 +93,25 @@ test/prefill/run.sh --check
 
 磁盘清理明细见 `test/maintenance/cleanup_2026-10-27/`。
 历史结果中的原始单位和测量边界保留原样，新报告遵守 cycles 约定。
+
+## GitHub 与本地工作区
+
+公共仓库为 [G-BALE-JJ/Muticore-Attention](https://github.com/G-BALE-JJ/Muticore-Attention)，
+当前维护分支为 `main`，对应 `/data/jjgong/LLM/`。`main` 延续原
+`all-gemm-reuse-window` 的提交历史；原 `softmax-update`、`all-gemm-reuse-window`
+和 `wt-huti-v0-full` 分支保留历史用途。
+
+```bash
+git clone --branch main https://github.com/G-BALE-JJ/Muticore-Attention.git LLM
+cd LLM
+git status -sb
+# 本地改动提交并验证后：
+git push origin main
+```
+
+GitHub 收录源码、四阶段测试、已选配置及两轮正式回归的紧凑 JSON/CSV/Markdown 报告。
+`build/`、`install/`、`deps/`、历史工作区、大型张量与完整仿真日志留在本地。
+新克隆需另行准备 SST core、DRAMSim3、Ramulator2 与 RISC-V 工具链后构建；
+正式 prefill 的已选库/guest 哈希检查和历史物化参考检查仍严格保留，
+需要提供配置中引用的本地参考数据，或使用驱动参数指定保留的参考结果。
+独立克隆不会包含 `.git/legacy-experiments.git` 或 `test/history/` 的本地归档。
