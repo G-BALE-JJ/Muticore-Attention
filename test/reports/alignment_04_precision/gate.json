@@ -1,0 +1,12 @@
+{
+  "status": "INTERRUPTED",
+  "phase": "04_precision",
+  "source_commit": "3971dbfab3f48bcc83fa573bf1cd162e8643fa8d",
+  "library_sha256": "5e7d964f00d61316a6832b94c9865be64a49e36c8302184594cadb074252af5f",
+  "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+  "stages": {
+    "GEMM": "PASS",
+    "Attention": "PASS"
+  },
+  "reason": "Stopped to fix confirmed packed active-K arithmetic/timing mismatch; not a PASS gate. Rerun with a fresh name after repair."
+}

@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "phase": "05_native_api_repair",
+  "source_commit": "8c93dbccd7bc669edfc830ffdf0907d138370871",
+  "library_sha256": "db545c1f20216e60f251f552b28bdd9fe6a8d43566fd55d7a62ef7cadf628990",
+  "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+  "stages": {
+    "GEMM": "PASS",
+    "Attention": "PASS",
+    "GQA": "PASS",
+    "prefill": "PASS"
+  },
+  "cycles": {
+    "GEMM": 3500.0,
+    "Attention": 12852,
+    "GQA": 37928,
+    "prefill": 6084167.75
+  },
+  "delta_from_public_cycles": {
+    "GEMM": 0.0,
+    "Attention": 0,
+    "GQA": 0,
+    "prefill": 0.0
+  }
+}

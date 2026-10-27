@@ -1,0 +1,11 @@
+{
+  "status": "RUNNING",
+  "phase": "01_partial_c",
+  "source_commit": "f8449da1138cfa75494533dea81161ca9d32b8ab",
+  "library_sha256": "4ce69d9158ed02724560b36cfecba5c1d1b977de66b1e7622b5e495d0c4125bf",
+  "stages": {
+    "GEMM": "PASS",
+    "Attention": "PASS",
+    "GQA": "PASS"
+  }
+}

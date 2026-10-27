@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "phase": "05_placement",
+  "source_commit": "16f8ebd1d45a2dd0dd90add49a8b468034a075e1",
+  "library_sha256": "172c87bae01c7047fcbbac4f7eb458bbcda874a2fc4f633e8a5774a9251498b7",
+  "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+  "stages": {
+    "GEMM": "PASS",
+    "Attention": "PASS",
+    "GQA": "PASS",
+    "prefill": "PASS"
+  },
+  "cycles": {
+    "GEMM": 3500.0,
+    "Attention": 12852,
+    "GQA": 37928,
+    "prefill": 6084167.75
+  },
+  "delta_from_public_cycles": {
+    "GEMM": 0.0,
+    "Attention": 0,
+    "GQA": 0,
+    "prefill": 0.0
+  }
+}

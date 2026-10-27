@@ -1,0 +1,5 @@
+stage,status,start_cycle,end_cycle,end_to_end_cycles,boundary,artifacts
+GEMM,PASS,207810.0,211309.0,3500.0,"first descriptor start -> last WCP completion (includes C writeback), inclusive +1",test/GEMM/results/alignment_03_cu_tu_te
+Attention,PASS,180484,193336,12852,QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK,test/Attention/results/alignment_03_cu_tu_te
+GQA,PASS,181176,219104,37928,QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK,test/GQA/results/alignment_03_cu_tu_te
+prefill,PASS,291547.0,6375714.75,6084167.75,first token-ID DMA send to last-token logits final output DMA ACK,test/prefill/results/alignment_03_cu_tu_te

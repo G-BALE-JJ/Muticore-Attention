@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "phase": "06_timing_fast_path_retry",
+  "source_commit": "fb7350477ccbdf41002eb8f82c6e14c78ed92f7d",
+  "library_sha256": "9a978e6189bd941d9c2aa70c02714f460baf230a471c611fff7b8efcfd8f0d1f",
+  "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+  "stages": {
+    "GEMM": "PASS",
+    "Attention": "PASS",
+    "GQA": "PASS",
+    "prefill": "PASS"
+  },
+  "cycles": {
+    "GEMM": 3500.0,
+    "Attention": 12852,
+    "GQA": 37928,
+    "prefill": 6084167.75
+  },
+  "delta_from_public_cycles": {
+    "GEMM": 0.0,
+    "Attention": 0,
+    "GQA": 0,
+    "prefill": 0.0
+  }
+}

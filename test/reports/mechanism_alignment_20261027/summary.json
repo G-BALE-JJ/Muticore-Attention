@@ -1,0 +1,353 @@
+{
+  "status": "PASS",
+  "latency_unit": "cycles",
+  "features": 6,
+  "gates": 7,
+  "formal_runs": 28,
+  "selected_guest_sha256": "7ee4f229860f8c83dea431a72f10cbcf58e02d6de4bb76c454807e95f067f57c",
+  "phases": [
+    {
+      "phase": "01_partial_c_resume_20261027",
+      "mechanism": "Partial-C readiness",
+      "status": "PASS",
+      "source_commit": "f8449da1138cfa75494533dea81161ca9d32b8ab",
+      "library_sha256": "4ce69d9158ed02724560b36cfecba5c1d1b977de66b1e7622b5e495d0c4125bf",
+      "memhierarchy_sha256": "55314f40fdf76ae318b076ce2548cd03ffd5d574d6b71633863d6d5d683f020a",
+      "prefill_provenance_sha256": "33bd8bc7c12280b8b460c0bc902c77b07cebb2c402625cee5b7cac5f836dcb24",
+      "cycles": {
+        "GEMM": 3500.0,
+        "Attention": 12852,
+        "GQA": 37928,
+        "prefill": 6084167.75
+      },
+      "evidence_directory": "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/reports/alignment_01_partial_c_resume_20261027",
+      "evidence_sha256": {
+        "gate.json": "58066e584d97f61df5bb2900d4e6495c08e8f52b631096a773cd0a7d04c1bdbe",
+        "summary.json": "f9c50ab22e4b9ae7289f3c01d4a839d0bd254eb8c1da5029070653cb875c72e2",
+        "candidate_selection.json": "1c0120f22835ca06d350968a26c924f15ab95a4b738295b2268a7d2bda619633"
+      }
+    },
+    {
+      "phase": "02_hbm_stats",
+      "mechanism": "HBM statistics v2",
+      "status": "PASS",
+      "source_commit": "5dbd220e60d5796b255810fa74ffa1be3c2fb2ff",
+      "library_sha256": "4ce69d9158ed02724560b36cfecba5c1d1b977de66b1e7622b5e495d0c4125bf",
+      "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+      "prefill_provenance_sha256": "acf65d3fc075d1c058ecb89060d3c63f7dcb01e33510d211c4b462ec1cdc2ae7",
+      "cycles": {
+        "GEMM": 3500.0,
+        "Attention": 12852,
+        "GQA": 37928,
+        "prefill": 6084167.75
+      },
+      "evidence_directory": "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/reports/alignment_02_hbm_stats",
+      "evidence_sha256": {
+        "gate.json": "bf4d1bc8dacc86d137e559f23068ffb69c725c91f6f99d414156f6cf83fa91ee",
+        "summary.json": "c443b8cc7e5301d6882b8758ffeec72fd898c29d49753e175ef681c564789aaa",
+        "candidate_selection.json": "f3500e335cd40f52854f8f93dd06fdf26ba7713fa24a8df92a5c358990bc0d89"
+      }
+    },
+    {
+      "phase": "03_cu_tu_te",
+      "mechanism": "CU/TU/TE separation",
+      "status": "PASS",
+      "source_commit": "5c29ee6c82f0f67e0cbf22cca5e5cfb9f0890717",
+      "library_sha256": "b49f481154abc82415f83c404dc872ac4499da790c61043e3db863690a628569",
+      "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+      "prefill_provenance_sha256": "69c66ba5a442d548569053f4430ba1ef70480ab1b0ad5e107a39ef1276ad246a",
+      "cycles": {
+        "GEMM": 3500.0,
+        "Attention": 12852,
+        "GQA": 37928,
+        "prefill": 6084167.75
+      },
+      "evidence_directory": "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/reports/alignment_03_cu_tu_te",
+      "evidence_sha256": {
+        "gate.json": "2a56939a28858b63606c0495d282d1ee0bcf7897aed7a13898147f4a10d9f6e6",
+        "summary.json": "0115fc30032acf7f2b98195c270979a7a36d7b606c4804e1533a062ac398730f",
+        "candidate_selection.json": "3872341bb11eef01a2db5a90b4a32b8b184f0bec25ccf6e0c2816b2b97936dac"
+      }
+    },
+    {
+      "phase": "04_precision_active_k",
+      "mechanism": "Explicit packed precision",
+      "status": "PASS",
+      "source_commit": "835349463874e8ee98c0a9538ab1ec8d53757773",
+      "library_sha256": "dba52f63e3a49b7abbcb3a29ea3e755c385026c9451e44275ec2769250129934",
+      "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+      "prefill_provenance_sha256": "0e1046519ec6fdbda189d28c36f0c98e63968a4bf1ad7dbb1aacd1023e382ca7",
+      "cycles": {
+        "GEMM": 3500.0,
+        "Attention": 12852,
+        "GQA": 37928,
+        "prefill": 6084167.75
+      },
+      "evidence_directory": "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/reports/alignment_04_precision_active_k",
+      "evidence_sha256": {
+        "gate.json": "00188ef38ab3a4cfb1b96dc3e4c47c57e5ccb9e45faccf25df265296f51fc614",
+        "summary.json": "cdde06243e88f06be1ea73fa3a748304d3a7bdcf45469e0633be6e2dfa7b146b",
+        "candidate_selection.json": "56cb4f15775e33a42073811d34404eccff9674d35822947446dd43676638fdab"
+      }
+    },
+    {
+      "phase": "05_placement",
+      "mechanism": "Explicit workload/HBM placement",
+      "status": "PASS",
+      "source_commit": "16f8ebd1d45a2dd0dd90add49a8b468034a075e1",
+      "library_sha256": "172c87bae01c7047fcbbac4f7eb458bbcda874a2fc4f633e8a5774a9251498b7",
+      "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+      "prefill_provenance_sha256": "ca3ce529e21385b4a199e0eae802646883e2e8bbd56cecac50ec17037ce1c22e",
+      "cycles": {
+        "GEMM": 3500.0,
+        "Attention": 12852,
+        "GQA": 37928,
+        "prefill": 6084167.75
+      },
+      "evidence_directory": "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/reports/alignment_05_placement",
+      "evidence_sha256": {
+        "gate.json": "c07779c806c23feb1d2a088560f98ab87e81c7e6d0148c43717994bc639b394b",
+        "summary.json": "975412ea4ee9140b8ea13742161ed8e394840cc73cbef55a4d9f9e0edc332164",
+        "candidate_selection.json": "c28f4067c8c228e44ed807afaeafcd6e0d7e9ab43c236d0adae5429749086013"
+      }
+    },
+    {
+      "phase": "05_native_api_repair",
+      "mechanism": "Native TU API registration repair",
+      "status": "PASS",
+      "source_commit": "8c93dbccd7bc669edfc830ffdf0907d138370871",
+      "library_sha256": "db545c1f20216e60f251f552b28bdd9fe6a8d43566fd55d7a62ef7cadf628990",
+      "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+      "prefill_provenance_sha256": "1417892e97e56a8ee0f2102ddc32168ee3885f6fa1358aaa8f95de2c0d2ef0a6",
+      "cycles": {
+        "GEMM": 3500.0,
+        "Attention": 12852,
+        "GQA": 37928,
+        "prefill": 6084167.75
+      },
+      "evidence_directory": "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/reports/alignment_05_native_api_repair",
+      "evidence_sha256": {
+        "gate.json": "9e6e48d9c109eedf528c72fcffded1cf68b849599a00f137592d92eeb563b8ab",
+        "summary.json": "2671996b045109e47e8692fb2b3f1246aa80eeacbb13646415de02372a2db222",
+        "candidate_selection.json": "73e37012a4d2e67dad3acc58d38e0632bbeb0976a1f9bd11960be922e10eadc3"
+      }
+    },
+    {
+      "phase": "06_timing_fast_path_retry",
+      "mechanism": "Timing numerical-data fast path",
+      "status": "PASS",
+      "source_commit": "fb7350477ccbdf41002eb8f82c6e14c78ed92f7d",
+      "library_sha256": "9a978e6189bd941d9c2aa70c02714f460baf230a471c611fff7b8efcfd8f0d1f",
+      "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+      "prefill_provenance_sha256": "01aa43d83f97f512a303b748feb027044441cafec2b97424b2d1c1fbcba36f53",
+      "cycles": {
+        "GEMM": 3500.0,
+        "Attention": 12852,
+        "GQA": 37928,
+        "prefill": 6084167.75
+      },
+      "evidence_directory": "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/reports/alignment_06_timing_fast_path_retry",
+      "evidence_sha256": {
+        "gate.json": "30f14da0aea484f5e381c03016efdd9816e53b2fc56f2b20882369bae81f988b",
+        "summary.json": "5dc36d91c85c5ca5b233a91d8081acab6521d8084d5967611f499d023fe114c0",
+        "candidate_selection.json": "ec57b7db536eec3d0ca48fecb172e760a1c764fa900edd8026d974a2293979b3"
+      }
+    }
+  ],
+  "timing_control": {
+    "status": "PASS",
+    "cycles": 3500.0,
+    "latency_unit": "cycles",
+    "scope": "first descriptor start through last WCP completion, inclusive +1",
+    "mode": "full-timing",
+    "timing_numerical_fast_path": 1,
+    "command": [
+      "taskset",
+      "-c",
+      "20",
+      "bash",
+      "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/golem/run_noc_dma_pipeline.sh",
+      "--groups",
+      "4",
+      "--num-cores",
+      "20",
+      "--gemm-cores",
+      "20",
+      "--num-mem-nodes",
+      "5",
+      "--mesh-dim-x",
+      "4",
+      "--gemm-m",
+      "128",
+      "--gemm-n",
+      "128",
+      "--gemm-k",
+      "128",
+      "--gemm-block-m",
+      "64",
+      "--gemm-block-n",
+      "64",
+      "--gemm-block-k",
+      "64",
+      "--mpi-ranks",
+      "1",
+      "--output-mode",
+      "hbm",
+      "--tensor-source",
+      "sample",
+      "--sim-mode",
+      "full-timing",
+      "--cpuset",
+      "20"
+    ],
+    "library_sha256": "db545c1f20216e60f251f552b28bdd9fe6a8d43566fd55d7a62ef7cadf628990",
+    "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+    "metrics_sha256": {
+      "execution_summary.csv": "91610435ab73c3210e0badd521b7718bb7ac7f7cdeb7e93fd8926c3a680fdb5e",
+      "terminal_summary.csv": "d6911d741b08d4e3002440e88eeaa29a96a6a29c82d83d852a32726b99a28b0d",
+      "memory_summary.csv": "9aa15fbf60221484d87e9bf59cf68584f449ff9eeb479db14ff94a46b54898be",
+      "dma_summary.csv": "39b24773fefa69ac0c1e5b4246836efea70b30e5dd2e5a60fcb0aeb1be51fd40",
+      "noc_summary.csv": "73cf9bc7cef249ac46379d8f2e8228e5feedc51a4dd4920b9f9783c78584c930",
+      "hbm_read_command_summary.csv": "05ebabff45ef30055b86c8c082dabffe9fee91a2dccfc0e0d7048798fdf65bad"
+    },
+    "final_c_writeback_complete_ratio": "4/4",
+    "source_commit": "43b40ccb2392da0e3c22dd852cda3be10710c80e",
+    "observed_backend_mode": null
+  },
+  "timing_candidate": {
+    "status": "PASS",
+    "cycles": 3500.0,
+    "latency_unit": "cycles",
+    "scope": "first descriptor start through last WCP completion, inclusive +1",
+    "mode": "full-timing",
+    "timing_numerical_fast_path": 1,
+    "command": [
+      "taskset",
+      "-c",
+      "20",
+      "bash",
+      "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/golem/run_noc_dma_pipeline.sh",
+      "--groups",
+      "4",
+      "--num-cores",
+      "20",
+      "--gemm-cores",
+      "20",
+      "--num-mem-nodes",
+      "5",
+      "--mesh-dim-x",
+      "4",
+      "--gemm-m",
+      "128",
+      "--gemm-n",
+      "128",
+      "--gemm-k",
+      "128",
+      "--gemm-block-m",
+      "64",
+      "--gemm-block-n",
+      "64",
+      "--gemm-block-k",
+      "64",
+      "--mpi-ranks",
+      "1",
+      "--output-mode",
+      "hbm",
+      "--tensor-source",
+      "sample",
+      "--sim-mode",
+      "full-timing",
+      "--cpuset",
+      "20"
+    ],
+    "library_sha256": "9a978e6189bd941d9c2aa70c02714f460baf230a471c611fff7b8efcfd8f0d1f",
+    "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+    "metrics_sha256": {
+      "execution_summary.csv": "91610435ab73c3210e0badd521b7718bb7ac7f7cdeb7e93fd8926c3a680fdb5e",
+      "terminal_summary.csv": "d6911d741b08d4e3002440e88eeaa29a96a6a29c82d83d852a32726b99a28b0d",
+      "memory_summary.csv": "9aa15fbf60221484d87e9bf59cf68584f449ff9eeb479db14ff94a46b54898be",
+      "dma_summary.csv": "39b24773fefa69ac0c1e5b4246836efea70b30e5dd2e5a60fcb0aeb1be51fd40",
+      "noc_summary.csv": "73cf9bc7cef249ac46379d8f2e8228e5feedc51a4dd4920b9f9783c78584c930",
+      "hbm_read_command_summary.csv": "05ebabff45ef30055b86c8c082dabffe9fee91a2dccfc0e0d7048798fdf65bad"
+    },
+    "final_c_writeback_complete_ratio": "4/4",
+    "source_commit": "ff27553ff7b1052622e9b5a03daa45f31ad84630",
+    "observed_backend_mode": {
+      "functional": 0,
+      "timing_fast_path": 1,
+      "materialize": 0,
+      "observed_arrays": 16
+    },
+    "paired_control": "test/reports/alignment_05_timing_control/result.json",
+    "delta_cycles": 0.0,
+    "same_build_control": "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/reports/alignment_06_timing_fast_path_same_build_control/result.json",
+    "same_build_metrics_equal": true,
+    "same_build_delta_cycles": 0
+  },
+  "timing_same_build_control": {
+    "status": "PASS",
+    "cycles": 3500.0,
+    "latency_unit": "cycles",
+    "scope": "first descriptor start through last WCP completion, inclusive +1",
+    "mode": "full-timing",
+    "timing_numerical_fast_path": 0,
+    "command": [
+      "taskset",
+      "-c",
+      "20",
+      "bash",
+      "/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/golem/run_noc_dma_pipeline.sh",
+      "--groups",
+      "4",
+      "--num-cores",
+      "20",
+      "--gemm-cores",
+      "20",
+      "--num-mem-nodes",
+      "5",
+      "--mesh-dim-x",
+      "4",
+      "--gemm-m",
+      "128",
+      "--gemm-n",
+      "128",
+      "--gemm-k",
+      "128",
+      "--gemm-block-m",
+      "64",
+      "--gemm-block-n",
+      "64",
+      "--gemm-block-k",
+      "64",
+      "--mpi-ranks",
+      "1",
+      "--output-mode",
+      "hbm",
+      "--tensor-source",
+      "sample",
+      "--sim-mode",
+      "full-timing",
+      "--cpuset",
+      "20"
+    ],
+    "library_sha256": "9a978e6189bd941d9c2aa70c02714f460baf230a471c611fff7b8efcfd8f0d1f",
+    "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+    "metrics_sha256": {
+      "execution_summary.csv": "91610435ab73c3210e0badd521b7718bb7ac7f7cdeb7e93fd8926c3a680fdb5e",
+      "terminal_summary.csv": "d6911d741b08d4e3002440e88eeaa29a96a6a29c82d83d852a32726b99a28b0d",
+      "memory_summary.csv": "9aa15fbf60221484d87e9bf59cf68584f449ff9eeb479db14ff94a46b54898be",
+      "dma_summary.csv": "39b24773fefa69ac0c1e5b4246836efea70b30e5dd2e5a60fcb0aeb1be51fd40",
+      "noc_summary.csv": "73cf9bc7cef249ac46379d8f2e8228e5feedc51a4dd4920b9f9783c78584c930",
+      "hbm_read_command_summary.csv": "05ebabff45ef30055b86c8c082dabffe9fee91a2dccfc0e0d7048798fdf65bad"
+    },
+    "final_c_writeback_complete_ratio": "4/4",
+    "source_commit": "ff27553ff7b1052622e9b5a03daa45f31ad84630",
+    "observed_backend_mode": {
+      "functional": 0,
+      "timing_fast_path": 0,
+      "materialize": 1,
+      "observed_arrays": 16
+    }
+  },
+  "claim": "Default functional and cycle equivalence; no measured speedup claimed."
+}

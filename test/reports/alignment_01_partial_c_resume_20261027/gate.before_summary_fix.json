@@ -1,0 +1,13 @@
+{
+  "status": "FAIL",
+  "phase": "01_partial_c_resume_20261027",
+  "source_commit": "f8449da1138cfa75494533dea81161ca9d32b8ab",
+  "library_sha256": "4ce69d9158ed02724560b36cfecba5c1d1b977de66b1e7622b5e495d0c4125bf",
+  "stages": {
+    "GEMM": "PASS",
+    "Attention": "PASS",
+    "GQA": "PASS",
+    "prefill": "PASS"
+  },
+  "error": "Command '['/usr/bin/python3', '/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/summarize_stages.py', '--run-name', 'alignment_01_partial_c_resume_20261027', '--output-dir', '/data/jjgong/LLM/exp-gemm-mechanism-alignment/test/reports/alignment_01_partial_c_resume_20261027']' returned non-zero exit status 1."
+}

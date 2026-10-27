@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "phase": "03_cu_tu_te",
+  "source_commit": "5c29ee6c82f0f67e0cbf22cca5e5cfb9f0890717",
+  "library_sha256": "b49f481154abc82415f83c404dc872ac4499da790c61043e3db863690a628569",
+  "memhierarchy_sha256": "186d251787f21f721d89d6768cb2439f19de9d4f78de2d5bbc04ac4b905d946a",
+  "stages": {
+    "GEMM": "PASS",
+    "Attention": "PASS",
+    "GQA": "PASS",
+    "prefill": "PASS"
+  },
+  "cycles": {
+    "GEMM": 3500.0,
+    "Attention": 12852,
+    "GQA": 37928,
+    "prefill": 6084167.75
+  },
+  "delta_from_public_cycles": {
+    "GEMM": 0.0,
+    "Attention": 0,
+    "GQA": 0,
+    "prefill": 0.0
+  }
+}
