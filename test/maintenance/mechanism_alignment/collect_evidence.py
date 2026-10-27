@@ -13,7 +13,7 @@ PHASES = (
     ('04_precision_active_k', 'Explicit packed precision'),
     ('05_placement', 'Explicit workload/HBM placement'),
     ('05_native_api_repair', 'Native TU API registration repair'),
-    ('06_timing_fast_path', 'Timing numerical-data fast path'),
+    ('06_timing_fast_path_retry', 'Timing numerical-data fast path'),
 )
 EXPECTED = dict(GEMM=3500, Attention=12852, GQA=37928, prefill=6084167.75)
 
