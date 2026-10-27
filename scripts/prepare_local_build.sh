@@ -112,6 +112,9 @@ fi
 if [[ -L "$BUILD_ROOT/deps" && "$(readlink "$BUILD_ROOT/deps")" == Muticore-Attention/deps ]]; then
 	rm "$BUILD_ROOT/deps"
 fi
+if [[ -L "$BUILD_ROOT/Muticore-Attention" && "$(readlink "$BUILD_ROOT/Muticore-Attention")" == test/history/Muticore-Attention ]]; then
+	rm "$BUILD_ROOT/Muticore-Attention"
+fi
 
 # The golem small test rebuilds `test_noc_dma` in place and needs this
 # handwritten Makefile. Keep the source copy clean, then restore just this file.

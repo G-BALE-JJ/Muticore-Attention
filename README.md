@@ -33,6 +33,8 @@ SST 上游组件自带测试仍保留其原生布局；本项目 Golem 测试已
 旧仓库源码与结果归档到 `test/history/legacy-primary/`；原 Git 历史独立保存在
 `.git/legacy-experiments.git`，最新实验区无需依赖旧目录。
 具体映射与验收见 [路径迁移记录](docs/PATH_MIGRATION_2026-10-27.md)。
+移除旧路径后已再次完成四阶段正式回归，结果与迁移前一致，见
+[迁移后回归报告](docs/PATH_MIGRATION_REGRESSION_2026-10-27.md)。
 
 ## 运行阶段测试
 
