@@ -39,7 +39,7 @@ ARCHIVE_ARCH = HERE.parents[1] / "architecture" / "archive" / "ncores_selfcom_dm
 ROCC_SOURCE = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / 'src/sst/elements/golem') / "rocc" / "roccAnalog.h"
 ROCC_FLOAT = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / 'src/sst/elements/golem') / "rocc" / "roccAnalogFloat.h"
 ROCC_INT = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / 'src/sst/elements/golem') / "rocc" / "roccAnalogInt.h"
-WCP_SOURCE = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / 'src/sst/elements/golem') / "workercmdproc" / "workercmdproc.h"
+WCP_SOURCE = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / 'src/sst/elements/golem') / "tileengine" / "tileEngine.h"
 CPU_BUILDER = HERE.parents[1] / "architecture" / "cpu_builder.py"
 ARRAY_SOURCE = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / 'src/sst/elements/golem') / "array" / "computeArray.h"
 MVM_ARRAY_SOURCE = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / 'src/sst/elements/golem') / "array" / "mvmComputeArray.h"
@@ -305,7 +305,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
     def test_sequential_vector_scatter_accepts_partial_lane_groups(self):
         source = WCP_SOURCE.read_text(encoding="utf-8")
         start = source.index("bool programGemmInputScatterBankAsync(",
-                             source.index("class WorkerCommandProcessorLocal"))
+                             source.index("class TileEngineLocal"))
         end = source.index("bool programGemmMatrixActiveBankAsync(", start)
         body = source[start:end]
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 MODEL = Path(__file__).with_name("attention_cluster_model.py")
-WCP_SOURCE = Path(__file__).parents[2] / "src/sst/elements/golem/workercmdproc/workercmdproc.h"
+WCP_SOURCE = Path(__file__).parents[2] / "src/sst/elements/golem/tileengine/tileEngine.h"
 RUNNER_SOURCE = Path(__file__).with_name("run_sst.sh")
 REPORT_SOURCE = Path(__file__).with_name("report_sst.py")
 GOLDEN_RESULT = Path(__file__).parent / "artifacts/golden/sst_result.json"

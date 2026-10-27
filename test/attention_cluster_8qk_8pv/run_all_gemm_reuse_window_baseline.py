@@ -22,7 +22,7 @@ SOURCES = [ROOT / 'src/sst/elements/golem/attention' / name for name in
            ('reuseWindowGemm.h', 'decoderOpJob.h', 'projectionJob.h', 'reuseWeightInterface.h',
             'reuseWeightCohort.h', 'decoderMemoryLayout.h', 'softwareLayerResidency.h',
             'pvWoHandoff.h', 'pvWoInputInterface.h')]
-SOURCES += [ROOT/'src/sst/elements/golem'/name for name in ('rocc/roccAnalog.h','globalmemory/globalmemory.h')]
+SOURCES += [ROOT/'src/sst/elements/golem'/name for name in ('rocc/roccAnalog.h','globalmemory/globalmemory.h','tileengine/tileEngine.h','tileunit/tileUnit.h','tileunit/tileUnitAPI.h','computeunit/computeUnit.h','array/mvmComputeArray.h')]
 
 
 def expected_gm_lookahead(env,operator):

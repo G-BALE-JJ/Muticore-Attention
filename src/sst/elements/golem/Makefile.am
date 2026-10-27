@@ -30,6 +30,11 @@ libgolem_la_SOURCES = \
 	sfu/vector_pipeline.h \
 	sfu/sfu.cc \
 	workercmdproc/workercmdproc.h \
+	tileengine/tileEngine.h \
+	tileunit/tileUnitAPI.h \
+	tileunit/tileUnit.h \
+	tileunit/tileUnitArray.h \
+	computeunit/computeUnit.h \
 	workercmdproc/partialCPrefetch.h \
 	attention/attentionCluster.h \
 	attention/decoderMemoryLayout.h \

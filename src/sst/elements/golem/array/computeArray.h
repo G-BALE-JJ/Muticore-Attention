@@ -93,6 +93,9 @@ public:
         {"modeledComputeCycles", "Modeled compute latency in array clock cycles", "1"},
         {"arrayMacPerCuPerCycle", "Active input columns processed per compute unit per array cycle", "1"},
         {"arrayPipelineDepth", "Fixed compute pipeline latency added to active-column execution", "0"},
+        {"numTileUnits", "Native TU count; alias of numArrays", "1"},
+        {"tuKCapacity", "Native TU reduction width; alias of arrayInputSize", "1"},
+        {"cusPerTileUnit", "Native CU rows; alias of arrayOutputSize", "1"},
         {"numArrays", "Number of arrays", "1"},
         {"arrayInputSize", "Input size of arrays", "1"},
         {"arrayOutputSize", "Output size of arrays", "1"},
@@ -174,7 +177,7 @@ public:
             std::max(params.find<double>("arrayMacPerCuPerCycle", 1.0), 0.000001);
         arrayPipelineDepth = params.find<uint64_t>("arrayPipelineDepth", 0);
 
-        numArrays = params.find<uint64_t>("numArrays", 1);
+        numArrays = params.find<uint64_t>("numTileUnits", params.find<uint64_t>("numArrays", 1));
         const uint32_t requestedOperandContextBanks =
             params.find<uint32_t>("operandContextBanks", 1);
         if (requestedOperandContextBanks != 1) {
@@ -182,8 +185,8 @@ public:
                 "Only one operand context per array is supported; extra operand banks were removed\n");
         }
         operandContextBanks = requestedOperandContextBanks;
-        inputArraySize = params.find<uint64_t>("arrayInputSize", 1);
-        outputArraySize = params.find<uint64_t>("arrayOutputSize", 1);
+        inputArraySize = params.find<uint64_t>("tuKCapacity", params.find<uint64_t>("arrayInputSize", 1));
+        outputArraySize = params.find<uint64_t>("cusPerTileUnit", params.find<uint64_t>("arrayOutputSize", 1));
         inputOperandSize = params.find<uint64_t>("inputOperandSize", 1);
         outputOperandSize = params.find<uint64_t>("outputOperandSize", 1);
         arrayCoreId_ = params.find<int>("core_id", -1);

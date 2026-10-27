@@ -16,7 +16,8 @@
 #ifndef _MVMCOMPUTEARRAY_H
 #define _MVMCOMPUTEARRAY_H
 
-#include <sst/elements/golem/array/computeArray.h>
+#include <sst/elements/golem/tileunit/tileUnitAPI.h>
+#include <sst/elements/golem/tileunit/tileUnit.h>
 #include <sst/elements/golem/fp16.h>
 #include <algorithm>
 #include <array>
@@ -30,7 +31,7 @@ namespace SST {
 namespace Golem {
 
 template<typename T>
-class MVMComputeArray : public ComputeArray {
+class MVMComputeArray : public TileUnitAPI {
 public:
     SST_ELI_REGISTER_SUBCOMPONENT_DERIVED_API(
             MVMComputeArray<T>, 
@@ -42,7 +43,7 @@ public:
     MVMComputeArray(ComponentId_t id, Params& params,
                          TimeConverter* tc,
                          Event::HandlerBase* handler)
-        : ComputeArray(id, params, tc, handler) {
+        : TileUnitAPI(id, params, tc, handler) {
         // Configure selfLink
         selfLink = configureSelfLink("Self", *tc, new Event::Handler2<MVMComputeArray,&MVMComputeArray::handleSelfEvent>(this));
         selfLink->setDefaultTimeBase(*clockTC);
@@ -53,6 +54,7 @@ public:
         outputVectors.resize(numArrays);
         matrixData.resize(operandContexts);
         outputModes.resize(numArrays, OutputMode::Overwrite);
+        for (size_t i=0;i<numArrays;++i) tileUnits.emplace_back(outputArraySize);
         activeInputColumns.resize(operandContexts, inputArraySize);
         projectionFp16Context.resize(operandContexts, false);
         for (size_t i = 0; i < operandContexts; i++) {
@@ -699,20 +701,17 @@ public:
         // Perform matrix-vector multiplication
         for (uint32_t row = 0; row < outputArraySize; row++) {
             if (projectionFp16Context[context]) {
-                GolemFp16 dot;
-                for (uint32_t col = 0; col < activeColumns; ++col)
-                    dot += GolemFp16(static_cast<float>(matrix[row * inputArraySize + col])) *
-                           GolemFp16(static_cast<float>(inputVector[col]));
+                GolemFp16 dot = tileUnits[arrayID].projectionDot(row,
+                    matrix.data()+row*inputArraySize,inputVector.data(),activeColumns);
                 if (accumulateMode)
                     dot += GolemFp16(static_cast<float>(outputVector[row]));
                 outputVector[row] = static_cast<T>(static_cast<float>(dot));
                 continue;
             }
-            T dot = 0;
-            for (uint32_t col = 0; col < activeColumns; col++) {
-                dot += matrix[row * inputArraySize + col] * inputVector[col];
-                printValue(matrix[row * inputArraySize + col]);
-            }
+            T dot = tileUnits[arrayID].dot(row,matrix.data()+row*inputArraySize,
+                                           inputVector.data(),activeColumns);
+            for (uint32_t col=0;col<activeColumns;++col)
+                printValue(matrix[row*inputArraySize+col]);
             if (accumulateMode) {
                 outputVector[row] += dot;
             } else {
@@ -815,6 +814,7 @@ protected:
         }
     }
     enum class OutputMode : uint8_t { Overwrite = 0, Accumulate = 1 };
+    std::vector<TileUnit<T>> tileUnits;
     std::vector<std::vector<T>> inputVectors;
     std::vector<std::vector<T>> outputVectors;
     std::vector<std::vector<T>> matrixData;
