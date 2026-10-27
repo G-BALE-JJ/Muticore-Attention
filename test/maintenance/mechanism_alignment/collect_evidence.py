@@ -119,8 +119,8 @@ def main():
         '[NATIVE_INTERFACES.md](../../maintenance/mechanism_alignment/NATIVE_INTERFACES.md).',
         'The manifest records per-phase source commits, library hashes and evidence hashes.',
         'Raw artifacts remain in the experimental worktree paths recorded there.',
-        'The original interrupted phase 01 is retained separately and is not counted.',
-        'The recovered phase 01 report-only finalization fix is explained in',
+        'Interrupted phase 01 and initial phase 04 runs are retained separately and are not counted.',
+        'The phase 01 report-only finalization fix and phase 04 active-K repair are explained in',
         '[RECOVERY.md](../../maintenance/mechanism_alignment/RECOVERY.md).', '',
     ]
     (args.output_dir/'REPORT.md').write_text('\n'.join(lines))
