@@ -36,3 +36,19 @@ Recovery supervisors write `test/reports/recovered_workflow.json` and
 `recovered_workflow_04_06.json`. A failure stops the sequence. Raw result
 directories and local orchestration logs are intentionally distinct from
 compact committed gate evidence.
+
+## Packed active-K repair
+
+The first phase 04 gate was deliberately interrupted after a targeted test
+confirmed an active-K mismatch. Configuring packed K=64 and then launching a
+shorter active-K MV scheduled completion for the shorter reduction but used
+the configured global K for arithmetic. The inherited legacy active-K API
+permits each TU to select its own reduction length.
+
+Packed arithmetic now reads the per-TU launch context, while a non-active
+launch uses the configured precision K. The regression fills the complete
+physical operand capacity and checks both configured-K and explicit active-K
+launches, including different active K on two TUs. This makes unused nonzero
+lanes detect accidental over-computation. The interrupted `alignment_04_precision`
+is not acceptance evidence; the repaired feature uses a fresh
+`alignment_04_precision_active_k` full four-stage gate.

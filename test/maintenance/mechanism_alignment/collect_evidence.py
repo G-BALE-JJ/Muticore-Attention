@@ -10,7 +10,7 @@ PHASES = (
     ('01_partial_c_resume_20261027', 'Partial-C readiness'),
     ('02_hbm_stats', 'HBM statistics v2'),
     ('03_cu_tu_te', 'CU/TU/TE separation'),
-    ('04_precision', 'Explicit packed precision'),
+    ('04_precision_active_k', 'Explicit packed precision'),
     ('05_placement', 'Explicit workload/HBM placement'),
     ('06_timing_fast_path', 'Timing numerical-data fast path'),
 )

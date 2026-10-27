@@ -132,7 +132,8 @@ public:
     virtual void beginComputationBank(
             uint32_t arrayID, uint32_t operandBank) override {
         if (!validOperandContext(arrayID, operandBank)) return;
-        activeInputColumns[operandIndex(arrayID, operandBank)] = inputArraySize;
+        activeInputColumns[operandIndex(arrayID, operandBank)] =
+            precisionEnabled ? activeK : inputArraySize;
         SimTime_t latency = getArrayLatency(arrayID);   // 得到阵列延迟，比如返回1
         traceMacBegin(arrayID);
         ArrayEvent* ev = new ArrayEvent(arrayID, operandBank);
@@ -714,11 +715,12 @@ public:
         const size_t context = operandIndex(arrayID, operandBank);
         if (precisionEnabled) {
             const bool accumulate = outputModes[arrayID] == OutputMode::Accumulate;
-            const uint32_t packets = (activeK + XTileMC::lanesPerBeat(mode)-1) / XTileMC::lanesPerBeat(mode);
+            const uint32_t precisionK = activeInputColumns[context];
+            const uint32_t packets = (precisionK + XTileMC::lanesPerBeat(mode)-1) / XTileMC::lanesPerBeat(mode);
             for (uint32_t row=0;row<outputArraySize;++row)
                 rawOutput[arrayID][row] = rawCUs[arrayID][row].dotPackets(mode,
                     rawMatrix[arrayID].data()+row*rawPacketCapacity,
-                    rawInput[arrayID].data(),packets,activeK,
+                    rawInput[arrayID].data(),packets,precisionK,
                     accumulate ? rawOutput[arrayID][row] : 0);
             return;
         }
