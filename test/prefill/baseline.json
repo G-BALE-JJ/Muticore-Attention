@@ -1,0 +1,21 @@
+{
+  "description": "Synthetic token embedding -> decoder layers -> final RMSNorm -> last-token LM head",
+  "selection": "../attention_cluster_8qk_8pv/SELECTED_PREFILL_2026-10-26.json",
+  "arguments": [],
+  "host_checks": {
+    "guest": [
+      "test_decoder_guest_schedule.py",
+      "test_decoder_vectors.py"
+    ],
+    "baseline": [
+      "test_prefill_generalization.py",
+      "test_decoder_stack.py",
+      "test_selected_guest_digest.py",
+      "test_prefill_hbm_audit.py"
+    ]
+  },
+  "stage": "prefill",
+  "latency_unit": "cycles",
+  "architecture": "../../src/sst/elements/golem",
+  "source_snapshot": "all-gemm-reuse-window c7b9e11 plus existing local changes, 2026-10-27"
+}

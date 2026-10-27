@@ -57,8 +57,9 @@ public:
         std::printf("[GEMM_A_PIPELINE] core=%u epoch=%u stage=%u operator=%s enabled=%u entries=2 high_water=%llu ready_hits=%llu live_at_finish=%u\n",
             core,epoch,stage,name,inputPrefetch_?1u:0u,(unsigned long long)inputHighWater_,
             (unsigned long long)inputHits_,inputLive);
-        std::printf("[GEMM_WINDOW_FLOW] core=%u epoch=%u stage=%u operator=%s groups=%u early_a=%u output_overlap=%u gm_lookahead=%u a_first=%u b_gm_deferred=%llu active_cycles=%llu wait_b_dma=%llu wait_b_gm=%llu wait_a=%llu wait_array=%llu wait_output=%llu output_pending=%llu output_compute_overlap=%llu phase_load=%llu phase_restore=%llu phase_acquire=%llu phase_matrix=%llu phase_scatter=%llu phase_launch=%llu phase_drain=%llu phase_output=%llu phase_finish=%llu\n",
+        std::printf("[GEMM_WINDOW_FLOW] core=%u epoch=%u stage=%u operator=%s groups=%u early_a=%u output_overlap=%u gm_lookahead=%u a_first=%u demand_order=%u b_head_bypass_admissions=%llu b_head_bypass_cycles=%llu b_gm_deferred=%llu active_cycles=%llu wait_b_dma=%llu wait_b_gm=%llu wait_a=%llu wait_array=%llu wait_output=%llu output_pending=%llu output_compute_overlap=%llu phase_load=%llu phase_restore=%llu phase_acquire=%llu phase_matrix=%llu phase_scatter=%llu phase_launch=%llu phase_drain=%llu phase_output=%llu phase_finish=%llu\n",
             core,epoch,stage,name,groups_,earlyA_?1:0,detachOutput_?1:0,gmLookahead_,aFirst_?1:0,
+            demandOrder_?1u:0u,(unsigned long long)headBypassAdmissions_,(unsigned long long)headBypassCycles_,
             (unsigned long long)gmDeferred_,
             (unsigned long long)activeCycles_,(unsigned long long)waitDma_,(unsigned long long)waitGm_,
             (unsigned long long)waitA_,(unsigned long long)waitArray_,(unsigned long long)waitOutput_,
@@ -72,7 +73,7 @@ public:
                Input input,std::function<uint64_t(uint32_t,uint32_t)> weight,
                Output output,std::function<void(bool)> done,Initial initial={},
                std::function<uint64_t(uint32_t)> inputAddress={},bool independentOutput=false,Fetch fetch={},
-               Acquire acquire={},Release release={}) {
+               Acquire acquire={},Release release={},uint32_t gmLookaheadOverride=0,bool demandOrder=false) {
         rows_=rows;kTiles_=kTiles;tiles_=std::move(tiles);aBase_=aScratch;bBase_=bScratch;cBase_=cScratch;
         input_=std::move(input);weight_=std::move(weight);output_=std::move(output);
         done_=std::move(done);initial_=std::move(initial);
@@ -81,11 +82,12 @@ public:
         kWindow_=option("GOLEM_REUSE_WINDOW_K_TILES",32,1,32);
         bridgeWeights_=kTiles_<=kWindow_ && option("GOLEM_REUSE_WINDOW_B_WINDOW_BRIDGE",0,0,1);
         slotCount_=option("GOLEM_REUSE_WINDOW_PREFETCH_SLOTS",4,1,4);
-        gmLookahead_=std::min(slotCount_,option("GOLEM_REUSE_WINDOW_GM_LOOKAHEAD",4,1,4));
+        gmLookahead_=std::min(slotCount_,gmLookaheadOverride?gmLookaheadOverride:option("GOLEM_REUSE_WINDOW_GM_LOOKAHEAD",4,1,4));
         aFirst_=option("GOLEM_REUSE_WINDOW_A_FIRST",0,0,1);
         inputPrefetch_=option("GOLEM_REUSE_WINDOW_A_PREFETCH",0,0,1);
         inputSlots_={};inputHighWater_=inputHits_=0;
         gmDeferred_=0;
+        demandOrder_=demandOrder;headBypassAdmissions_=headBypassCycles_=0;
         groups_=rows_>32?option("GOLEM_REUSE_WINDOW_ARRAY_GROUPS",2,1,2):1;
         scatterWave_=rows_>32 && option("GOLEM_REUSE_WINDOW_SCATTER_WAVE",0,0,1);
         if(scatterWave_)groups_=2;
@@ -120,14 +122,29 @@ public:
         if(remaining_[0] && remaining_[1])++groupOverlap_;
         bool transfer=false;
         if(aFirst_)pumpInput();
-        for(uint32_t i=0;i<slotCount_;++i){auto& s=slots_[i];if(s.valid && (s.dma || s.reading || s.pending))transfer=true;
+        if(!active_)return;
+        bool bypass=false;
+        const uint32_t current=currentSequence();
+        for(uint32_t order=0;order<slotCount_ && active_;++order){
+            // Keep the same slots, reads and port capacity. Submit the oldest
+            // consuming sequence first instead of privileging low slot IDs.
+            const uint32_t i=demandOrder_?(current+order)%slotCount_:order;
+            auto& s=slots_[i];if(s.valid && (s.dma || s.reading || s.pending))transfer=true;
             // HBM prefetch retains all its existing slots. Only the local GM
             // snapshot reads are bounded by distance from the consuming tile,
             // so speculative B traffic cannot monopolize the single GM port.
-            const uint32_t current=currentSequence();
             if(s.valid && s.reading && s.seq>=current+gmLookahead_){++gmDeferred_;continue;}
-            pumpWeight(i);}
+            const auto& head=slots_[current%slotCount_];
+            const bool headNeedsRead=head.valid && head.seq==current && head.reading && !head.pending;
+            const bool admitted=pumpWeight(i);
+            if(admitted && headNeedsRead && i!=current%slotCount_){++headBypassAdmissions_;bypass=true;}
+            // A rejected demand request must not be bypassed by speculation.
+            if(demandOrder_ && i==current%slotCount_ && headNeedsRead && !admitted)break;
+        }
+        if(bypass)++headBypassCycles_;
+        if(!active_)return;
         if(!aFirst_)pumpInput();
+        if(!active_)return;
         if((remaining_[0] || remaining_[1]) && transfer)++transferOverlap_;
         if(next_ && !pending_){auto f=std::move(next_);next_={};f();}
     }
@@ -147,7 +164,12 @@ private:
         if(!*s || *end || v<lo || v>hi)throw std::invalid_argument(name);return v;
     }
     void schedule(std::function<void()> f){next_=std::move(f);}
-    void finish(bool ok){active_=false;next_={};pending_=false;auto f=std::move(done_);f(ok);}
+    void finish(bool ok){
+        // More than one timed request may already be in flight when one ACK
+        // fails. Complete the owner once and ignore subsequent failure ACKs.
+        if(!active_)return;
+        active_=false;next_={};pending_=false;auto f=std::move(done_);if(f)f(ok);
+    }
     static std::vector<uint8_t> pack(const Values& values,uint32_t bytes){
         std::vector<uint8_t> raw(values.size()*bytes);for(size_t i=0;i<values.size();++i){
             if(bytes==2){uint16_t h=golem_float_to_fp16(static_cast<float>(values[i]));std::memcpy(raw.data()+i*2,&h,2);}
@@ -199,12 +221,14 @@ private:
             else gm_->dma_read_from_host_to_globalmem(source,8192,destination,done);
         }
     }
-    void pumpWeight(uint32_t index){auto& s=slots_[index];if(!s.valid || !s.reading || s.pending)return;
+    bool pumpWeight(uint32_t index){auto& s=slots_[index];if(!s.valid || !s.reading || s.pending)return false;
         const size_t len=std::min(gm_->localMaxRequestBytes(),8192-s.offset);s.pending=true;
-        if(!gm_->localReadAsync(bBase_+uint64_t(index)*8192+s.offset,len,LocalMemoryClient::RoCC,++tag_,
+        const bool accepted=gm_->localReadAsync(bBase_+uint64_t(index)*8192+s.offset,len,LocalMemoryClient::RoCC,++tag_,
             [this,index,len](bool ok,uint64_t,const std::vector<uint8_t>& b){auto& s=slots_[index];s.pending=false;
                 if(!ok || b.size()!=len){finish(false);return;}std::copy(b.begin(),b.end(),s.bytes.begin()+s.offset);
-                s.offset+=len;localRead_+=len;if(s.offset==8192){s.reading=false;s.ready=true;}}))s.pending=false;
+                s.offset+=len;localRead_+=len;if(s.offset==8192){s.reading=false;s.ready=true;}});
+        if(!accepted)s.pending=false;
+        return accepted;
     }
     void loadA(){phase_=0;pending_=true;input_(kBase_+loadedA_,[this](bool ok,const Values& a){pending_=false;
         if(!ok || a.size()!=rows_*64){finish(false);return;}
@@ -272,7 +296,7 @@ private:
             // Two bounded snapshots, each backed by an existing immutable GM
             // input tile. All bytes still cross the timed local port. Neither
             // snapshot programs an array before its preceding MAC completes.
-            for(uint32_t i=0;i<2;++i)pumpInputSlot((preparedSeq_+i)%2);
+            for(uint32_t i=0;i<2 && active_;++i)pumpInputSlot((preparedSeq_+i)%2);
             return;
         }
         if(!inputReading_ || inputPending_)return;
@@ -360,6 +384,7 @@ private:
     bool active_=false,pending_=false,outputWaiting_=false;
     bool earlyA_=false,lateLease_=false,detachOutput_=false,outputAdvanced_=false,aFirst_=false;
     uint32_t gmLookahead_=4;uint64_t gmDeferred_=0;
+    bool demandOrder_=false;uint64_t headBypassAdmissions_=0,headBypassCycles_=0;
     uint32_t currentSequence() const {return (bridgeWeights_?nBase_*kCount_:0)+n_*kCount_+k_;}
     uint32_t sequenceLimit() const {return (bridgeWeights_?uint32_t(tiles_.size()):nCount_)*kCount_;}
     bool inputPrefetch_=false,scatterWave_=false,bridgeWeights_=false;std::array<InputSlot,2> inputSlots_{};

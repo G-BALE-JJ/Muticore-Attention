@@ -1,0 +1,31 @@
+{
+  "description": "Grouped-query attention; 4 Q heads share 2 KV heads",
+  "arguments": [
+    "--query-length",
+    "1024",
+    "--kv-length",
+    "1024",
+    "--num-query-heads",
+    "4",
+    "--num-kv-heads",
+    "2",
+    "--head-dim",
+    "128",
+    "--mpi-ranks",
+    "4"
+  ],
+  "host_checks": {
+    "guest": [
+      "test_attention_mpi_partition.py",
+      "test_fp16_end_to_end.py"
+    ],
+    "baseline": [
+      "test_attention_cluster_8qk_8pv.py",
+      "test_causal_balance_analysis.py"
+    ]
+  },
+  "stage": "GQA",
+  "latency_unit": "cycles",
+  "architecture": "../../src/sst/elements/golem",
+  "source_snapshot": "all-gemm-reuse-window c7b9e11 plus existing local changes, 2026-10-27"
+}

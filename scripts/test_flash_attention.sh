@@ -287,6 +287,9 @@ if [[ ! -f "$SST_LIB_PATH/libgolem.so" ]]; then
   exit 1
 fi
 
+# Sources may be newer than a cached guest copied from an earlier experiment.
+make -C "$ATTENTION_DIR" scale
+
 env -u GOLEM_ATTENTION_PV_INPUT_RESIDENCY \
     -u GOLEM_ATTENTION_O_ACCUMULATOR_CBUFFER \
     -u GOLEM_ATTENTION_KV_PAIR_REUSE \

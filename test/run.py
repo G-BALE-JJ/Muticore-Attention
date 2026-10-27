@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Run one archived baseline against the public architecture or a feature workspace."""
+import argparse
+from datetime import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+from zoneinfo import ZoneInfo
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('stage', choices=('GEMM', 'Attention', 'GQA', 'prefill'))
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--check', action='store_true', help='run host contract and numerical tests')
+    mode.add_argument('--show-config', action='store_true', help='show command without executing it')
+    mode.add_argument('--dry-run', action='store_true', help='validate configuration or generate prefill schedule')
+    mode.add_argument('--run', action='store_true', help='run SST and existing numerical/resource validators')
+    mode.add_argument('--smoke', action='store_true', help='run a small SST case; prefill uses one layer and one logical token')
+    parser.add_argument('--workspace', type=Path, default=ROOT, help='architecture workspace to test')
+    parser.add_argument('--artifact-root', type=Path)
+    args, extra = parser.parse_known_args()
+    if extra[:1] == ['--']:
+        extra = extra[1:]
+    if not any((args.check, args.show_config, args.dry_run, args.run, args.smoke)):
+        args.check = True
+    workspace = args.workspace.resolve()
+    if not (workspace / 'configure.ac').is_file():
+        parser.error('--workspace must contain the SST source layout')
+    config = json.loads((ROOT / 'test' / args.stage / 'baseline.json').read_text())
+    golem = workspace / ('test/golem' if (workspace / 'test/golem').is_dir() else 'src/sst/elements/golem/tests')
+    baseline = workspace / ('test/attention_cluster_8qk_8pv' if (workspace / 'test/attention_cluster_8qk_8pv').is_dir()
+                            else 'baseline/attention_cluster_8qk_8pv')
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1')
+    if args.check:
+        if extra:
+            parser.error('extra simulator arguments require --run, --smoke or --dry-run')
+        for suite, patterns in config['host_checks'].items():
+            directory = {'guest': golem / 'small/muticore_attention', 'golem': golem, 'baseline': baseline}[suite]
+            for pattern in patterns:
+                subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(directory), '-p', pattern],
+                               cwd=workspace, env=env, check=True)
+        return
+    now = datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d_%H%M%S_%f')
+    artifacts = (args.artifact_root or ROOT / 'test' / args.stage / 'results' / now).resolve()
+    if args.stage == 'GEMM':
+        command = ['bash', str(golem / 'run_noc_dma_pipeline.sh'), *config['arguments']]
+        env.update(config.get('environment', {}), GOLEM_ARTIFACT_ROOT=str(artifacts))
+        if args.dry_run:
+            command.append('--dry-run')
+    elif args.stage in ('Attention', 'GQA'):
+        command = ['bash', str(workspace / 'scripts/test_flash_attention.sh'), *config['arguments'],
+                   '--artifact-root', str(artifacts)]
+        if args.smoke:
+            # The shared reuse-window engine needs full 64-row worker blocks;
+            # the placement validator accepts at least two MPI ranks.
+            command += ['--query-length', '512', '--kv-length', '512', '--mpi-ranks', '2']
+        if args.dry_run:
+            command.append('--show-config')
+    elif args.smoke:
+        # This driver creates its case with exist_ok=False; metadata stays in
+        # the enclosing invocation directory.
+        command = [sys.executable, str(baseline / 'run_decoder_stack.py'), '--artifact-root', str(artifacts / 'case'),
+                   '--shape', 'small', '--layers', '1', '--sequence', '1', '--embedding', '--lm-head',
+                   '--mpi-ranks', '2']
+    else:
+        command = [sys.executable, str(baseline / 'run_selected_prefill.py'), '--artifact-root', str(artifacts)]
+        if args.dry_run:
+            command.append('--schedule-only')
+    command += extra
+    details = dict(stage=args.stage, workspace=str(workspace), artifact_root=str(artifacts), command=command,
+                   environment_overrides={k: env[k] for k in config.get('environment', {})},
+                   latency_unit='cycles', mode='smoke' if args.smoke else 'dry-run' if args.dry_run else 'run')
+    print(json.dumps(details, indent=2, ensure_ascii=False), flush=True)
+    if args.show_config:
+        return
+    # Each invocation has its own output directory; never overwrite previous evidence.
+    if artifacts.exists() and any(artifacts.iterdir()):
+        parser.error(f'output directory is not empty: {artifacts}')
+    artifacts.mkdir(parents=True, exist_ok=True)
+    details['library_sha256'] = digest(workspace / 'install/lib/sst-elements-library/libgolem.so')
+    details['git_head'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=workspace, text=True).strip()
+    details['git_status'] = subprocess.check_output(['git', 'status', '--porcelain'], cwd=workspace, text=True)
+    metadata = artifacts / 'stage_invocation.json'
+    metadata.write_text(json.dumps(details, indent=2, ensure_ascii=False) + '\n')
+    print(shlex.join(command), flush=True)
+    # Inherited console output preserves existing simulator progress reporting.
+    result = subprocess.run(command, cwd=workspace, env=env)
+    details.update(exit_code=result.returncode, status='PASS' if result.returncode == 0 else 'FAIL')
+    metadata.write_text(json.dumps(details, indent=2, ensure_ascii=False) + '\n')
+    raise SystemExit(result.returncode)
+
+
+if __name__ == '__main__':
+    main()

@@ -34,6 +34,8 @@ libgolem_la_SOURCES = \
 	attention/decoderMemoryLayout.h \
 	attention/decoderOpAbi.h \
 	attention/decoderOpJob.h \
+	attention/pvWoHandoff.h \
+	attention/pvWoInputInterface.h \
 	rocc/roccAnalog.h \
 	rocc/roccAnalogFloat.h \
 	rocc/roccAnalogInt.h \

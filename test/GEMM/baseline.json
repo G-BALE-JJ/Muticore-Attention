@@ -1,0 +1,57 @@
+{
+  "description": "Generic GEMM / WCP; 64x64x64 tiles, 16 workers",
+  "arguments": [
+    "--groups",
+    "4",
+    "--num-cores",
+    "20",
+    "--gemm-cores",
+    "20",
+    "--num-mem-nodes",
+    "5",
+    "--mesh-dim-x",
+    "4",
+    "--gemm-m",
+    "128",
+    "--gemm-n",
+    "128",
+    "--gemm-k",
+    "128",
+    "--gemm-block-m",
+    "64",
+    "--gemm-block-n",
+    "64",
+    "--gemm-block-k",
+    "64",
+    "--mpi-ranks",
+    "1",
+    "--output-mode",
+    "hbm"
+  ],
+  "environment": {
+    "GOLEM_ARCH_SCRIPT": "architecture/ncores_selfcom_dma_ctrl.py",
+    "GOLEM_CTRL_LINK_ENABLE": "1",
+    "GOLEM_GROUP_MANAGER_ENABLE": "1",
+    "GOLEM_WORKER_COMMAND_PROCESSOR_ENABLE": "1",
+    "GOLEM_REQUEST_SCHEDULER_ENABLE": "1",
+    "GOLEM_ATTENTION_KV_BUFFER_COUNT": "1",
+    "GOLEM_ATTENTION_KV_SECOND_LOOKAHEAD": "0"
+  },
+  "host_checks": {
+    "golem": [
+      "test_gemm_mpi_contract.py",
+      "test_riscv_toolchain_contract.py"
+    ],
+    "guest": [
+      "test_reuse_window_gemm.py",
+      "test_reuse_window_gm_schedule.py"
+    ],
+    "baseline": [
+      "test_reuse_window_panels.py"
+    ]
+  },
+  "stage": "GEMM",
+  "latency_unit": "cycles",
+  "architecture": "../../src/sst/elements/golem",
+  "source_snapshot": "all-gemm-reuse-window c7b9e11 plus existing local changes, 2026-10-27"
+}

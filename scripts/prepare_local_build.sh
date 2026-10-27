@@ -74,7 +74,14 @@ fi
 
 rsync -a --sparse \
 	"${BUILD_EXCLUDES[@]}" \
-	--exclude='.git/' \
+	--exclude='.git' \
+	--exclude='/Muticore-Attention*/' \
+	--exclude='/exp-*/' \
+	--exclude='/docs/' \
+	--exclude='/test/history/' \
+	--exclude='/test/maintenance/' \
+	--exclude='/test/*/results/' \
+	--exclude='.all_gemm_reuse_runner_*/' \
 	--exclude='build/' \
 	--exclude='install/' \
 	--exclude='deps/' \

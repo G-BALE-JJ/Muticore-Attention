@@ -1,0 +1,27 @@
+{
+  "description": "QK -> SFU softmax -> PV; independent projected Q/K/V inputs",
+  "arguments": [
+    "--query-length",
+    "1024",
+    "--kv-length",
+    "1024",
+    "--num-query-heads",
+    "1",
+    "--num-kv-heads",
+    "1",
+    "--head-dim",
+    "128",
+    "--mpi-ranks",
+    "4"
+  ],
+  "host_checks": {
+    "guest": [
+      "test_flash_attention_baseline_contract.py",
+      "test_attention_metrics_report.py"
+    ]
+  },
+  "stage": "Attention",
+  "latency_unit": "cycles",
+  "architecture": "../../src/sst/elements/golem",
+  "source_snapshot": "all-gemm-reuse-window c7b9e11 plus existing local changes, 2026-10-27"
+}

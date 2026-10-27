@@ -30,6 +30,7 @@
 #include <sst/elements/golem/attention/projectionJob.h>
 #include <sst/elements/golem/attention/decoderOpJob.h>
 #include <sst/elements/golem/attention/reuseWeightCohort.h>
+#include <sst/elements/golem/attention/pvWoHandoff.h>
 #include <sst/elements/golem/attention/decoderMemoryLayout.h>
 #include <sst/elements/vanadis/rocc/vroccinterface.h>
 #include <sst/elements/golem/globalmemory/globalmemory.h>
@@ -663,6 +664,13 @@ public:
         if(cohort && coreID>=4 && coreID<20)
             weightCohort_.reset(new ReuseWeightCohort(globalMem,coreID,cohort));
 
+        const char* pvWoEnv=std::getenv("GOLEM_PV_WO_GM_HANDOFF");
+        pvWoHandoffEnabled_=pvWoEnv && std::strcmp(pvWoEnv,"1")==0;
+        if(pvWoEnv && std::strcmp(pvWoEnv,"0")!=0 && std::strcmp(pvWoEnv,"1")!=0)
+            output->fatal(CALL_INFO,-1,"GOLEM_PV_WO_GM_HANDOFF must be 0 or 1\n");
+        if(pvWoHandoffEnabled_ && coreID>=4 && coreID<20)
+            pvWoHandoff_.reset(new PvWoHandoff(globalMem,static_cast<uint32_t>(coreID)));
+
         groupCtrl = nullptr;
         if (params.find<int>("groupCtrlEnable", 0) != 0) {
             groupCtrl = loadUserSubComponent<SST::Golem::GroupCtrlAPI>(
@@ -1034,6 +1042,7 @@ public:
         }
         progressAttentionWorkerClusterVBroadcast();
         if(weightCohort_)weightCohort_->tick();
+        if(pvWoHandoff_)pvWoHandoff_->tick();
         if (workerCommandProcessor != nullptr && workerCommandProcessor->isBusy()) {
             workerCommandProcessor->tick(cycle);
         }
@@ -1261,7 +1270,7 @@ public:
                 uint64_t status = 1;
                 if (coreID >= 4 && coreID < 20 && array && globalMem && workerCommandProcessor &&
                     (!projectionJob_ || !projectionJob_->active())) {
-                    if (!decoderOpJob_) decoderOpJob_.reset(new DecoderOpJob(globalMem, workerCommandProcessor, sfu,weightCohort_.get()));
+                    if (!decoderOpJob_) decoderOpJob_.reset(new DecoderOpJob(globalMem, workerCommandProcessor, sfu,weightCohort_.get(),pvWoHandoff_.get()));
                     std::vector<uint8_t> raw;
                     globalMem->rd_from_globalmem(next_cmd->rs1, sizeof(DecoderOpDesc), raw);
                     if (raw.size() == sizeof(DecoderOpDesc)) {
@@ -12563,15 +12572,38 @@ public:
                                 state.active.ownerCore,
                                 state.active.groupQueryRowBegin);
                         const auto& msg = state.active;
+                        const auto& pvOutput = attentionWorkerClusterPvOutputs_.at(outputKey);
+                        if (pvWoHandoffEnabled_) {
+                            if (!pvWoHandoff_ || inputOperandSize != 2 || msg.headDim != 64) {
+                                output->fatal(CALL_INFO, -1, "PV-Wo handoff shape/service mismatch\n");
+                            }
+                            const auto bytes = attentionTensorToBytes(pvOutput);
+                            if (!pvWoHandoff_->dispatch(msg, bytes,
+                                [this, outputKey](bool ok) {
+                                    auto& completed = attentionWorkerClusterPv_;
+                                    ControlTransportMessage done = completed.active;
+                                    done.kind = ControlTransportMessageKind::AttentionClusterPvComplete;
+                                    done.workerCore = static_cast<uint32_t>(coreID);
+                                    done.value = ok ? 1.0 : 0.0;
+                                    done.payload.clear(); done.tensorPayload.clear(); done.scales.clear();
+                                    done.sendCycle = getCurrentSimCycle();
+                                    globalMem->sendControlMessage(done.ownerCore, done);
+                                    attentionWorkerClusterPvOutputs_.erase(outputKey);
+                                    completed.busy = false;
+                                    startAttentionWorkerClusterPv();
+                                })) {
+                                output->fatal(CALL_INFO, -1, "PV-Wo handoff rejected output tile\n");
+                            }
+                            return;
+                        }
                         auto remaining = std::make_shared<uint32_t>(64);
                         auto success = std::make_shared<bool>(true);
-                        const auto& output = attentionWorkerClusterPvOutputs_.at(outputKey);
                         for (uint32_t row = 0; row < 64; ++row) {
                             const uint32_t localRow = localBegin + row;
                             const uint32_t head = msg.kvHeadIndex * groupSize + localRow / msg.queryLength;
                             const uint32_t query = localRow % msg.queryLength;
-                            std::vector<float> values(output.begin() + row * msg.headDim,
-                                output.begin() + (row + 1) * msg.headDim);
+                            std::vector<float> values(pvOutput.begin() + row * msg.headDim,
+                                pvOutput.begin() + (row + 1) * msg.headDim);
                             const auto bytes = attentionTensorToBytes(values);
                             const uint64_t address = msg.oAddr +
                                 (static_cast<uint64_t>(query) * msg.numQueryHeads + head) *
@@ -12714,6 +12746,10 @@ public:
     }
 
     void handleControlTransportMessage(const ControlTransportMessage& message) {
+        if(PvWoHandoff::accepts(message.kind)){
+            if(!pvWoHandoff_)output->fatal(CALL_INFO,-1,"PV-Wo message without enabled handoff service\n");
+            pvWoHandoff_->receive(message);return;
+        }
         if(ReuseWeightCohort::accepts(message.kind)){
             if(!weightCohort_)output->fatal(CALL_INFO,-1,"GEMM cohort message without configured software service\n");
             weightCohort_->receive(message);return;
@@ -14047,6 +14083,8 @@ private:
     std::unique_ptr<ProjectionJob> projectionJob_;
     std::unique_ptr<DecoderOpJob> decoderOpJob_;
     std::unique_ptr<ReuseWeightCohort> weightCohort_;
+    std::unique_ptr<PvWoHandoff> pvWoHandoff_;
+    bool pvWoHandoffEnabled_=false;
     bool oracleProjectionStarted_ = false;
     ProjectionJobDesc oracleProjectionDesc_{};
     uint32_t oracleProjectionNotificationMask_ = 0;

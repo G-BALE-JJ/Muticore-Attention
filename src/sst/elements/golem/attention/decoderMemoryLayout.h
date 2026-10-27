@@ -49,6 +49,20 @@ struct DecoderMemoryLayout {
     static constexpr uint64_t decoder_norm_handoff_bytes=64*2048*2;
     // Stage-chain Wo output temporarily aliases the idle GM interval below
     // the retained residual input. This changes software lifetimes only.
+    // PV reception is live concurrently with Attention: keep it above the
+    // V cache [0x100000,0x180000) and V staging [0x180000,0x188000).
+    // Legacy Wo relocates to decoder_input_gm. Direct Wo leases this landing
+    // and remaps its B slots below; later FFN reuse waits for lease release.
+    static constexpr uint64_t decoder_pv_wo_landing_gm=0x1a0000;
+    static constexpr uint64_t decoder_pv_wo_landing_bytes=64*2048*2;
+    // Direct Wo input owns the landing. Its four existing weight slots alias
+    // the otherwise unused ordinary input arena, not the live landing tail.
+    static constexpr uint64_t decoder_pv_wo_weight_gm=decoder_input_gm;
+    static constexpr uint64_t decoder_pv_wo_weight_bytes=4*8192;
+    static_assert(decoder_pv_wo_weight_gm+decoder_pv_wo_weight_bytes<=decoder_pv_wo_landing_gm,
+                  "direct Wo weights overlap the landing");
+    static_assert(decoder_pv_wo_landing_gm+decoder_pv_wo_landing_bytes<=gm_stride,
+                  "PV-Wo landing exceeds worker GM");
     static constexpr uint64_t decoder_wo_handoff_gm=0x70000;
     static constexpr uint64_t decoder_wo_handoff_bytes=64*2048*2;
     static_assert(decoder_wo_handoff_gm+decoder_wo_handoff_bytes==decoder_norm_handoff_gm,

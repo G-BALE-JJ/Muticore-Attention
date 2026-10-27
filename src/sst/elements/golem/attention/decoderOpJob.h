@@ -8,6 +8,7 @@
 #include <sst/elements/golem/attention/reuseWindowGemm.h>
 #include <sst/elements/golem/attention/reuseWeightInterface.h>
 #include <sst/elements/golem/attention/softwareLayerResidency.h>
+#include <sst/elements/golem/attention/pvWoInputInterface.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -20,8 +21,8 @@ namespace SST { namespace Golem {
 // drain while subsequent tiles compute; completion waits for every HBM ACK.
 class DecoderOpJob {
 public:
-    DecoderOpJob(GlobalMemoryAPI* gm, WorkerCommandProcessorAPI* wcp, SFUAPI* sfu,ReuseWeightInterface* sharing=nullptr)
-        : gm_(gm), wcp_(wcp), sfu_(sfu), window_(gm,wcp), downWindow_(gm,wcp), sharing_(sharing) {
+    DecoderOpJob(GlobalMemoryAPI* gm, WorkerCommandProcessorAPI* wcp, SFUAPI* sfu,ReuseWeightInterface* sharing=nullptr,PvWoInputInterface* pvWoInput=nullptr)
+        : gm_(gm), wcp_(wcp), sfu_(sfu), window_(gm,wcp), downWindow_(gm,wcp), sharing_(sharing), pvWoInput_(pvWoInput) {
         allGemmWindow_=option("GOLEM_ALL_GEMM_REUSE_WINDOW",0,0,1);
         blockPipeline_=option("GOLEM_DECODER_FFN_BLOCK_PIPELINE",0,0,1);
         pipelinePolicy_=option("GOLEM_DECODER_FFN_PIPELINE_POLICY",2,0,2);
@@ -33,6 +34,13 @@ public:
         addNormFusion_=option("GOLEM_DECODER_ADD_NORM_FUSION",0,0,1);
         layerResidency_=option("GOLEM_DECODER_LAYER_RESIDENCY",0,0,1);
         inputResidency_=option("GOLEM_DECODER_INPUT_RESIDENCY",0,0,1);
+        pvWoHandoff_=option("GOLEM_PV_WO_GM_HANDOFF",0,0,1);
+        pvWoDirect_=option("GOLEM_PV_WO_DIRECT_INPUT",0,0,1);
+        ffnGmLookahead_=option("GOLEM_DECODER_FFN_GM_LOOKAHEAD",0,0,4);
+        ffnDemandOrder_=option("GOLEM_DECODER_FFN_DEMAND_ORDER",0,0,1);
+        if(ffnGmLookahead_==3)throw std::invalid_argument("GOLEM_DECODER_FFN_GM_LOOKAHEAD");
+        if(pvWoDirect_ && !pvWoHandoff_)
+            throw std::invalid_argument("direct PV-Wo input requires GM handoff");
         lmInputResidency_=option("GOLEM_DECODER_LM_INPUT_RESIDENCY",0,0,1);
         elideIntermediateOutput_=option("GOLEM_DECODER_ELIDE_INTERMEDIATE_OUTPUT",0,0,1);
         for (uint32_t i = 0; i < 64; ++i) arrays_.push_back(i);
@@ -52,7 +60,7 @@ public:
             throw std::invalid_argument("GOLEM_DECODER_LM_N_PARALLEL");
     }
     bool start(const DecoderOpDesc& d) {
-        if (active_ || done_ || !gm_ || !wcp_ || !sfu_ || wcp_->isBusy() ||
+        if (active_ || done_ || pvWoLeased_ || !gm_ || !wcp_ || !sfu_ || wcp_->isBusy() ||
             d.magic != GOLEM_DECODER_OP_MAGIC || d.size_bytes != sizeof(d) ||
             d.op < 1 || d.op > 9 || !d.rows ||
             d.lane > 3 || d.manager > 3 || !d.input_dim || (d.op!=6 && d.input_dim % 64) ||
@@ -67,6 +75,9 @@ public:
             gm_->getSize() < DecoderMemoryLayout::decoder_required_gm ||
             (d.op==9 && (!d.down_weights_offset || d.input_dim>2048 ||
                 gm_->getSize()<DecoderMemoryLayout::decoder_down_required_gm))) return false;
+        if (pvWoHandoff_ && d.op==1 && d.stage==1 &&
+            (d.rows!=256 || d.input_dim!=2048 || d.head_dim || !pvWoInput_)) return false;
+        if(pvWoDirect_ && d.op==1 && d.stage==1 && !allGemmWindow_)return false;
         chainJob_=0;
         if(stageChain_ && chainState_) {
             const uint32_t expected=chainState_==1?2:chainState_==2?3:4;
@@ -112,6 +123,8 @@ public:
             d.manager==lmInputDesc_.manager && d.lane==lmInputDesc_.lane &&
             d.epoch==lmInputDesc_.epoch+1 && d.output_tile_begin==lmInputDesc_.output_tile_begin+lmInputDesc_.output_dim/64;
         lmInputValid_=false;lmInputSaved_=0;
+        usePvWoInput_=pvWoHandoff_ && d.op==1 && d.stage==1;
+        usePvWoDirect_=usePvWoInput_ && pvWoDirect_;
         residualCacheNext_=0;
         if (d.op==9 && !wcp_->beginProjectionPartialBuffer(64ull*d.input_dim*2)) return false;
         useNormCache_=normHandoff_ && allGemmWindow_ && d.op==9 && normCacheValid_ &&
@@ -123,6 +136,12 @@ public:
             d.rows<=256 && d.input_dim<=2048 && d.input_dim%64==0 && d.lane*64<d.rows;
         if(cacheNorm_)normCacheDesc_=d;
         normCacheWritten_=normCacheReadSaved_=0;
+        if(usePvWoInput_){
+            const bool ready=usePvWoDirect_?pvWoInput_->acquire(d.epoch,d.manager,d.lane):
+                pvWoInput_->consume(d.epoch,d.manager,d.lane);
+            if(!ready)throw std::logic_error("Wo started before complete PV GM landing or with wrong generation");
+        }
+        pvWoLeased_=usePvWoDirect_;
         d_ = d; singleRow_=d.rows==1 && d.op==1;
         sharedWeights_=allGemmWindow_ && sharing_ && d.op==9;sharedAccounted_=false;
         if(sharedWeights_)sharing_->begin(d.epoch);
@@ -285,7 +304,8 @@ private:
         const char* name=isFfn()?(ffnUp_?"up":"gate"):(singleRow_?"lm_head":"linear");
         window_.start(activeRows_,d_.input_dim/64,std::move(tiles),
             inputGM(),
-            local+(pipelined()?DecoderMemoryLayout::decoder_prefetch_gm:DecoderMemoryLayout::decoder_down_weight_gm),
+            local+(usePvWoDirect_?DecoderMemoryLayout::decoder_pv_wo_weight_gm:
+                pipelined()?DecoderMemoryLayout::decoder_prefetch_gm:DecoderMemoryLayout::decoder_down_weight_gm),
             local+(pipelined()?DecoderMemoryLayout::decoder_pipeline_producer_c_gm:DecoderMemoryLayout::decoder_prefetch_gm),
             [this](uint32_t k,ReuseWindowGemm::Loaded done){
                 readLocal(inputGM()+uint64_t(k)*activeRows_*128,activeRows_*128,
@@ -312,7 +332,8 @@ private:
                 else{row_+=256;defer([this]{loadRows();});}}, {},
             [this](uint32_t k){return inputGM()+uint64_t(k)*activeRows_*128;},true,weightFetcher(),
             pipelined()?ReuseWindowGemm::Acquire([this]{return acquirePipelineArrays(1);}):ReuseWindowGemm::Acquire{},
-            pipelined()?ReuseWindowGemm::Release([this]{releasePipelineArrays(1);}):ReuseWindowGemm::Release{});
+            pipelined()?ReuseWindowGemm::Release([this]{releasePipelineArrays(1);}):ReuseWindowGemm::Release{},
+            isFfn()?ffnGmLookahead_:0,isFfn() && ffnDemandOrder_);
     }
     void initialDownWindow(uint32_t n,ReuseWindowGemm::Loaded done) {
         if(cycle_<downPartialReady_) {defer([this,n,done]{initialDownWindow(n,done);});return;}
@@ -344,7 +365,7 @@ private:
             [this](uint32_t n,const std::vector<double>& v){downN_=n;downK_=0;windowDownSink_=true;consumeDownOutput(v);},
             [this](bool ok){if(!ok){finish(false);return;}accountWindow("down");downN_=d_.input_dim/64; windowDownSink_=false; downActive_=false;
                 defer([this]{downNextOutput();});},std::move(initial),
-            [this](uint32_t k){return downInputGM()+uint64_t(k)*activeRows_*128;},false,weightFetcher());
+            [this](uint32_t k){return downInputGM()+uint64_t(k)*activeRows_*128;},false,weightFetcher(),{},{},ffnGmLookahead_,ffnDemandOrder_);
     }
     // Bounded producer/consumer software pipeline. The two engines use
     // independent weight slots; all 64 arrays are leased for one C tile at a
@@ -369,7 +390,7 @@ private:
                     downNextK_=panels_[downConsumer_].firstTile+panels_[downConsumer_].tiles;
                     ++downPasses_;++pipelinePasses_;downActive_=false;
                 },std::move(initial),[this](uint32_t k){return panelGM(downConsumer_)+uint64_t(k)*activeRows_*128;},false,{},
-                [this]{return acquirePipelineArrays(2);},[this]{releasePipelineArrays(2);});
+                [this]{return acquirePipelineArrays(2);},[this]{releasePipelineArrays(2);},ffnGmLookahead_,ffnDemandOrder_);
             return;
         }
     }
@@ -471,7 +492,8 @@ private:
     uint64_t upPanelGM(uint32_t index) const { return gm_->getBaseAddr()+DecoderMemoryLayout::decoder_ffn_up_gm+index*DecoderMemoryLayout::decoder_panel_bytes; }
     uint64_t producerPanelGM() const { return isFfn() && ffnUp_ ? upPanelGM(panelIndex_) : panelGM(panelIndex_); }
     uint32_t core() const { return 4 + d_.manager + d_.lane * 4; }
-    uint64_t inputGM() const { return gm_->getBaseAddr()+(useNormCache_?
+    uint64_t inputGM() const { return gm_->getBaseAddr()+(usePvWoDirect_?
+        DecoderMemoryLayout::decoder_pv_wo_landing_gm:useNormCache_?
         DecoderMemoryLayout::decoder_norm_handoff_gm:DecoderMemoryLayout::decoder_input_gm); }
     uint64_t weightGM() const { return gm_->getBaseAddr() + DecoderMemoryLayout::decoder_weight_gm; }
     uint64_t outGM() const { return gm_->getBaseAddr() + DecoderMemoryLayout::decoder_output_gm; }
@@ -479,6 +501,12 @@ private:
     uint64_t chainGM() const {return gm_->getBaseAddr()+DecoderMemoryLayout::decoder_norm_handoff_gm;}
     uint64_t chainWoGM() const {return gm_->getBaseAddr()+DecoderMemoryLayout::decoder_wo_handoff_gm;}
     void finish(bool ok) {
+        if(ok && pvWoLeased_){
+            ok=pvWoInput_->release(d_.epoch,d_.manager,d_.lane);
+            if(ok)pvWoLeased_=false;
+            std::printf("[PV_WO_DIRECT_INPUT] event=release core=%u epoch=%u tick=%llu status=%u\n",
+                core(),d_.epoch,(unsigned long long)tick_,ok?0u:1u);
+        }
         if(elideOutput_){
             const uint64_t expected=uint64_t(std::min(64u,d_.rows-d_.lane*64))*d_.input_dim*2;
             if(ok && (!layerPublished_ || layerBytes_!=expected || elidedOutputBytes_!=expected))ok=false;
@@ -662,6 +690,21 @@ private:
             if(useLmInput_){lmInputSaved_+=d_.input_dim*2;defer([this]{loadWeight();});return;}
             if(chainJob_==4){chainReadSaved_+=uint64_t(activeRows_)*d_.input_dim*2;defer([this]{loadWeight();});return;}
             if(useNormCache_){normCacheReadSaved_+=uint64_t(activeRows_)*d_.input_dim*2;defer([this]{loadWeight();});return;}
+            if(usePvWoInput_){
+                if(usePvWoDirect_){
+                    std::printf("[PV_WO_DIRECT_INPUT] event=begin core=%u epoch=%u tick=%llu input_gm=%llu weight_gm=%llu bytes=%u relocation_read_bytes=0 relocation_write_bytes=0\n",
+                        core(),d_.epoch,(unsigned long long)tick_,(unsigned long long)inputGM(),
+                        (unsigned long long)(gm_->getBaseAddr()+DecoderMemoryLayout::decoder_pv_wo_weight_gm),activeRows_*d_.input_dim*2);
+                    defer([this]{loadWeight();});return;
+                }
+                // Head-major Dh=64 already equals the K-panel order. Move it
+                // through timed GM ports before Wo output/FFN reuse landing.
+                readLocal(gm_->getBaseAddr()+DecoderMemoryLayout::decoder_pv_wo_landing_gm,
+                    activeRows_*d_.input_dim*2,[this](const std::vector<uint8_t>& packed){
+                        writeLocal(inputGM(),packed,[this]{loadWeight();});
+                    });
+                return;
+            }
             if (d_.op==1 && d_.head_dim) { head_=0; gathered_.assign(activeRows_*d_.input_dim*2,0); gatherHead(); }
             else loadHBM(d_.input_addr+uint64_t(row_)*d_.input_dim*2,inputGM(),activeRows_*d_.input_dim*2,
                 [this] { packInput(); });
@@ -1753,6 +1796,11 @@ private:
     bool inputResidency_=false,layerResidualConsumer_=false,elideIntermediateOutput_=false,elideOutput_=false;uint64_t layerResidualSaved_=0;
     uint64_t layerBytes_=0,layerSaved_=0,elidedOutputBytes_=0;
     bool lmInputResidency_=false,lmInputValid_=false,useLmInput_=false;
+    bool pvWoHandoff_=false,usePvWoInput_=false;
+    bool pvWoDirect_=false,usePvWoDirect_=false,pvWoLeased_=false;
+    uint32_t ffnGmLookahead_=0;
+    bool ffnDemandOrder_=false;
+    PvWoInputInterface* pvWoInput_=nullptr;
     DecoderOpDesc lmInputDesc_{};uint64_t lmInputSaved_=0;
     DecoderOpDesc chainDesc_{};uint64_t chainH1Address_=0,chainNormAddress_=0;
     uint64_t chainReadSaved_=0,chainWriteSaved_=0,chainLocalBytes_=0;

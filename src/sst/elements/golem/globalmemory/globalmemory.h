@@ -124,6 +124,8 @@ enum class ControlTransportMessageKind {
     AttentionClusterPvVPrefetchHint,
     AttentionClusterPvVRequest,
     AttentionClusterPvVDelivery,
+    AttentionPvWoData,
+    AttentionPvWoAck,
     DiagnosticProjectionReady,
     GemmWeightJoin,
     GemmWeightRequest,
