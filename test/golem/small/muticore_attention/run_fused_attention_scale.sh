@@ -612,12 +612,6 @@ if [[ " $ATTENTION_SST_ARGS " == *" --partitioner"* ||
   echo "GOLEM_ATTENTION_SST_ARGS cannot override the partitioner, element library path, or timebase" >&2
   exit 2
 fi
-if [[ ! -f "$LOCAL_ELEMENT_LIB/libgolem.so" ]]; then
-  echo "Missing local element library: $LOCAL_ELEMENT_LIB/libgolem.so" >&2
-  echo "Build it first with scripts/build_and_install_local.sh" >&2
-  exit 1
-fi
-
 for shape in "$QUERY_LENGTH" "$KV_LENGTH" "$NUM_QUERY_HEADS" "$NUM_KV_HEADS" "$HEAD_DIM"; do
   if ! [[ "$shape" =~ ^[1-9][0-9]*$ ]]; then
     echo "Attention dimensions must be positive integers" >&2
@@ -1178,6 +1172,13 @@ if (( DRY_RUN )); then
   fi
   printf '%q ' "${REPORT_CMD[@]}"; printf '\n'
   exit 0
+fi
+
+# Parameter-only checks must also work in a newly created feature workspace.
+if [[ ! -f "$LOCAL_ELEMENT_LIB/libgolem.so" ]]; then
+  echo "Missing local element library: $LOCAL_ELEMENT_LIB/libgolem.so" >&2
+  echo "Build it first with scripts/build_and_install_local.sh" >&2
+  exit 1
 fi
 
 attention_elapsed_seconds() {

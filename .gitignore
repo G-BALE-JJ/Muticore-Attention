@@ -93,6 +93,7 @@ baseline/attention_cluster_8qk_8pv/.all_gemm_reuse_runner_*/
 # Public LLM layout
 /Muticore-Attention*/
 /test/history/
+/test/history
 /test/maintenance/cleanup_2026-10-27/protected_*.json
 /test/*/results/
 /docs/项目进度书_*/
