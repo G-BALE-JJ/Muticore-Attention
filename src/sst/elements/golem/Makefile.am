@@ -35,6 +35,10 @@ libgolem_la_SOURCES = \
 	tileunit/tileUnit.h \
 	tileunit/tileUnitArray.h \
 	computeunit/computeUnit.h \
+	computeunit/multiPrecisionComputeUnit.h \
+	computeunit/peTiming.h \
+	computeunit/peTiming.def \
+	isa/precision.h \
 	workercmdproc/partialCPrefetch.h \
 	attention/attentionCluster.h \
 	attention/decoderMemoryLayout.h \

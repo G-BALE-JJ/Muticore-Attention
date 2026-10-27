@@ -25,6 +25,7 @@
 
 #include <sst/elements/golem/array/computeArray.h>
 #include <sst/elements/golem/fp16.h>
+#include <sst/elements/golem/computeunit/multiPrecisionComputeUnit.h>
 #include <sst/elements/golem/sfu/sfu.h>
 #include <sst/elements/golem/globalmemory/globalmemory.h>
 #include <sst/elements/golem/requestscheduler/requestscheduler.h>
@@ -131,6 +132,7 @@ public:
         SST::Golem::SFUAPI* vectorEngine) = 0;
 
     virtual bool startWindow(const WorkerTaskListHeader& header) = 0;
+    virtual bool startPrecisionWindow(const WorkerTaskListHeader&, const XTileMC::PrecisionSpecV02&) { return false; }
     using WindowFusionTileCallback =
         std::function<bool(uint64_t, uint64_t, const std::vector<uint8_t>&)>;
     using WindowCompleteCallback =
@@ -1284,9 +1286,23 @@ public:
     }
 
     bool startWindow(const WorkerTaskListHeader& header) override {
+        return startWindowImpl(header,nullptr);
+    }
+    bool startPrecisionWindow(const WorkerTaskListHeader& header,
+                              const XTileMC::PrecisionSpecV02& spec) override {
+        return startWindowImpl(header,&spec);
+    }
+    bool startWindowImpl(const WorkerTaskListHeader& header,
+                         const XTileMC::PrecisionSpecV02* spec) {
         if (isBusy() || cBufferMode_ != CBufferMode::FREE) {
             return false;
         }
+        if (spec && (!XTileMC::validPrecision(*spec) || array_ == nullptr ||
+            header.operand_layout != 0 || header.elem_bytes != 4 ||
+            header.hw_input_size != header.block_k || header.block_k == 0 ||
+            header.vec_stride_bytes != XTileMC::packedRowBytes(header.block_k,
+                static_cast<XTileMC::ComputeMode>(spec->compute_mode)) ||
+            header.mat_stride_bytes != header.block_m*header.vec_stride_bytes)) return false;
         const bool blockKSupported =
             header.hw_input_size != 0 &&
             (header.block_k <= header.hw_input_size ||
@@ -1363,6 +1379,10 @@ public:
                 return false;
             }
         }
+        if (spec && !array_->configurePrecision(*spec,header.block_k)) return false;
+        precisionEnabled_ = spec != nullptr;
+        if (spec) precision_ = *spec;
+        else if (array_) array_->useLegacyPrecision();
         WorkerTaskListHeader configuredHeader = header;
         ++attentionPvVectorReadGeneration_;
         attentionPvVectorReadInFlight_ = false;
@@ -4058,6 +4078,26 @@ private:
     }
 
     bool loadActiveMicroTileToArrays() {
+        if (precisionEnabled_) {
+            const uint32_t base = activeMicroKStep_ * current_.array_input_size;
+            if (base >= header_.block_k) return false;
+            const uint32_t k = std::min(current_.array_input_size, header_.block_k-base);
+            if (!array_->configurePrecision(precision_, k)) return false;
+            // Timing depends on active K and precision, not operand values.
+            // DMA readiness, payload transfers and MV events remain unchanged.
+            const auto mode = static_cast<XTileMC::ComputeMode>(precision_.compute_mode);
+            for (uint32_t tu=0; tu<current_.block_n; ++tu) {
+                for (uint32_t row=0; row<current_.array_output_size; ++row)
+                    for (uint32_t col=0; col<k; ++col)
+                        array_->setMatrixBits(tu, row*current_.array_input_size+col,
+                            packedElement(activeMatPayload_.data()+row*header_.vec_stride_bytes, base+col, mode));
+                for (uint32_t col=0; col<k; ++col)
+                    array_->setVectorBits(tu,col,packedElement(
+                        activeVecPayload_.data()+tu*header_.vec_stride_bytes,base+col,mode));
+            }
+            return true;
+        }
+
         const uint32_t kBase = activeMicroKStep_ * current_.array_input_size;
         if (kBase >= header_.block_k) {
             return false;
@@ -4237,7 +4277,12 @@ private:
         tile.assign(static_cast<size_t>(header_.block_m) * current_.block_n * outputBytes, 0);
         for (uint32_t n = 0; n < current_.block_n; ++n) {
             const size_t dst_off = static_cast<size_t>(n) * header_.block_m * outputBytes;
-            if (outputIsFloat_) {
+            if (precisionEnabled_) {
+                for (uint32_t row=0;row<header_.block_m;++row) {
+                    const uint32_t bits=array_->outputBits(n,row);
+                    std::memcpy(&tile[dst_off+row*4],&bits,4);
+                }
+            } else if (outputIsFloat_) {
                 auto* outVec = static_cast<std::vector<float>*>(array_->getOutputVector(n));
                 if (outVec == nullptr || outVec->size() < header_.block_m) {
                     return false;
@@ -4603,7 +4648,13 @@ private:
         const size_t outputBytes = accumulationElemBytes();
         for (uint32_t n = 0; n < current_.block_n; ++n) {
             const size_t src_off = static_cast<size_t>(n) * header_.block_m * outputBytes;
-            if (outputIsFloat_) {
+            if (precisionEnabled_) {
+                for (uint32_t row=0;row<header_.block_m;++row) {
+                    uint32_t bits=0;
+                    std::memcpy(&bits,&tile[src_off+row*4],4);
+                    array_->setOutputBits(n,row,bits);
+                }
+            } else if (outputIsFloat_) {
                 auto* outVec = static_cast<std::vector<float>*>(array_->getOutputVector(n));
                 if (outVec == nullptr || outVec->size() < header_.block_m) {
                     return false;
@@ -5155,6 +5206,8 @@ private:
 
     int verbose_ = 0;
     bool outputIsFloat_ = false;
+    bool precisionEnabled_ = false;
+    XTileMC::PrecisionSpecV02 precision_{};
     bool stage3Trace_ = false;
     uint32_t attentionClusterQkArrays_ = 16;
     uint32_t prefetchWindowDepth_ = 1;

@@ -19,6 +19,8 @@
 #include <sst/elements/golem/tileunit/tileUnitAPI.h>
 #include <sst/elements/golem/tileunit/tileUnit.h>
 #include <sst/elements/golem/fp16.h>
+#include <sst/elements/golem/computeunit/multiPrecisionComputeUnit.h>
+#include <sst/elements/golem/computeunit/peTiming.h>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -90,6 +92,38 @@ public:
             }
         }
     }
+    bool configurePrecision(const XTileMC::PrecisionSpecV02& spec, uint32_t k) override {
+        if (!XTileMC::validPrecision(spec) || k == 0 || k > inputArraySize) return false;
+        const auto selectedMode = static_cast<XTileMC::ComputeMode>(spec.compute_mode);
+        const uint32_t lanes = XTileMC::lanesPerBeat(selectedMode);
+        const uint32_t packetCapacity = (inputArraySize + lanes - 1) / lanes;
+        if (functionalCompute && (rawMatrix.empty() || packetCapacity != rawPacketCapacity)) {
+            rawPacketCapacity = packetCapacity;
+            rawMatrix.assign(numArrays, std::vector<uint32_t>(rawPacketCapacity*outputArraySize));
+            rawInput.assign(numArrays, std::vector<uint32_t>(rawPacketCapacity));
+        }
+        if (rawOutput.empty()) {
+            rawOutput.resize(numArrays, std::vector<uint32_t>(outputArraySize));
+            if (functionalCompute)
+                rawCUs.resize(numArrays, std::vector<MultiPrecisionComputeUnit>(outputArraySize));
+        }
+        precisionEnabled = true;
+        mode = selectedMode;
+        activeK = k;
+        return true;
+    }
+    void useLegacyPrecision() override { precisionEnabled = false; }
+    void setMatrixBits(uint32_t tu, uint32_t idx, uint32_t bits) override {
+        if (!functionalCompute) return;
+        const uint32_t row = idx/inputArraySize, col = idx%inputArraySize;
+        setPacketLane(rawMatrix.at(tu), row*rawPacketCapacity, col, bits);
+    }
+    void setVectorBits(uint32_t tu, uint32_t idx, uint32_t bits) override {
+        if (!functionalCompute) return;
+        setPacketLane(rawInput.at(tu), 0, idx, bits);
+    }
+    uint32_t outputBits(uint32_t tu, uint32_t row) const override { return rawOutput.at(tu).at(row); }
+    void setOutputBits(uint32_t tu, uint32_t row, uint32_t bits) override { rawOutput.at(tu).at(row) = bits; }
     //启动计算 根据 arrayID 获取阵列的延迟，并通过 selfLink 发送一个计算事件
     virtual void beginComputation(uint32_t arrayID) override {
         beginComputationBank(arrayID, 0);
@@ -678,6 +712,16 @@ public:
     void computeBank(uint32_t arrayID, uint32_t operandBank) {
         if (!validOperandContext(arrayID, operandBank)) return;
         const size_t context = operandIndex(arrayID, operandBank);
+        if (precisionEnabled) {
+            const bool accumulate = outputModes[arrayID] == OutputMode::Accumulate;
+            const uint32_t packets = (activeK + XTileMC::lanesPerBeat(mode)-1) / XTileMC::lanesPerBeat(mode);
+            for (uint32_t row=0;row<outputArraySize;++row)
+                rawOutput[arrayID][row] = rawCUs[arrayID][row].dotPackets(mode,
+                    rawMatrix[arrayID].data()+row*rawPacketCapacity,
+                    rawInput[arrayID].data(),packets,activeK,
+                    accumulate ? rawOutput[arrayID][row] : 0);
+            return;
+        }
         auto& inputVector = inputVectors[context];
         auto& outputVector = outputVectors[arrayID];
         auto& matrix = matrixData[context];
@@ -730,12 +774,16 @@ public:
     //这个函数是为了返回阵列的延迟时间，通常在模拟中用来表示阵列进行计算所需的时间。在这段代码中，延迟被硬编码为 1。
     virtual SimTime_t getArrayLatency(uint32_t arrayID) override {
         (void)arrayID;
+        if (precisionEnabled)
+            return peTiming(mode).completionCycles((activeK+XTileMC::lanesPerBeat(mode)-1)/XTileMC::lanesPerBeat(mode));
         return modeledComputeCycles;
     }
     virtual SimTime_t getArrayLatencyActive(
             uint32_t arrayID, uint32_t activeColumns) override {
         (void)arrayID;
         if (!validateActiveColumnRequest(activeColumns)) return 0;
+        if (precisionEnabled)
+            return peTiming(mode).completionCycles((activeColumns+XTileMC::lanesPerBeat(mode)-1)/XTileMC::lanesPerBeat(mode));
         if (activeColumns == inputArraySize) return modeledComputeCycles;
         return modeledActiveComputeCycles(activeColumns);
     }
@@ -821,6 +869,20 @@ protected:
     std::vector<OutputMode> outputModes;
     std::vector<uint32_t> activeInputColumns;
     std::vector<bool> projectionFp16Context;
+    bool precisionEnabled = false;
+    XTileMC::ComputeMode mode = XTileMC::ComputeMode::Fp32;
+    uint32_t activeK = 0;
+    uint32_t rawPacketCapacity = 0;
+    std::vector<std::vector<uint32_t>> rawMatrix, rawInput, rawOutput;
+    std::vector<std::vector<MultiPrecisionComputeUnit>> rawCUs;
+    void setPacketLane(std::vector<uint32_t>& words, uint32_t base,
+                       uint32_t element, uint32_t value) {
+        const uint32_t bits = XTileMC::inputBits(mode), lanes = XTileMC::lanesPerBeat(mode);
+        const uint32_t shift = (element % lanes)*bits;
+        const uint32_t mask = bits == 32 ? 0xffffffffu : (1u << bits)-1;
+        auto& word = words.at(base + element/lanes);
+        word = (word & ~(mask << shift)) | ((value & mask) << shift);
+    }
     bool functionalCompute = true;
     uint32_t attentionClusterQkArrays = 24;
     bool dumpEnabled = false;
@@ -912,6 +974,8 @@ protected:
 
     void clearOutputVector(uint32_t arrayID) {
         std::fill(outputVectors[arrayID].begin(), outputVectors[arrayID].end(), T());
+        if (precisionEnabled)
+            std::fill(rawOutput[arrayID].begin(),rawOutput[arrayID].end(),0u);
     }
 
     bool validOperandContext(uint32_t arrayID, uint32_t operandBank) const {

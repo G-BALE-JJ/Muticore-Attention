@@ -16,6 +16,7 @@
 #ifndef _COMPUTEARRAY_H
 #define _COMPUTEARRAY_H
 
+#include <sst/elements/golem/isa/precision.h>
 #include <sst/core/component.h>
 #include <sst/core/subcomponent.h>
 #include <sst/elements/golem/attention/attentionCluster.h>
@@ -79,6 +80,14 @@ private:
 
 class ComputeArray : public SST::SubComponent {
 public:
+    // Explicit packed functional-v1 contract; legacy clients remain unchanged.
+    virtual bool configurePrecision(const XTileMC::PrecisionSpecV02&, uint32_t) { return false; }
+    virtual void useLegacyPrecision() {}
+    virtual void setMatrixBits(uint32_t, uint32_t, uint32_t) {}
+    virtual void setVectorBits(uint32_t, uint32_t, uint32_t) {}
+    virtual uint32_t outputBits(uint32_t, uint32_t) const { return 0; }
+    virtual void setOutputBits(uint32_t, uint32_t, uint32_t) {}
+
     SST_ELI_REGISTER_SUBCOMPONENT_API(
         SST::Golem::ComputeArray,
         TimeConverter*,

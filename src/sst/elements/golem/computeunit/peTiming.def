@@ -1,0 +1,10 @@
+// RTL handoff 2026-10-16: mode, name, packet II, single-packet L, inter-dot gap.
+// T(P) = (P-1)*II + L; S(P) = P*II + gap. Units: PE clock cycles.
+TILEMC_PE_TIMING(Int4, int4, 1, 5, 0)
+TILEMC_PE_TIMING(Int8, int8, 1, 4, 0)
+TILEMC_PE_TIMING(Fp16, fp16, 1, 5, 1)
+TILEMC_PE_TIMING(Bf16, bf16, 1, 5, 1)
+TILEMC_PE_TIMING(Tf32, tf32, 1, 5, 0)
+TILEMC_PE_TIMING(Fp32, fp32, 1, 6, 0)
+TILEMC_PE_TIMING(Fp8E4M3, fp8e4m3, 1, 5, 0)
+TILEMC_PE_TIMING(Fp8E5M2, fp8e5m2, 1, 5, 0)
