@@ -24,7 +24,7 @@ def measure(name, fast_path):
     config = json.loads((ROOT/'test/GEMM/baseline.json').read_text())
     arguments = [x for x in config['arguments'] if x != '--verify-c']
     env = dict(os.environ, **config['environment'],
-               GOLEM_ARTIFACT_ROOT=str(ROOT/'test/GEMM/results'/name),
+               GOLEM_ARTIFACT_ROOT=str(ROOT/'test/GEMM/results'/name+'_timing'),
                GOLEM_TIMING_NUMERICAL_FAST_PATH=str(fast_path),
                OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1')
     command = ['taskset', '-c', '20', 'bash', str(ROOT/'test/golem/run_noc_dma_pipeline.sh'),
@@ -37,7 +37,7 @@ def measure(name, fast_path):
                        stderr=subprocess.STDOUT, check=True)
     if before != (digest(compute), digest(memory)):
         raise ValueError('Installed libraries changed during timing run')
-    stats = list((ROOT/'test/GEMM/results'/name).glob('**/execution_summary.csv'))
+    stats = list((ROOT/'test/GEMM/results'/name+'_timing').glob('**/execution_summary.csv'))
     if len(stats) != 1:
         raise ValueError('Expected one timing summary')
     def load(path):
