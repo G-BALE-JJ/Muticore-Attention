@@ -4120,6 +4120,8 @@ private:
     }
 
     bool loadActiveMicroTileToArrays() {
+        // Readiness and DMA still execute; only value decoding is omitted.
+        if (!array_->requiresNumericalData()) return true;
         if (precisionEnabled_) {
             const uint32_t base = activeMicroKStep_ * current_.array_input_size;
             if (base >= header_.block_k) return false;
@@ -4317,6 +4319,7 @@ private:
     bool captureArrayOutput(std::vector<uint8_t>& tile) const {
         const size_t outputBytes = accumulationElemBytes();
         tile.assign(static_cast<size_t>(header_.block_m) * current_.block_n * outputBytes, 0);
+        if (!array_->requiresNumericalData()) return true;
         for (uint32_t n = 0; n < current_.block_n; ++n) {
             const size_t dst_off = static_cast<size_t>(n) * header_.block_m * outputBytes;
             if (precisionEnabled_) {
@@ -4687,6 +4690,7 @@ private:
         if (tile.size() != partialTileBytes()) {
             return false;
         }
+        if (!array_->requiresNumericalData()) return true;
         const size_t outputBytes = accumulationElemBytes();
         for (uint32_t n = 0; n < current_.block_n; ++n) {
             const size_t src_off = static_cast<size_t>(n) * header_.block_m * outputBytes;

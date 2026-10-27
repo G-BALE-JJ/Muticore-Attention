@@ -68,10 +68,12 @@ public:
         }
 
         functionalCompute = params.find<int>("functionalCompute", 1) != 0;
+        timingNumericalFastPath = params.find<int>("timingNumericalFastPath", 1) != 0;
         attentionClusterQkArrays = params.find<uint32_t>(
             "attention_cluster_qk_arrays", 16);
         dumpEnabled = params.find<int>("mvm_dump_enable", 0) != 0;
         coreId = params.find<int>("core_id", -1);
+        std::printf("[ARRAY_NUMERICAL_DATA] core=%d functional=%d timing_fast_path=%d materialize=%d\n", coreId, int(functionalCompute), int(timingNumericalFastPath), int(requiresNumericalData()));
         std::printf("[ARRAY_OPERAND_STORAGE] core=%d arrays=%llu operand_banks=1 matrix_contexts=%zu input_contexts=%zu\n",
             coreId, (unsigned long long)numArrays, matrixData.size(), inputVectors.size());
         dumpRootDir = params.find<std::string>("mvm_dump_dir", "mvm_dumps");
@@ -92,12 +94,13 @@ public:
             }
         }
     }
+    bool requiresNumericalData() const override { return functionalCompute || !timingNumericalFastPath; }
     bool configurePrecision(const XTileMC::PrecisionSpecV02& spec, uint32_t k) override {
         if (!XTileMC::validPrecision(spec) || k == 0 || k > inputArraySize) return false;
         const auto selectedMode = static_cast<XTileMC::ComputeMode>(spec.compute_mode);
         const uint32_t lanes = XTileMC::lanesPerBeat(selectedMode);
         const uint32_t packetCapacity = (inputArraySize + lanes - 1) / lanes;
-        if (functionalCompute && (rawMatrix.empty() || packetCapacity != rawPacketCapacity)) {
+        if (requiresNumericalData() && (rawMatrix.empty() || packetCapacity != rawPacketCapacity)) {
             rawPacketCapacity = packetCapacity;
             rawMatrix.assign(numArrays, std::vector<uint32_t>(rawPacketCapacity*outputArraySize));
             rawInput.assign(numArrays, std::vector<uint32_t>(rawPacketCapacity));
@@ -114,12 +117,12 @@ public:
     }
     void useLegacyPrecision() override { precisionEnabled = false; }
     void setMatrixBits(uint32_t tu, uint32_t idx, uint32_t bits) override {
-        if (!functionalCompute) return;
+        if (!requiresNumericalData()) return;
         const uint32_t row = idx/inputArraySize, col = idx%inputArraySize;
         setPacketLane(rawMatrix.at(tu), row*rawPacketCapacity, col, bits);
     }
     void setVectorBits(uint32_t tu, uint32_t idx, uint32_t bits) override {
-        if (!functionalCompute) return;
+        if (!requiresNumericalData()) return;
         setPacketLane(rawInput.at(tu), 0, idx, bits);
     }
     uint32_t outputBits(uint32_t tu, uint32_t row) const override { return rawOutput.at(tu).at(row); }
@@ -186,11 +189,13 @@ public:
     //这个函数的作用是将 value 存入指定阵列 arrayID 中的矩阵 matrixData，位置是 index,
     //可以理解为arrayID是不同的二维矩阵的编号，index是二维矩阵里元素的索引
     virtual void setMatrixItem(int32_t arrayID, int32_t index, double value) override {
+        if (!requiresNumericalData()) return;
         projectionFp16Context[arrayID] = false;
         matrixData[arrayID][index] = static_cast<T>(value);
     }
     //同理
     virtual void setVectorItem(int32_t arrayID, int32_t index, double value) override {
+        if (!requiresNumericalData()) return;
         inputVectors[arrayID][index] = static_cast<T>(value);
     }
 
@@ -217,7 +222,7 @@ public:
             matrix.size() * elemBytes, tag,
             [this, context, matrix, tag, callback = std::move(callback)]() {
                 projectionFp16Context[context] = false;
-                std::transform(matrix.begin(), matrix.end(), matrixData[context].begin(),
+                if (requiresNumericalData()) std::transform(matrix.begin(), matrix.end(), matrixData[context].begin(),
                                [](double value) { return static_cast<T>(value); });
                 if (callback) {
                     callback(true, tag);
@@ -251,7 +256,7 @@ public:
                 for (uint32_t arrayID : arrayIDs) {
                     projectionFp16Context[operandIndex(arrayID, operandBank)] = false;
                     auto& target = matrixData[operandIndex(arrayID, operandBank)];
-                    std::transform(matrix.begin(), matrix.end(), target.begin(),
+                    if (requiresNumericalData()) std::transform(matrix.begin(), matrix.end(), target.begin(),
                                    [](double value) { return static_cast<T>(value); });
                 }
                 if (callback) callback(true, tag);
@@ -279,7 +284,7 @@ public:
                     projectionFp16Context[operandIndex(arrayID, operandBank)] =
                         trafficClass == AttentionClusterTrafficClass::ProjectionWeights;
                     auto& target = matrixData[operandIndex(arrayID, operandBank)];
-                    std::transform(matrix.begin(), matrix.end(), target.begin(),
+                    if (requiresNumericalData()) std::transform(matrix.begin(), matrix.end(), target.begin(),
                                    [](double value) { return static_cast<T>(value); });
                 }
                 if (callback) callback(true, tag);
@@ -373,7 +378,7 @@ public:
         return enqueueBufferTransfer(
             input.size() * elemBytes, tag,
             [this, context, input, tag, callback = std::move(callback)]() {
-                std::transform(input.begin(), input.end(), inputVectors[context].begin(),
+                if (requiresNumericalData()) std::transform(input.begin(), input.end(), inputVectors[context].begin(),
                                [](double value) { return static_cast<T>(value); });
                 if (callback) {
                     callback(true, tag);
@@ -419,7 +424,7 @@ public:
                 for (uint32_t arrayID : arrayIDs) {
                     auto& target = inputVectors[operandIndex(arrayID, operandBank)];
                     std::fill(target.begin(), target.end(), T());
-                    std::transform(input.begin(), input.end(), target.begin(),
+                    if (requiresNumericalData()) std::transform(input.begin(), input.end(), target.begin(),
                                    [](double value) { return static_cast<T>(value); });
                 }
                 if (callback) callback(true, tag);
@@ -482,7 +487,7 @@ public:
             [this, context, input, tag, callback = std::move(callback)]() {
                 std::fill(inputVectors[context].begin(),
                           inputVectors[context].end(), T());
-                std::transform(input.begin(), input.end(),
+                if (requiresNumericalData()) std::transform(input.begin(), input.end(),
                                inputVectors[context].begin(),
                                [](double value) { return static_cast<T>(value); });
                 if (callback) callback(true, tag);
@@ -506,9 +511,9 @@ public:
             bytes, tag,
             [this, arrayID, matrix, input, tag, callback = std::move(callback)]() {
                 projectionFp16Context[arrayID] = false;
-                std::transform(matrix.begin(), matrix.end(), matrixData[arrayID].begin(),
+                if (requiresNumericalData()) std::transform(matrix.begin(), matrix.end(), matrixData[arrayID].begin(),
                                [](double value) { return static_cast<T>(value); });
-                std::transform(input.begin(), input.end(), inputVectors[arrayID].begin(),
+                if (requiresNumericalData()) std::transform(input.begin(), input.end(), inputVectors[arrayID].begin(),
                                [](double value) { return static_cast<T>(value); });
                 if (callback) {
                     callback(true, tag);
@@ -885,6 +890,7 @@ protected:
         auto& word = words.at(base + element/lanes);
         word = (word & ~(mask << shift)) | ((value & mask) << shift);
     }
+    bool timingNumericalFastPath = true;
     bool functionalCompute = true;
     uint32_t attentionClusterQkArrays = 24;
     bool dumpEnabled = false;
@@ -899,6 +905,7 @@ protected:
             uint32_t arrayID, uint32_t operandBank,
             const std::vector<double>& matrix,
             uint32_t activeColumns) {
+        if (!requiresNumericalData()) return;
         projectionFp16Context[operandIndex(arrayID, operandBank)] = false;
         auto& target = matrixData[operandIndex(arrayID, operandBank)];
         std::fill(target.begin(), target.end(), T());

@@ -1065,6 +1065,7 @@ class CPU_Builder:
                 computeArray.addParam("mvm_dump_dir", mvm_dump_dir)
                 computeArray.addParam("mvm_dump_mode", mvm_dump_mode)
                 computeArray.addParam("functionalCompute", functional_compute)
+                computeArray.addParam("timingNumericalFastPath", int(os.getenv("GOLEM_TIMING_NUMERICAL_FAST_PATH", "1")))
                 if enable_all_stats:
                     computeArray.enableAllStatistics()
 

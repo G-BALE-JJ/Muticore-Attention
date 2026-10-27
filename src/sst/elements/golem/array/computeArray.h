@@ -80,6 +80,7 @@ private:
 
 class ComputeArray : public SST::SubComponent {
 public:
+    virtual bool requiresNumericalData() const { return true; }
     // Explicit packed functional-v1 contract; legacy clients remain unchanged.
     virtual bool configurePrecision(const XTileMC::PrecisionSpecV02&, uint32_t) { return false; }
     virtual void useLegacyPrecision() {}
@@ -95,6 +96,7 @@ public:
     )
 
     SST_ELI_DOCUMENT_PARAMS(
+        {"timingNumericalFastPath", "Skip host numerical materialization in timing mode; disable for paired validation", "1"},
         {"verbose", "Verbosity of outputs", "1"},
         {"core_id", "Owning core ID used in array-buffer statistics", "-1"},
         {"clock", "Array clock frequency", "1GHz"},
