@@ -12,6 +12,7 @@ PHASES = (
     ('03_cu_tu_te', 'CU/TU/TE separation'),
     ('04_precision_active_k', 'Explicit packed precision'),
     ('05_placement', 'Explicit workload/HBM placement'),
+    ('05_native_api_repair', 'Native TU API registration repair'),
     ('06_timing_fast_path', 'Timing numerical-data fast path'),
 )
 EXPECTED = dict(GEMM=3500, Attention=12852, GQA=37928, prefill=6084167.75)
@@ -81,7 +82,8 @@ def main():
     for key in ('library_sha256', 'memhierarchy_sha256', 'source_commit', 'cycles', 'metrics_sha256'):
         if same_build[key] != timing[key]:
             raise ValueError('Same-build evidence mismatch: '+key)
-    result = dict(status='PASS', latency_unit='cycles', formal_runs=24,
+    formal_runs = len(phases) * len(EXPECTED)
+    result = dict(status='PASS', latency_unit='cycles', features=6, gates=len(phases), formal_runs=formal_runs,
                   selected_guest_sha256=public['measured_guest_sha256'], phases=phases,
                   timing_control=control, timing_candidate=timing, timing_same_build_control=same_build,
                   claim='Default functional and cycle equivalence; no measured speedup claimed.')
@@ -89,7 +91,7 @@ def main():
     (args.output_dir/'summary.json').write_text(json.dumps(result, indent=2)+'\n')
     lines = [
         '# LLM mechanism migration', '',
-        'All six sequential gates PASS: 24 full functional runs. Each gate passed',
+        'Six features plus an isolated native API repair pass seven gates: 28 full functional runs. Each gate passed',
         'before the following feature was applied. Accelerator latency is in cycles.', '',
         '| Mechanism | GEMM | Attention | GQA | prefill |',
         '| --- | ---: | ---: | ---: | ---: |',
@@ -120,11 +122,11 @@ def main():
         'The manifest records per-phase source commits, library hashes and evidence hashes.',
         'Raw artifacts remain in the experimental worktree paths recorded there.',
         'Interrupted phase 01 and initial phase 04 runs are retained separately and are not counted.',
-        'The phase 01 report-only finalization fix and phase 04 active-K repair are explained in',
+        'The phase 01 report finalization, phase 04 active-K and native API repairs are explained in',
         '[RECOVERY.md](../../maintenance/mechanism_alignment/RECOVERY.md).', '',
     ]
     (args.output_dir/'REPORT.md').write_text('\n'.join(lines))
-    print('PASS: six gates, 24 formal functional runs, zero cycle deltas')
+    print(f'PASS: {len(phases)} gates, {formal_runs} formal functional runs, zero cycle deltas')
 
 
 if __name__ == '__main__':

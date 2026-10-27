@@ -52,3 +52,20 @@ launches, including different active K on two TUs. This makes unused nonzero
 lanes detect accidental over-computation. The interrupted `alignment_04_precision`
 is not acceptance evidence; the repaired feature uses a fresh
 `alignment_04_precision_active_k` full four-stage gate.
+
+## Native TU API registration repair
+
+A typed SST load probe found that `golem.TileUnitArray` could be loaded through
+`ComputeArray` but not through the promised `TileUnitAPI`. The C++ inheritance
+was correct, but `MVMComputeArray` still declared its ELI API parent as
+`ComputeArray`, so SST did not register a builder for `TileUnitAPI`.
+
+The repair registers MVM through `TileUnitAPI`; that API in turn derives from
+`ComputeArray`, retaining the compatibility registration. The native TE fixture
+now loads the TU through `TileUnitAPI`, while the packed-array fixture continues
+to load through `ComputeArray`, testing both entry points.
+
+Phase 05's in-flight functional validation is allowed to finish without source
+or library changes. After it passes, the registration repair receives its own
+`alignment_05_native_api_repair` four-stage gate before phase 06 is applied.
+This adds four accepted functional runs to the original six-feature plan.
