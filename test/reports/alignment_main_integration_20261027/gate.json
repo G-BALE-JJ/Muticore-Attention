@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "phase": "main_integration_20261027",
+  "source_commit": "26d9f8b630aa410c1bff0ce829ab6cc874b97ae8",
+  "library_sha256": "82d12d42b8091e5c12fa6982ce5fdb30bc74753d273021831f0077eea91042e2",
+  "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+  "stages": {
+    "GEMM": "PASS",
+    "Attention": "PASS",
+    "GQA": "PASS",
+    "prefill": "PASS"
+  },
+  "cycles": {
+    "GEMM": 3500.0,
+    "Attention": 12852,
+    "GQA": 37928,
+    "prefill": 6084167.75
+  },
+  "delta_from_public_cycles": {
+    "GEMM": 0.0,
+    "Attention": 0,
+    "GQA": 0,
+    "prefill": 0.0
+  }
+}
