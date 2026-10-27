@@ -54,7 +54,8 @@ def main():
     now = datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d_%H%M%S_%f')
     artifacts = (args.artifact_root or ROOT / 'test' / args.stage / 'results' / now).resolve()
     if args.stage == 'GEMM':
-        command = ['bash', str(golem / 'run_noc_dma_pipeline.sh'), *config['arguments']]
+        command = ['bash', str(golem / 'run_noc_dma_pipeline.sh'), *config['arguments'],
+                   '--tensor-dir', str(artifacts / 'inputs')]
         env.update(config.get('environment', {}), GOLEM_ARTIFACT_ROOT=str(artifacts))
         if args.dry_run:
             command.append('--dry-run')

@@ -113,3 +113,4 @@ baseline/attention_cluster_8qk_8pv/.all_gemm_reuse_runner_*/
 /test/maintenance/cleanup_2026-10-27/**/*.json
 /test/maintenance/cleanup_2026-10-27/**/*.jsonl
 /test/attention_cluster_8qk_8pv/.all_gemm_reuse_runner_*/
+/test/reports/*/

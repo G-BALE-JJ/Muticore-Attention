@@ -26,7 +26,10 @@
     "--mpi-ranks",
     "1",
     "--output-mode",
-    "hbm"
+    "hbm",
+    "--tensor-source",
+    "sample",
+    "--verify-c"
   ],
   "environment": {
     "GOLEM_ARCH_SCRIPT": "architecture/ncores_selfcom_dma_ctrl.py",

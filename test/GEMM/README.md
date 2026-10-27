@@ -1,5 +1,8 @@
 # GEMM 测试
 
+默认正式测试生成独立 sample A/B 输入，执行 `--verify-c`；输入保存在本次结果目录的
+`inputs/`，避免不同实验覆盖共享输入。四阶段汇总还会复核全部 C 元素。
+
 Generic GEMM / WCP; 64x64x64 tiles, 16 workers。公共架构为 `LLM/src/sst/elements/golem`。
 
 ```bash
