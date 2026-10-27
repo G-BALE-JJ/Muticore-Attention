@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 
@@ -47,6 +48,13 @@ def measure(name, fast_path):
     cycles = float(measured['gemm_system_latency_cycles'])
     if cycles != 3500 or terminal['c_writeback_complete_ratio'] != '4/4':
         raise ValueError('Timing or final-output completion changed')
+    numerical_modes = []
+    if 'timingNumericalFastPath' in (ROOT/'src/sst/elements/golem/array/mvmComputeArray.h').read_text():
+        pattern = r'\[ARRAY_NUMERICAL_DATA\] core=-?\d+ functional=(\d+) timing_fast_path=(\d+) materialize=(\d+)'
+        for logfile in (ROOT/'test/GEMM/results'/name/'logs').glob('*.log'):
+            numerical_modes.extend(tuple(map(int, row)) for row in re.findall(pattern, logfile.read_text(errors='replace')))
+        if not numerical_modes or any(row != (0, fast_path, int(not fast_path)) for row in numerical_modes):
+            raise ValueError('Backend did not observe the requested numerical materialization mode: '+str(numerical_modes))
     result = dict(status='PASS', cycles=cycles, latency_unit='cycles',
                   scope='first descriptor start through last WCP completion, inclusive +1',
                   mode='full-timing', timing_numerical_fast_path=fast_path, command=command,
@@ -54,6 +62,7 @@ def measure(name, fast_path):
                   metrics_sha256={file: digest(stats[0].with_name(file)) for file in METRICS},
                   final_c_writeback_complete_ratio=terminal['c_writeback_complete_ratio'],
                   source_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip())
+    result['observed_backend_mode'] = dict(functional=0, timing_fast_path=fast_path, materialize=int(not fast_path), observed_arrays=len(numerical_modes)) if numerical_modes else None
     return out, result
 
 
