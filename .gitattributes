@@ -1,0 +1,2 @@
+# Generated regression CSV reports use consistent line endings in Git.
+test/reports/**/*.csv text eol=lf
