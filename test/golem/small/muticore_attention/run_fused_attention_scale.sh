@@ -745,12 +745,6 @@ if (( O_OFFSET + Q_NODE_BYTES > MEM_NODE_SIZE )); then
   exit 2
 fi
 
-if [[ ! -x "$GUEST" ]]; then
-  echo "Missing FlashAttention guest: $GUEST" >&2
-  echo "Build it first with scripts/build_and_install_local.sh" >&2
-  exit 1
-fi
-
 GENERATE_CMD=(python3 "$SCRIPT_DIR/attention_case.py" generate
   --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
   --num-query-heads "$NUM_QUERY_HEADS" --num-kv-heads "$NUM_KV_HEADS" \
@@ -1177,6 +1171,11 @@ fi
 # Parameter-only checks must also work in a newly created feature workspace.
 if [[ ! -f "$LOCAL_ELEMENT_LIB/libgolem.so" ]]; then
   echo "Missing local element library: $LOCAL_ELEMENT_LIB/libgolem.so" >&2
+  echo "Build it first with scripts/build_and_install_local.sh" >&2
+  exit 1
+fi
+if [[ ! -x "$GUEST" ]]; then
+  echo "Missing FlashAttention guest: $GUEST" >&2
   echo "Build it first with scripts/build_and_install_local.sh" >&2
   exit 1
 fi
