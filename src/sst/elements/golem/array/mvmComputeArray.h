@@ -37,7 +37,7 @@ class MVMComputeArray : public TileUnitAPI {
 public:
     SST_ELI_REGISTER_SUBCOMPONENT_DERIVED_API(
             MVMComputeArray<T>, 
-            SST::Golem::ComputeArray,
+            SST::Golem::TileUnitAPI,
             TimeConverter*,
             Event::HandlerBase*
     )

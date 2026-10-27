@@ -1,5 +1,6 @@
 #include <sst/core/component.h>
 #include <sst/elements/golem/tileengine/tileEngine.h>
+#include <sst/elements/golem/tileunit/tileUnitAPI.h>
 #include <stdexcept>
 #include <cstdio>
 #include <map>
@@ -76,7 +77,7 @@ public:
  NativeEngineDriver(ComponentId_t id,Params&p):Component(id){
   instance=p.find<uint32_t>("instance",0);
   const int placementMode=p.find<int>("placed",0);placed=placementMode!=0;packedPlacement=placementMode==2;replicate=p.find<int>("replicate",0);functional=p.find<int>("functional",1);
-  a=loadUserSubComponent<ComputeArray>("array",ComponentInfo::SHARE_NONE,getTimeConverter("1ns"),new Event::Handler2<NativeEngineDriver,&NativeEngineDriver::arrayDone>(this));
+  a=loadUserSubComponent<TileUnitAPI>("array",ComponentInfo::SHARE_NONE,getTimeConverter("1ns"),new Event::Handler2<NativeEngineDriver,&NativeEngineDriver::arrayDone>(this));
   te=loadUserSubComponent<WorkerCommandProcessorAPI>("engine",ComponentInfo::SHARE_NONE);
   gm=loadUserSubComponent<GlobalMemoryAPI>("memory",ComponentInfo::SHARE_NONE);
   sched=loadUserSubComponent<RequestSchedulerAPI>("scheduler",ComponentInfo::SHARE_NONE);
@@ -152,6 +153,6 @@ public:
  }
  void arrayDone(Event* e){auto*ae=dynamic_cast<ArrayEvent*>(e);require(ae!=nullptr,"bad TE array event");te->handleArrayDone(ae->getArrayID(),getCurrentSimTime("1GHz"));delete e;}
 private:
- ComputeArray*a=nullptr;WorkerCommandProcessorAPI*te=nullptr;GlobalMemoryAPI*gm=nullptr;RequestSchedulerAPI*sched=nullptr;
+ TileUnitAPI*a=nullptr;WorkerCommandProcessorAPI*te=nullptr;GlobalMemoryAPI*gm=nullptr;RequestSchedulerAPI*sched=nullptr;
  bool placed=false,packedPlacement=false,replicate=false,functional=true,complete=false;uint32_t instance=0,code=0,outputs=0;
 };
