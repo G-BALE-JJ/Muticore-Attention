@@ -64,6 +64,7 @@ def main():
                         help='explicit rebuilt candidate pin; preserves the public workload and guest')
     args = parser.parse_args()
     library = digest(ROOT / 'install/lib/sst-elements-library/libgolem.so')
+    memory_library = digest(ROOT / 'install/lib/sst-elements-library/libmemHierarchy.so')
     rows, invocations, cases, evidence = [], {}, {}, {}
     for stage in ('GEMM', 'Attention', 'GQA', 'prefill'):
         name = args.gemm_run_name if stage == 'GEMM' and args.gemm_run_name else args.run_name
@@ -189,12 +190,16 @@ def main():
     provenance = load(cases['prefill'] / 'reuse_window_probe/decoder_stack_provenance.json')
     if library != selection['measured_library_sha256'] or provenance['guest_sha256'] != selected_guest:
         raise ValueError('Run differs from selected prefill guest/library')
+    if (provenance['sst_library_sha256'] != library or
+            provenance['sst_memhierarchy_sha256'] != memory_library):
+        raise ValueError('Installed compute/memory libraries differ from measured prefill provenance')
     token = prefill['lm_head']['next_token']
     if token['status'] != 'PASS' or not token['composed_reference_agrees']:
         raise ValueError('Next-token selection does not match the independent references')
     report = dict(status='PASS', generated_at=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(),
                   latency_unit='cycles', reference_clock_hz=10**9, ticks_per_cycle=factor,
-                  library_sha256=library, guest_sha256=selected_guest, stages=rows,
+                  library_sha256=library, memhierarchy_sha256=memory_library,
+                  guest_sha256=selected_guest, stages=rows,
                   prefill_disjoint_breakdown=breakdown,
                   prefill_decoder_cycles=d['end_to_end_cycles'],
                   prefill_operator_spans=prefill['lifecycle']['stage_spans'],

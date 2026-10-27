@@ -37,6 +37,7 @@ def main():
     result = dict(status='RUNNING', phase=args.phase,
                   source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
                   library_sha256=digest(ROOT/'install/lib/sst-elements-library/libgolem.so'),
+                  memhierarchy_sha256=digest(ROOT/'install/lib/sst-elements-library/libmemHierarchy.so'),
                   stages={})
     def save():
         result_path.write_text(json.dumps(result,indent=2)+'\n')
@@ -78,6 +79,8 @@ def main():
              '--run-name',name,'--output-dir',str(evidence),
              '--configuration',str(config)],'summary.log')
         summary=json.loads((evidence/'summary.json').read_text())
+        if summary['memhierarchy_sha256'] != result['memhierarchy_sha256']:
+            raise ValueError('Memory library changed while the gate was running')
         measured={row['stage']:row['end_to_end_cycles'] for row in summary['stages']}
         if summary['status']!='PASS' or measured!=EXPECTED:
             raise ValueError('Formal functional/cycle contract changed: '+str(measured))
