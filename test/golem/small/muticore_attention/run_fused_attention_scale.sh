@@ -763,7 +763,7 @@ if (( ATTENTION_PROJECTION )); then
 fi
 
 if [[ -n "${GOLEM_DECODER_STACK_MANIFEST:-}" ]]; then
-  GENERATE_CMD=(python3 "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/run_decoder_stack.py"
+  GENERATE_CMD=(python3 "$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/run_decoder_stack.py"
     --artifact-root "$ARTIFACT_ROOT" --validate-inputs)
 fi
 
@@ -1323,7 +1323,7 @@ PY
 }
 
 TEST_START_NS="$(date +%s%N)"
-ARTIFACT_STORAGE="$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/artifact_storage.py"
+ARTIFACT_STORAGE="$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/artifact_storage.py"
 python3 "$ARTIFACT_STORAGE" preflight "$ARTIFACT_ROOT"
 python3 "$ARTIFACT_STORAGE" preflight "$HBM_DIR"
 mkdir -p "$ARTIFACT_ROOT" "$DRIVER_LOG_DIR"
@@ -1363,14 +1363,14 @@ run_attention_stage generate "${GENERATE_CMD[@]}"
 run_attention_stage sst "${RUN_CMD[@]}"
 SST_WALL_SECONDS="$ATTENTION_STAGE_SECONDS"
 if [[ -n "${GOLEM_MPI_RANK_LOG_ROOT:-}" ]]; then
-  python3 "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py" \
+  python3 "$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py" \
     --root "$GOLEM_MPI_RANK_LOG_ROOT" --output "$SST_RUNTIME_LOG" \
     --ranks "${GOLEM_MPI_RANKS:-4}"
 fi
 if [[ -n "${GOLEM_DECODER_STACK_MANIFEST:-}" ]]; then
   run_attention_stage backend_verify verify_attention_memory_backend "$SST_RUNTIME_LOG" ramulator2
   run_attention_stage decoder_stack_verify python3 \
-    "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/run_decoder_stack.py" \
+    "$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/run_decoder_stack.py" \
     --artifact-root "$ARTIFACT_ROOT" --verify-only
   attention_ui_key_value "Decoder stack result" "$ARTIFACT_ROOT/decoder_stack_result.json"
   exit 0
@@ -1381,7 +1381,7 @@ if (( REUSE_WINDOW_QK_BRIDGE )); then
     REPORT_CAUSAL_ARGS=()
     if (( ATTENTION_CAUSAL )); then REPORT_CAUSAL_ARGS+=(--causal); fi
     run_attention_stage worker_cluster_report \
-      python3 "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/report_sst.py" \
+      python3 "$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/report_sst.py" \
         --log "$SST_RUNTIME_LOG" --num-kv-heads "$NUM_KV_HEADS" \
         --num-query-heads "$NUM_QUERY_HEADS" \
         --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
@@ -1416,7 +1416,7 @@ print("Legacy job-to-worker completion: {:,} cycles (historical boundary)".forma
 PY
       if (( HEAD_DIM == 64 && ATTENTION_CAUSAL )) && [[ "${GOLEM_CRITICAL_PATH_TRACE:-0}" != "0" ]]; then
         run_attention_stage dma_e2e_report python3 \
-          "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/report_dma_e2e.py" \
+          "$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/report_dma_e2e.py" \
           --case "$ARTIFACT_ROOT"
       else
         echo "Canonical DMA E2E unavailable: requires causal D64 workload and resource timing evidence" >&2
@@ -1427,7 +1427,7 @@ PY
     exit 0
   fi
   run_attention_stage qk_bridge_report \
-    python3 "$WORKTREE_ROOT/archive/reuse_window_flash_attention/report_sst_qk_bridge.py" \
+    python3 "$WORKTREE_ROOT/test/archive/reuse_window_flash_attention/report_sst_qk_bridge.py" \
       --log "$SST_RUNTIME_LOG" --num-kv-heads "$NUM_KV_HEADS" \
       --output "$QK_BRIDGE_RESULT"
   run_attention_stage numerical_verify "${VERIFY_CMD[@]}"

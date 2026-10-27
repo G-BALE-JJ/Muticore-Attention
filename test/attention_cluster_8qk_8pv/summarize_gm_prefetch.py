@@ -118,7 +118,7 @@ def main():
     comparison={k:dict(previous_cycles=scopes(old)[k],control_cycles=scopes(results['control'])[k],candidate_cycles=v,
         reduction_vs_control_percent=100*(1-v/scopes(results['control'])[k]),reduction_vs_previous_percent=100*(1-v/scopes(old)[k]))
         for k,v in scopes(results['candidate']).items()}
-    state=read(root/'before_state.json');original=ROOT / 'Muticore-Attention'
+    state=read(root/'before_state.json');original=ROOT / 'test/history/legacy-primary'
     if subprocess.check_output(['git','diff','HEAD'],cwd=original,text=True)!=state['original_diff'] or digest(original/'install/lib/sst-elements-library/libgolem.so')!=state['original_library']:
         raise ValueError('original baseline changed')
     for path,sha in state['files'].items():
@@ -148,7 +148,7 @@ def main():
         '所有正式数值、QKV 实际面板、16 worker GEMM 覆盖、DMA 字节、生命周期和 ACK 排空检查 PASS；末层 Y、final Norm、完整 logits 的 FP16 位差异均为 0。',
         '各窗口等待可以与别的工作重叠，不能直接相加当作可消除时间。关键路径分区见 critical_workers_*.json。','',
         '## 复现','', '```bash',
-        'OPENBLAS_NUM_THREADS=1 python3 baseline/attention_cluster_8qk_8pv/run_all_gemm_reuse_window_baseline.py \\',
+        'OPENBLAS_NUM_THREADS=1 python3 test/attention_cluster_8qk_8pv/run_all_gemm_reuse_window_baseline.py \\',
         '  --artifact-root results/gm_prefetch_reproduction --shape formal --run \\',
         '  --window-a-prefetch 1 --lm-n-parallel 1 --cpu-set 0-7','```','',
         '同构建对照使用 --window-a-prefetch 0 --lm-n-parallel 4。原始架构和测试所在仓库保持不变，本轮修改仅在独立新基线中。',

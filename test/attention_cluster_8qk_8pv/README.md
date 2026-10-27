@@ -211,7 +211,7 @@ packed panel against its source file. A case is PASS only when all checks pass.
 
 ```bash
 source scripts/env_local_install.sh
-baseline/attention_cluster_8qk_8pv/run_sst.sh \
+test/attention_cluster_8qk_8pv/run_sst.sh \
   --query-length 512 --kv-length 512 --head-dim 64 \
   --num-query-heads 4 --num-kv-heads 2 --dtype fp16 \
   --artifact-root /tmp/attention_fp16_e2e
@@ -279,7 +279,7 @@ accumulation; the existing attention workers still use FP32 for QK/softmax/PV
 internal accumulation while storing tensor payloads in FP16.
 
 ```bash
-baseline/attention_cluster_8qk_8pv/run_sst.sh --projection \
+test/attention_cluster_8qk_8pv/run_sst.sh --projection \
   --query-length 1024 --kv-length 1024 --num-query-heads 1 \
   --num-kv-heads 1 --head-dim 128 \
   --artifact-root /tmp/attention_projection_e2e
@@ -478,13 +478,13 @@ worker receives 256 rows (one query head for this GQA shape). A completed
 Run the functional schedule model:
 
 ```bash
-baseline/attention_cluster_8qk_8pv/run.sh --no-numerical
+test/attention_cluster_8qk_8pv/run.sh --no-numerical
 ```
 
 Run SST for `Hq=4,Hkv=2,Sq=Skv=1024,Dh=128`:
 
 ```bash
-baseline/attention_cluster_8qk_8pv/run_sst.sh \
+test/attention_cluster_8qk_8pv/run_sst.sh \
   --artifact-root /tmp/attention_cluster_8qk_8pv \
   --query-length 1024 --kv-length 1024 \
   --num-query-heads 4 --num-kv-heads 2 --head-dim 128
@@ -627,7 +627,7 @@ enabled in this baseline.
 Reproduce the comparison after running both variants:
 
 ```bash
-python3 baseline/attention_cluster_8qk_8pv/compare.py \
+python3 test/attention_cluster_8qk_8pv/compare.py \
   --baseline-4qk-12pv /tmp/attention_cluster_4qk_12pv/sst_qk_bridge_result.json \
   --experiment-8qk-8pv /tmp/attention_cluster_8qk_8pv/sst_qk_bridge_result.json
 ```

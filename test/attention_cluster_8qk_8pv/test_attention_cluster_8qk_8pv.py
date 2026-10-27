@@ -16,7 +16,7 @@ GOLDEN_RESULT = Path(__file__).parent / "artifacts/golden/sst_result.json"
 GOLDEN_MANIFEST = Path(__file__).parent / "artifacts/golden/manifest.json"
 COMMON_RUNNER_SOURCE = (
     Path(__file__).parents[2]
-    / "src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh"
+    / "test/golem/small/muticore_attention/run_fused_attention_scale.sh"
 )
 SPEC = importlib.util.spec_from_file_location("attention_cluster_8qk_model", MODEL)
 MODULE = importlib.util.module_from_spec(SPEC)

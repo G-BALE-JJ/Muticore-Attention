@@ -2,9 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT="$SCRIPT_DIR"
+while [[ ! -f "$ROOT/configure.ac" && "$ROOT" != / ]]; do ROOT="$(dirname "$ROOT")"; done
+[[ -f "$ROOT/configure.ac" ]] || { echo "Cannot find project root" >&2; exit 1; }
 export GOLEM_ATTENTION_SEQUENTIAL_64_ENABLE=0
-ATTENTION_RUNNER="$ROOT/src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh"
+ATTENTION_RUNNER="$ROOT/test/golem/small/muticore_attention/run_fused_attention_scale.sh"
 ARTIFACT_ROOT="${GOLEM_ARTIFACT_ROOT:-$SCRIPT_DIR/artifacts/sst_qk_bridge}"
 
 export GOLEM_ATTENTION_REUSE_WINDOW_QK_BRIDGE=1

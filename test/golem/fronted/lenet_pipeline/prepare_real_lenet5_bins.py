@@ -9,7 +9,7 @@ import onnx
 from onnx import numpy_helper
 
 REPO_ROOT = next(p for p in Path(__file__).resolve().parents if (p / 'configure.ac').is_file())
-DEFAULT_TEST_ROOT = REPO_ROOT / "src/sst/elements/golem/tests"
+DEFAULT_TEST_ROOT = REPO_ROOT / "test/golem"
 
 
 def read_f32_file(path: str) -> List[float]:

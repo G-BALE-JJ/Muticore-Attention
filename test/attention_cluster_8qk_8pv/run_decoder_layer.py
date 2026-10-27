@@ -16,7 +16,7 @@ OFFSETS = {'wo_weight':0x02800000, 'gate_weight':0x03000000,
            'gamma':0x02700000, 'down':0x02a00000, 'y':0x02b00000,
            'gate':0x03800000, 'up':0x03c00000, 'act':0x04a00000, 'gated':0x06200000}
 STAGES = {'wo':1, 'residual':2, 'ffn':3, 'layer':4}
-GUEST_DIR = ROOT/'src/sst/elements/golem/tests/small/muticore_attention'
+GUEST_DIR = ROOT/'test/golem/small/muticore_attention'
 
 
 
@@ -274,11 +274,11 @@ def main():
             'src/sst/elements/golem/rocc/roccAnalog.h',
             'src/sst/elements/golem/sfu/vector_math.h',
             'src/sst/elements/golem/sfu/sfu.cc',
-            'src/sst/elements/golem/tests/small/muticore_attention/golem_decoder_runtime.h',
-            'src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp',
-            'src/sst/elements/golem/tests/tools/gen_hbm_init.py',
-            'src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml',
-            'baseline/attention_cluster_8qk_8pv/run_decoder_layer.py')]
+            'test/golem/small/muticore_attention/golem_decoder_runtime.h',
+            'test/golem/small/muticore_attention/golem_attention_runtime.cpp',
+            'test/golem/tools/gen_hbm_init.py',
+            'test/golem/architecture/ramulator/hbm2e_2500.yaml',
+            'test/attention_cluster_8qk_8pv/run_decoder_layer.py')]
         source_hashes={str(path.relative_to(ROOT)):digest(path) for path in source_paths}
         for source in source_paths:
             target=case/'source_snapshot'/source.relative_to(ROOT)

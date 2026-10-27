@@ -80,6 +80,7 @@ rsync -a --sparse \
 	--exclude='/docs/' \
 	--exclude='/test/history/' \
 	--exclude='/test/maintenance/' \
+	--exclude='/test/reports/' \
 	--exclude='/test/*/results/' \
 	--exclude='.all_gemm_reuse_runner_*/' \
 	--exclude='build/' \
@@ -103,12 +104,21 @@ rsync -a --sparse \
 	--exclude='.libs/' \
 	"$WORKTREE_ROOT/" "$BUILD_ROOT/"
 
+# Remove only known obsolete aliases from previously prepared build trees.
+# Dependencies are supplied explicitly to configure, outside the copied tree.
+if [[ -L "$BUILD_ROOT/baseline" && ! -e "$WORKTREE_ROOT/baseline" && "$(readlink "$BUILD_ROOT/baseline")" == test ]]; then
+	rm "$BUILD_ROOT/baseline"
+fi
+if [[ -L "$BUILD_ROOT/deps" && "$(readlink "$BUILD_ROOT/deps")" == Muticore-Attention/deps ]]; then
+	rm "$BUILD_ROOT/deps"
+fi
+
 # The golem small test rebuilds `test_noc_dma` in place and needs this
 # handwritten Makefile. Keep the source copy clean, then restore just this file.
-if [[ -f "$WORKTREE_ROOT/src/sst/elements/golem/tests/small/mvm_noc_int_array/Makefile" ]]; then
+if [[ -f "$WORKTREE_ROOT/test/golem/small/mvm_noc_int_array/Makefile" ]]; then
 	install -D -m 644 \
-		"$WORKTREE_ROOT/src/sst/elements/golem/tests/small/mvm_noc_int_array/Makefile" \
-		"$BUILD_ROOT/src/sst/elements/golem/tests/small/mvm_noc_int_array/Makefile"
+		"$WORKTREE_ROOT/test/golem/small/mvm_noc_int_array/Makefile" \
+		"$BUILD_ROOT/test/golem/small/mvm_noc_int_array/Makefile"
 fi
 
 cat <<EOF

@@ -23,11 +23,11 @@ MATRIX = {''.join(name for name, on in zip('IWG', (i, w, g - 1)) if on) or 'B': 
 SOURCE_FILES = list(dict.fromkeys(SOURCES + [ROOT / path for path in (
     'src/sst/elements/golem/attention/diagnosticOracle.h',
     'src/sst/elements/golem/attention/projectionJobAbi.h',
-    'baseline/attention_cluster_8qk_8pv/run_batch_b.py',
-    'baseline/attention_cluster_8qk_8pv/run_projection_overlap.py',
-    'baseline/attention_cluster_8qk_8pv/analyze_resource_timeline.py',
-    'baseline/attention_cluster_8qk_8pv/analyze_critical_path.py',
-    'src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py',
+    'test/attention_cluster_8qk_8pv/run_batch_b.py',
+    'test/attention_cluster_8qk_8pv/run_projection_overlap.py',
+    'test/attention_cluster_8qk_8pv/analyze_resource_timeline.py',
+    'test/attention_cluster_8qk_8pv/analyze_critical_path.py',
+    'test/golem/architecture/ncores_selfcom_dma_ctrl.py',
 )]))
 
 

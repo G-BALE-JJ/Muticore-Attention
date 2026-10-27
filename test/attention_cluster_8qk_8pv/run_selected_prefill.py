@@ -49,7 +49,7 @@ def main():
         if config.get('measured_library_sha256'):
             verify_library_digest(ROOT/'install/lib/sst-elements-library/libgolem.so',config['measured_library_sha256'])
         if config.get('measured_guest_sha256'):
-            guest = ROOT/'src/sst/elements/golem/tests/small/muticore_attention'
+            guest = ROOT/'test/golem/small/muticore_attention'
             target = config.get('measured_guest_target','decoder-embedding')
             subprocess.run(['make','-C',str(guest),target],cwd=ROOT,check=True)
             verify_guest_digest(guest/'riscv64'/target/'fused_attention',config['measured_guest_sha256'])

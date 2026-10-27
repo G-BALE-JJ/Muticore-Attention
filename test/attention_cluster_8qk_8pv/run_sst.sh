@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-RUNNER="$ROOT/src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh"
+RUNNER="$ROOT/test/golem/small/muticore_attention/run_fused_attention_scale.sh"
 
 # Projection and Attention share the sixteen workers' arrays; managers control
 # dispatch and own HBM data partitions without compute arrays.

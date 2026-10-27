@@ -19,7 +19,7 @@ COLORS = {
 }
 
 REPO_ROOT = next(p for p in Path(__file__).resolve().parents if (p / 'configure.ac').is_file())
-DEFAULT_STATS_ROOT = REPO_ROOT / "src/sst/elements/golem/tests/artifacts/stats"
+DEFAULT_STATS_ROOT = REPO_ROOT / "test/golem/artifacts/stats"
 TESTS_DIR = Path(__file__).resolve().parents[1]
 
 

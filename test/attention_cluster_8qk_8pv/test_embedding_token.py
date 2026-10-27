@@ -6,7 +6,7 @@ import numpy as np
 from run_decoder_stack import ROOT,memory_layout,prepare,validate_inputs
 from select_next_token import select_next_token
 
-sys.path.insert(0,str(ROOT/'src/sst/elements/golem/tests/architecture'))
+sys.path.insert(0,str(ROOT/'test/golem/architecture'))
 from partition_planner import attention_query_block_placements
 
 

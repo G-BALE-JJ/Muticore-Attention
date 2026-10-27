@@ -109,7 +109,7 @@ def audit(root):
     for name, sha in fixed.items():
         if digest(ROOT/name) != sha:
             raise ValueError('hardware/architecture source changed: '+name)
-    original = ROOT / 'Muticore-Attention'
+    original = ROOT / 'test/history/legacy-primary'
     if (subprocess.check_output(['git', 'diff', 'HEAD'], cwd=original, text=True) != state['original_diff'] or
         digest(original/'install/lib/sst-elements-library/libgolem.so') != state['original_library']):
         raise ValueError('original baseline changed')
@@ -181,7 +181,7 @@ def report(root, d):
               '另有延迟 ACK、拒绝提交、尾块、初始 C、多 K 窗口回退、错误 epoch、输入地址变化等负例和回归测试，日志保留在 checks/。',
               '正式比较使用同一冻结构建。micro_bridge 与最早 micro_control 使用不同构建，仅作筛选线索；是否采用 bridge 只依据同构建正式比较。一次 formal_all 的宿主机 CPU 放置失败在模拟启动前退出，保留为 formal_all_host_placement_failed，不纳入结果。', '',
               '## 复现', '', '```bash',
-              'OPENBLAS_NUM_THREADS=1 python3 baseline/attention_cluster_8qk_8pv/run_all_gemm_reuse_window_baseline.py \\',
+              'OPENBLAS_NUM_THREADS=1 python3 test/attention_cluster_8qk_8pv/run_all_gemm_reuse_window_baseline.py \\',
               '  --artifact-root results/software_dataflow_next_reproduction --shape formal --run \\',
               '  --window-a-prefetch 1 --lm-n-parallel 1 --gm-stage-chain \\',
               '  --layer-residency --lm-input-residency'+(' --b-window-bridge 1' if selected=='formal_all' else '')+' --cpu-set 0-7',

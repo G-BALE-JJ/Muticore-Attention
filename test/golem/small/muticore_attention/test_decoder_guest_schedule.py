@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 ROOT = next(p for p in Path(__file__).resolve().parents if (p / 'configure.ac').is_file())
-GUEST = ROOT / 'src/sst/elements/golem/tests/small/muticore_attention'
+GUEST = ROOT / 'test/golem/small/muticore_attention'
 
 
 class DecoderGuestScheduleTest(unittest.TestCase):

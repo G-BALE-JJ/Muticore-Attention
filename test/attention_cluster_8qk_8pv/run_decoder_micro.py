@@ -18,7 +18,7 @@ from merge_mpi_rank_logs import merge
 from artifact_storage import preflight, finalize
 from verify_decoder_dataflow_resources import verify as verify_resources, residual_audit, FIELDS
 
-TESTS=ROOT/'src/sst/elements/golem/tests'
+TESTS=ROOT/'test/golem'
 VARIANTS={'baseline':(0,16),'fused16':(1,16),'fused8':(1,8),'down16':(2,16),'down8':(2,8)}
 VARIANTS.update({f'down16q{slots}':(2,16) for slots in (2,4,8)})
 VARIANTS['residual16q4']=(3,16)

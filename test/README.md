@@ -27,6 +27,8 @@ DMA 区间；生成 `summary.json`、`summary.csv` 与 `REPORT.md`。
 
 共享 guest、拓扑及验证位于 `golem/`；共享 prefill 驱动及技术记录位于
 `attention_cluster_8qk_8pv/`。旧方案在 `archive/`，历史原始结果在 `history/`。
+这些均为实际测试目录；已不再使用顶层 `baseline/`。旧主工作区已归档为
+`history/legacy-primary/`，历史元数据由 `project_paths.py` 按路径段映射读取，原始证据保持原样。
 历史张量清理、日志解压方式及审计清单见
 [清理记录](maintenance/cleanup_2026-10-27/README.md)。
 

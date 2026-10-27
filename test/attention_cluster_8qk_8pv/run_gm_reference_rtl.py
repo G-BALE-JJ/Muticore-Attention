@@ -16,7 +16,7 @@ def main():
     p.add_argument('--verilator',default='verilator')
     p.add_argument('--artifact-root',type=Path,required=True)
     a=p.parse_args();out=a.artifact_root.resolve();out.mkdir(parents=True,exist_ok=True)
-    rtl=a.reference_root/'src/sst/elements/golem/tests/architecture/HDL/rtl'
+    rtl=a.reference_root/'test/golem/architecture/HDL/rtl'
     sources=[rtl/(s+'.sv') for s in ('golem_node_params_pkg','golem_sram_macros','golem_gm_bank_cluster')]
     tests=ROOT/'src/sst/elements/golem/globalmemory'
     command=[a.verilator,'--cc','--exe','--unroll-count','1024','-Wno-fatal','-DGOLEM_SRAM_SIM',

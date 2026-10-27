@@ -91,7 +91,7 @@ also checks online softmax against a full-attention reference.
 | Hq4/Hkv2/Sq1024/Skv1024/Dh128 | 32,768 | **47,193** | frozen FP32 cluster report PASS |
 
 The frozen cycle count predates output DMA and numerical verification. Current
-FP16 results are summarized in `baseline/attention_cluster_8qk_8pv/README.md`.
+FP16 results are summarized in `test/attention_cluster_8qk_8pv/README.md`.
 
 Historical sequential-64 measurements are in
 `../../../../../../../archive/attention_sequential_64/` and the existing

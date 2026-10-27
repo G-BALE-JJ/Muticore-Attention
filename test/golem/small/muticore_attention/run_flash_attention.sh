@@ -9,4 +9,4 @@ while [[ ! -f "$WORKTREE_ROOT/configure.ac" && "$WORKTREE_ROOT" != / ]]; do
   WORKTREE_ROOT="$(dirname "$WORKTREE_ROOT")"
 done
 [[ -f "$WORKTREE_ROOT/configure.ac" ]] || { echo "Cannot find project root" >&2; exit 1; }
-exec "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/run_sst.sh" "$@"
+exec "$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/run_sst.sh" "$@"

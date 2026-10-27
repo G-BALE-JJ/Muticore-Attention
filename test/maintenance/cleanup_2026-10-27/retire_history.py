@@ -12,7 +12,7 @@ from cleanup_invalid import LLM, HERE, active_simulators, protected_state, signa
 
 def protected_roots():
     latest = (LLM / 'Muticore-Attention-all-gemm/results').resolve()
-    old = (LLM / 'Muticore-Attention/results').resolve()
+    old = (LLM / 'test/history/legacy-primary/results').resolve()
     protected = [old / 'prefill_generalization_20261016/formal_l2_s1024']
     for selection in (LLM / 'test/attention_cluster_8qk_8pv').glob('SELECTED_PREFILL_*.json'):
         data = json.loads(selection.read_text())

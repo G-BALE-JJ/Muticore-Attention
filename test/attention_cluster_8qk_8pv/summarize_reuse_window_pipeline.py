@@ -8,7 +8,7 @@ import subprocess
 ROOT=Path(__file__).resolve().parents[2]
 RESULTS=ROOT/'results'
 CASES={
-    'original':ROOT / 'Muticore-Attention/results/prefill_generalization_20261016/formal_l2_s1024/decoder_stack_result.json',
+    'original':ROOT / 'test/history/legacy-primary/results/prefill_generalization_20261016/formal_l2_s1024/decoder_stack_result.json',
     'previous_window':RESULTS/'all_gemm_reuse_window_pipeline_formal_l2_s1024_mpi8_20261020/reuse_window_probe/decoder_stack_result.json',
     'window_groups2':RESULTS/'all_gemm_reuse_window_v4_formal_l2_s1024_mpi8_20261020/reuse_window_probe/decoder_stack_result.json',
     'window_groups1':RESULTS/'all_gemm_reuse_window_v4_formal_groups1_l2_s1024_mpi8_20261020/reuse_window_probe/decoder_stack_result.json',
@@ -68,7 +68,7 @@ def main():
             flows=r['array_groups']['flows']
             micro[name]['weight_program_cycles']=sum(flow['program_cycles'] for flow in flows)
             micro[name]['compute_array_cycles']=sum(flow['compute_array_cycles'] for flow in flows)
-    baseline_root=ROOT / 'Muticore-Attention'
+    baseline_root=ROOT / 'test/history/legacy-primary'
     baseline_library=digest(baseline_root/'install/lib/sst-elements-library/libgolem.so')
     clean=not subprocess.check_output(['git','-C',str(baseline_root),'diff','--name-only']).strip()
     preserved=clean and baseline_library=='a56013188b986918e8f5ea6aa64c4fbe0c8c35e48febbde791b004a4aa9febae'
@@ -107,7 +107,7 @@ def main():
             '四 N 输入复用位于 GM 层，A 写入阵列仍逐 K/N 计时。没有新增阵列、operand context、GM 容量或内存带宽。',
             f'所有配置最终 token 均为 {chosen["next_token"]}。生产调度器行为测试、decoder 回归通过，27 项 host 回归记录见 host_regression.log。',
             '推荐复现配置：--window-k-tiles 32 --window-prefetch-slots 4 --window-array-groups 1。新基线 runner 已采用这些默认值。',
-            '中间候选的失败与 scratch 冲突修复见 baseline/attention_cluster_8qk_8pv/REUSE_WINDOW_PIPELINE_2026-10-20.md。','']
+            '中间候选的失败与 scratch 冲突修复见 test/attention_cluster_8qk_8pv/REUSE_WINDOW_PIPELINE_2026-10-20.md。','']
     (output/'REPORT.md').write_text('\n'.join(lines))
     print(json.dumps(dict(status=result['status'],selected=best,cycles=chosen['end_to_end_cycles'],
                          change_from_original_percent=chosen['change_from_original_percent'],

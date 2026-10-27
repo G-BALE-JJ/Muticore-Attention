@@ -47,7 +47,7 @@
   "measured_guest_sha256": "7ee4f229860f8c83dea431a72f10cbcf58e02d6de4bb76c454807e95f067f57c",
   "measured_guest_target": "decoder-embedding",
   "equivalence_result": "results/ffn_critical_path_20261025/default_equivalence.json",
-  "previous_selection": "baseline/attention_cluster_8qk_8pv/SELECTED_PREFILL_2026-10-24.json",
+  "previous_selection": "test/attention_cluster_8qk_8pv/SELECTED_PREFILL_2026-10-24.json",
   "candidate_adopted": false,
   "experimental_ffn_demand_order": false,
   "selection_note": "Same accepted software schedule and exact cycles; new library adds disabled FFN request-order experiment. Full default-path correctness, resource and cycle-equivalence checks PASS. Candidate micro has zero gain and is not enabled."

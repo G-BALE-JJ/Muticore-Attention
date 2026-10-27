@@ -54,9 +54,9 @@ def main():
     for path, sha in read(root/'baseline_sha256.json').items():
         if digest(root/'baseline_snapshot'/Path(path).name) != sha:
             raise ValueError(f'previous snapshot changed: {path}')
-    if subprocess.check_output(['git', 'diff', '--stat'], cwd=ROOT / 'Muticore-Attention', text=True):
+    if subprocess.check_output(['git', 'diff', '--stat'], cwd=ROOT / 'test/history/legacy-primary', text=True):
         raise ValueError('original tracked baseline changed')
-    original_lib = ROOT / 'Muticore-Attention/install/lib/sst-elements-library/libgolem.so'
+    original_lib = ROOT / 'test/history/legacy-primary/install/lib/sst-elements-library/libgolem.so'
     if digest(original_lib) != 'a56013188b986918e8f5ea6aa64c4fbe0c8c35e48febbde791b004a4aa9febae':
         raise ValueError('original baseline installed library changed')
     before, after = (results[name] for name in ('formal_control', args.selected))

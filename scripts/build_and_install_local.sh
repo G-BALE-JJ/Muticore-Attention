@@ -78,12 +78,12 @@ SST_DRAMSIM3_PREFIX="${SST_DRAMSIM3_PREFIX:-/local/packages/dramsim3}"
 SST_RAMULATOR2_PREFIX="${SST_RAMULATOR2_PREFIX:-$WORKTREE_ROOT/deps/ramulator2-2.1}"
 INSTALL_HOME="$BUILD_ROOT/.sst-home"
 INSTALL_HOME_CONFIG="$INSTALL_HOME/.sst/sstsimulator.conf"
-ATTENTION_DIR="$WORKTREE_ROOT/src/sst/elements/golem/tests/small/muticore_attention"
+ATTENTION_DIR="$WORKTREE_ROOT/test/golem/small/muticore_attention"
 
 restore_handwritten_test_makefiles() {
 	local rel
 	for rel in \
-		"src/sst/elements/golem/tests/small/mvm_noc_int_array/Makefile"; do
+		"test/golem/small/mvm_noc_int_array/Makefile"; do
 		if [[ -f "$WORKTREE_ROOT/$rel" ]]; then
 			install -D -m 644 "$WORKTREE_ROOT/$rel" "$BUILD_ROOT/$rel"
 		fi
@@ -162,7 +162,7 @@ cat <<EOF
 Before running experiments from this worktree:
   cd "$WORKTREE_ROOT"
   source scripts/env_local_install.sh
-  cd "$BUILD_ROOT/src/sst/elements/golem/tests"
+  cd "$BUILD_ROOT/test/golem"
 
 Installed element libraries:
   $INSTALL_PREFIX/lib/sst-elements-library

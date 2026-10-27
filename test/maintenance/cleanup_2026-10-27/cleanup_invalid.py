@@ -13,7 +13,7 @@ import subprocess
 
 LLM = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
-REPOS = [LLM / 'Muticore-Attention', LLM / 'Muticore-Attention-all-gemm']
+REPOS = [LLM / 'test/history/legacy-primary', LLM / 'Muticore-Attention-all-gemm']
 REPORT = 'all_gemm_reuse_window_report.json'
 
 

@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "baseline/attention_cluster_8qk_8pv/run_sst.sh"
+RUNNER = ROOT / "test/attention_cluster_8qk_8pv/run_sst.sh"
 
 
 def terminate_case(process: subprocess.Popen) -> None:

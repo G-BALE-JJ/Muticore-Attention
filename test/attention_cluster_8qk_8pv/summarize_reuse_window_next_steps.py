@@ -97,7 +97,7 @@ def main():
     for name,value in scopes(after).items():
         old=scopes(before)[name];rows.append(dict(scope=name,control_cycles=old,candidate_cycles=value,
                                                 saved_cycles=old-value,saved_percent=100*(1-value/old)))
-    state=read(root/'baseline_state.json');original=ROOT / 'Muticore-Attention'
+    state=read(root/'baseline_state.json');original=ROOT / 'test/history/legacy-primary'
     if digest(root/'baseline_guest')!=state['baseline_guest_sha256']:
         raise ValueError('preserved baseline guest changed')
     if subprocess.check_output(['git','diff','HEAD'],cwd=original,text=True)!=state['original_diff']:

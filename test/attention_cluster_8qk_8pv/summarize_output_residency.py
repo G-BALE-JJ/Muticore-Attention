@@ -22,7 +22,7 @@ def audit(root):
     for n in names:
         if results[n]['status']!='PASS' or reports[n]['status']!='PASS':
             raise ValueError('full-stack numerical/resource/reuse-window audit failed: '+n)
-        if read(cases[n]/'verification_provenance.json')['verifier_source_sha256']!=digest(ROOT/'baseline/attention_cluster_8qk_8pv/run_decoder_stack.py'):
+        if read(cases[n]/'verification_provenance.json')['verifier_source_sha256']!=digest(ROOT/'test/attention_cluster_8qk_8pv/run_decoder_stack.py'):
             raise ValueError('numerical verifier changed after audit: '+n)
     proof=read(cases[b]/'verification_retained_input.json')
     if (not proof['candidate_hbm_input_intentionally_absent'] or
@@ -65,7 +65,7 @@ def audit(root):
     for name,sha in fixed.items():
         if digest(ROOT/name)!=sha:raise ValueError('hardware source changed: '+name)
     old_state=read(ROOT/'results/software_dataflow_next_20261021/before_state.json')
-    original=ROOT / 'Muticore-Attention'
+    original=ROOT / 'test/history/legacy-primary'
     if (subprocess.check_output(['git','diff','HEAD'],cwd=original,text=True)!=old_state['original_diff'] or
             digest(original/'install/lib/sst-elements-library/libgolem.so')!=old_state['original_library']):
         raise ValueError('original baseline changed')
@@ -84,7 +84,7 @@ def audit(root):
                      'pv_completed_windows','c_traffic_status','window_flow_status','pipeline_execution_status','input_pipeline_status')}
                     for n in names},
                 projection_panels={n:reports[n]['projection_panels'] for n in names},
-                host_validation_source_sha256={name:digest(ROOT/'baseline/attention_cluster_8qk_8pv'/name) for name in
+                host_validation_source_sha256={name:digest(ROOT/'test/attention_cluster_8qk_8pv'/name) for name in
                     ('run_decoder_stack.py','run_all_gemm_reuse_window_baseline.py','verification_retained_input.py',
                      'verify_output_residency.py','verify_decoder_dataflow_resources.py','summarize_output_residency.py')},
                 next_token=results[b]['lm_head']['next_token']['token_id'],

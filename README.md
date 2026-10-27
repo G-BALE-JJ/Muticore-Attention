@@ -28,7 +28,11 @@ LLM/
 每个阶段都有 `baseline.json`、`run.sh`、`experiments/`；输出进入该阶段的
 `results/<时间>/`，不会覆盖历史结果。共享实现只维护一份，四个阶段使用同一公共架构。
 SST 上游组件自带测试仍保留其原生布局；本项目 Golem 测试已实际搬入 `test/golem/`。
-旧的 `baseline`、`archive`、`src/.../golem/tests` 与 `results` 路径提供兼容链接。
+`baseline/` 与 `Muticore-Attention/` 已移除，驱动直接使用 `test/`，依赖实体位于 `deps/`。
+`archive`、`src/.../golem/tests` 与 `results` 仍保留必要的原生构建/历史证据兼容链接。
+旧仓库源码与结果归档到 `test/history/legacy-primary/`；原 Git 历史独立保存在
+`.git/legacy-experiments.git`，最新实验区无需依赖旧目录。
+具体映射与验收见 [路径迁移记录](docs/PATH_MIGRATION_2026-10-27.md)。
 
 ## 运行阶段测试
 
@@ -80,7 +84,8 @@ test/prefill/run.sh --check
 功能分支完成四阶段回归和相关 SST 数值/资源验证后，使用同构建、同硬件资源、
 同数值契约的基线/候选成对端到端证据决定是否采纳，再在公共目录审阅并合并。
 
-现有 `Muticore-Attention-all-gemm` 仍属于原仓库；它原有未提交改动保持原状。
+现有 `Muticore-Attention-all-gemm` 仍使用原分支；原有架构和本地改动已保留，
+本次只对历史数据引用做路径适配，迁移前补丁保存在 `test/maintenance/path_migration_2026-10-27/`。
 其架构源文件路径与公共目录一致，可先比较 `src/` 的差异，再将通过验证的
 新改动移入公共仓库的功能分支。不要将旧测试目录整体覆盖回公共源码树。
 

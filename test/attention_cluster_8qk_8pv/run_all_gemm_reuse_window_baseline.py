@@ -16,7 +16,7 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BASELINE_RUNNER = HERE / 'run_decoder_stack.py'
-BASELINE_RESULT = (ROOT / 'Muticore-Attention/results/'
+BASELINE_RESULT = (ROOT / 'test/history/legacy-primary/results/'
                    'prefill_generalization_20261016/formal_l2_s1024/decoder_stack_result.json')
 SOURCES = [ROOT / 'src/sst/elements/golem/attention' / name for name in
            ('reuseWindowGemm.h', 'decoderOpJob.h', 'projectionJob.h', 'reuseWeightInterface.h',

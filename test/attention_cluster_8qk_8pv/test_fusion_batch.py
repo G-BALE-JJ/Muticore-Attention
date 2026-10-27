@@ -30,7 +30,7 @@ class FusionPayloadTest(unittest.TestCase):
 
     def test_both_software_switches_reach_the_simulated_guest(self):
         from run_decoder_stack import ROOT
-        source=ROOT/'src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py'
+        source=ROOT/'test/golem/architecture/ncores_selfcom_dma_ctrl.py'
         node=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.Assign) and
                   any(isinstance(t,ast.Name) and t.id=='process_env_keys' for t in n.targets))
         keys=ast.literal_eval(node.value)

@@ -20,7 +20,6 @@ git -C "$PROJECT_ROOT" worktree add -b "$name" "$destination" HEAD
 # Only dependencies and archived evidence are shared. Builds and installs are private.
 ln -s "$PROJECT_ROOT/deps" "$destination/deps"
 ln -s "$PROJECT_ROOT/test/history" "$destination/test/history"
-ln -s "$PROJECT_ROOT/test/history/Muticore-Attention" "$destination/Muticore-Attention"
 ln -s "$PROJECT_ROOT/test/history/Muticore-Attention-all-gemm/results" "$destination/results"
 cat <<EOF
 Created: $destination

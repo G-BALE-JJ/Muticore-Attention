@@ -102,7 +102,7 @@ def compare_reference(case, reference):
                         current_layout.get("rotated_panels") and not prior_layout.get("rotated_panels")):
                     import numpy as np
                     import sys
-                    sys.path.insert(0, str(ROOT / "src/sst/elements/golem/tests/small/muticore_attention"))
+                    sys.path.insert(0, str(ROOT / "test/golem/small/muticore_attention"))
                     from verify_fused_attention_scale_output import rotate_rope
                     shape = current["pipeline"]["shape"]
                     rows, dim = shape["query_length"] // 4, shape["head_dim"]
@@ -172,15 +172,15 @@ def main():
                        ROOT / "src/sst/elements/golem/array/computeArray.h",
                        ROOT / "src/sst/elements/golem/attention/attentionCluster.h",
                        ROOT / "src/sst/elements/golem/attention/projectionJobAbi.h",
-                       ROOT / "src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h",
-                       ROOT / "src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp",
+                       ROOT / "test/golem/small/muticore_attention/golem_projection_runtime.h",
+                       ROOT / "test/golem/small/muticore_attention/golem_attention_runtime.cpp",
                        ROOT / "src/sst/elements/golem/rocc/roccAnalog.h",
                        ROOT / "src/sst/elements/golem/workercmdproc/workercmdproc.h",
                        ROOT / "src/sst/elements/golem/array/mvmComputeArray.h",
-                       ROOT / "src/sst/elements/golem/tests/architecture/cpu_builder.py",
-                       ROOT / "src/sst/elements/golem/tests/small/muticore_attention/projection_case.py"]
+                       ROOT / "test/golem/architecture/cpu_builder.py",
+                       ROOT / "test/golem/small/muticore_attention/projection_case.py"]
             binaries = [ROOT / "install/lib/sst-elements-library/libgolem.so",
-                        ROOT / "src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention"]
+                        ROOT / "test/golem/small/muticore_attention/riscv64/fused_attention"]
             provenance = {
                 "git_revision": git("rev-parse", "HEAD"),
                 "git_status": git("status", "--short"),

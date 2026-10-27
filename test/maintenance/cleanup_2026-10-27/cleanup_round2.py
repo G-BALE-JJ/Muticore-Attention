@@ -18,7 +18,7 @@ def main():
     before = protected_state()
     (destination / 'protected_before.json').write_text(json.dumps(before, indent=2) + '\n')
     latest = LLM / 'Muticore-Attention-all-gemm/results'
-    old = LLM / 'Muticore-Attention/results'
+    old = LLM / 'test/history/legacy-primary/results'
     candidates = [latest / ('all_gemm_reuse_window_20261019_' + name)
                   for name in ('linear', 'linear2', 'linear3', 'linear4', 'linear5', 'internal_ports', 'trace', 'trace2')]
     candidates += [old / 'all_gemm_reuse_window_20261019',

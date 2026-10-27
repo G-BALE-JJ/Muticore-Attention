@@ -38,9 +38,15 @@ def main():
     if not (workspace / 'configure.ac').is_file():
         parser.error('--workspace must contain the SST source layout')
     config = json.loads((ROOT / 'test' / args.stage / 'baseline.json').read_text())
-    golem = workspace / ('test/golem' if (workspace / 'test/golem').is_dir() else 'src/sst/elements/golem/tests')
-    baseline = workspace / ('test/attention_cluster_8qk_8pv' if (workspace / 'test/attention_cluster_8qk_8pv').is_dir()
-                            else 'baseline/attention_cluster_8qk_8pv')
+    golem = workspace / 'test/golem'
+    baseline = workspace / 'test/attention_cluster_8qk_8pv'
+    # An explicitly selected older experimental worktree has its own native
+    # layout. The public workspace never depends on these compatibility paths.
+    if workspace != ROOT:
+        if not golem.is_dir():
+            golem = workspace / 'src' / 'sst' / 'elements' / 'golem' / 'tests'
+        if not baseline.is_dir():
+            baseline = workspace / 'baseline' / 'attention_cluster_8qk_8pv'
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1')
     if args.check:
         if extra:

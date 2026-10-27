@@ -41,7 +41,7 @@ def main():
     args = parser.parse_args()
     case, reference = args.artifact_root.resolve(), args.reference.resolve()
     case.mkdir(parents=True, exist_ok=False)
-    guest_dir = ROOT / 'src/sst/elements/golem/tests/small/muticore_attention'
+    guest_dir = ROOT / 'test/golem/small/muticore_attention'
     guest = guest_dir / 'riscv64/clean_startup/fused_attention'
     sources = list(dict.fromkeys(SOURCE_FILES + [guest,
         guest_dir/'golem_attention_runtime.cpp', guest_dir/'golem_attention_runtime.h',

@@ -46,9 +46,10 @@ def simulation_source_ast(source):
 
 
 def source_matches(case,path,sha):
-    current=ROOT/path
+    from project_paths import resolve_project_path
+    current=resolve_project_path(path)
     if digest(current)==sha:return True
-    if path!='baseline/attention_cluster_8qk_8pv/run_decoder_stack.py':return False
+    if current!=ROOT/'test/attention_cluster_8qk_8pv/run_decoder_stack.py':return False
     snapshot=case/'source_snapshot'/path
     replay=case/'verification_provenance.json'
     if not snapshot.exists() or not replay.exists() or digest(snapshot)!=sha:return False
@@ -93,14 +94,14 @@ def main():
             for suffix in ('*.h','*.cc'):paths.update((ROOT/'src/sst/elements/golem'/subdir).glob(suffix))
         paths.update(ROOT/path for path in (
             'src/sst/elements/golem/fp16.h',
-            'src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py',
-            'src/sst/elements/golem/tests/architecture/cpu_builder.py',
-            'src/sst/elements/golem/tests/architecture/ramulator/hbm2e_2500.yaml',
-            'src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp',
-            'src/sst/elements/golem/tests/small/muticore_attention/golem_decoder_runtime.h',
-            'src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h',
-            'src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh',
-            'src/sst/elements/golem/tests/small/muticore_attention/riscv64/decoder-embedding/fused_attention',
+            'test/golem/architecture/ncores_selfcom_dma_ctrl.py',
+            'test/golem/architecture/cpu_builder.py',
+            'test/golem/architecture/ramulator/hbm2e_2500.yaml',
+            'test/golem/small/muticore_attention/golem_attention_runtime.cpp',
+            'test/golem/small/muticore_attention/golem_decoder_runtime.h',
+            'test/golem/small/muticore_attention/golem_projection_runtime.h',
+            'test/golem/small/muticore_attention/run_fused_attention_scale.sh',
+            'test/golem/small/muticore_attention/riscv64/decoder-embedding/fused_attention',
             'install/lib/sst-elements-library/libgolem.so',
             'install/lib/sst-elements-library/libmemHierarchy.so'))
         build_file.write_text(json.dumps({'source_sha256':{str(path.relative_to(ROOT)):digest(path) for path in sorted(paths)},

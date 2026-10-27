@@ -16,6 +16,7 @@ from run_decoder_layer import GUEST_DIR, linear_reference, storage_half, read_ba
 from run_batch_b import environment
 from run_projection_overlap import ROOT, HERE, digest
 from artifact_storage import preflight
+from project_paths import resolve_project_path
 
 
 @lru_cache(maxsize=None)
@@ -680,7 +681,7 @@ def validate_inputs(case):
     for name,expected_digest in manifest.get('oracle_sha256',{}).items():
         if Path(name).name!=name or digest(case/name)!=expected_digest:raise ValueError('oracle provenance mismatch')
     for entry in manifest['preloads']:
-        path=Path(entry['path'])
+        path=resolve_project_path(entry['path'])
         if path.stat().st_size!=entry['bytes'] or digest(path)!=entry['sha256']:raise ValueError('input provenance mismatch')
     return manifest
 
@@ -904,7 +905,7 @@ def main():
         'tests/small/muticore_attention/run_fused_attention_scale.sh','tests/tools/gen_hbm_init.py',
         'tests/architecture/ncores_selfcom_dma_ctrl.py')]
     sources.append(Path(__file__).resolve())
-    sources.extend([HERE/'run_sst.sh',HERE/'merge_mpi_rank_logs.py',HERE/'artifact_storage.py',HERE/'run_decoder_layer.py',HERE/'dense_reference.py',HERE/'dense_linear_reference.cpp',HERE/'prefill_precision_reference.py',ROOT/'src/sst/elements/golem/tests/architecture/partition_planner.py'])
+    sources.extend([HERE/'run_sst.sh',HERE/'merge_mpi_rank_logs.py',HERE/'artifact_storage.py',HERE/'run_decoder_layer.py',HERE/'dense_reference.py',HERE/'dense_linear_reference.cpp',HERE/'prefill_precision_reference.py',ROOT/'test/golem/architecture/partition_planner.py'])
     if a.lm_head:sources.extend([HERE/'verify_lm_head.py',HERE/'select_next_token.py'])
     if a.embedding:sources.append(HERE/'verify_embedding.py')
     sources.extend([HERE/'verify_pv_wo_direct.py',HERE/'verify_decoder_dataflow_resources.py',HERE/'verification_retained_input.py'])

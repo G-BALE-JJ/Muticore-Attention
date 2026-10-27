@@ -182,7 +182,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKTREE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
-ATTENTION_DIR="$WORKTREE_ROOT/src/sst/elements/golem/tests/small/muticore_attention"
+ATTENTION_DIR="$WORKTREE_ROOT/test/golem/small/muticore_attention"
 CASE_ID="fused_attention_q${QUERY_LENGTH}_k${KV_LENGTH}_d${HEAD_DIM}"
 if (( CAUSAL )); then CASE_ID="${CASE_ID}_causal"; fi
 if (( ROPE )); then CASE_ID="${CASE_ID}_rope"; fi

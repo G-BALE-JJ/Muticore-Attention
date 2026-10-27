@@ -10,7 +10,7 @@ import re
 ROOT=Path(__file__).resolve().parents[2]
 DEFAULT=ROOT/'results/reuse_window_optimization_20261021'
 PREVIOUS=ROOT/'results/all_gemm_reuse_window_v4_formal_groups1_l2_s1024_mpi8_20261020'
-ORIGINAL=ROOT / 'Muticore-Attention/results/prefill_generalization_20261016/formal_l2_s1024'
+ORIGINAL=ROOT / 'test/history/legacy-primary/results/prefill_generalization_20261016/formal_l2_s1024'
 
 
 def read(path):
@@ -179,7 +179,7 @@ def main():
         '共享实验的 wait_b_dma 表示外部 fetch 完成前的等待，包含缓存、NoC 和消费端 GM 落地，并非纯 HBM RTT。','',
         '这些优化仍未消除单上下文阵列的串行编程/计算；也未把全模型改成逐块跨层流水。当前最优仅指本轮已测配置。','',
         '复现正式配置：','```bash','source scripts/env_local_install.sh >/dev/null',
-        'OPENBLAS_NUM_THREADS=1 python3 baseline/attention_cluster_8qk_8pv/run_all_gemm_reuse_window_baseline.py \\',
+        'OPENBLAS_NUM_THREADS=1 python3 test/attention_cluster_8qk_8pv/run_all_gemm_reuse_window_baseline.py \\',
         '  --artifact-root results/reuse_window_optimized_reproduction --shape formal --run \\',
         '  --window-array-groups 1 --window-early-a 1 --window-output-overlap 1 \\',
         '  --qkv-input-pack 1 --gamma-reuse 1 --weight-cohort 0 --cpu-set 0-7','```','',

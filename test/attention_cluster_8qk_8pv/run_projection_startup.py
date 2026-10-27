@@ -12,7 +12,7 @@ from analyze_resource_timeline import analyze as analyze_resources
 from analyze_critical_path import analyze as analyze_critical
 from analyze_projection_startup import analyze, compare
 
-GUEST_DIR = ROOT / 'src/sst/elements/golem/tests/small/muticore_attention'
+GUEST_DIR = ROOT / 'test/golem/small/muticore_attention'
 GUESTS = {'baseline': GUEST_DIR / 'riscv64/fused_attention',
           'batch_release': GUEST_DIR / 'riscv64/batch_release/fused_attention'}
 

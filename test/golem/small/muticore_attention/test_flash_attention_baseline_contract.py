@@ -328,7 +328,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
     def test_public_attention_runner_defaults_to_8qk_8pv(self):
         runner = WRAPPER.read_text(encoding="utf-8")
         unified = UNIFIED_RUNNER.read_text(encoding="utf-8")
-        self.assertIn("baseline/attention_cluster_8qk_8pv/run_sst.sh", runner)
+        self.assertIn("test/attention_cluster_8qk_8pv/run_sst.sh", runner)
         self.assertIn('"ATTENTION_DATAFLOW=8qk_8pv"', unified)
         self.assertIn('"WORKER_CLUSTER_QK_WORKERS_PER_MANAGER=2"', unified)
 
@@ -394,7 +394,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertNotIn("std::vector<uint8_t> payload", cache_entry)
 
     def test_attention_cluster_uses_local_gm_for_v_residency_at_256_bpc(self):
-        runner = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / "baseline" / "attention_cluster_8qk_8pv" /
+        runner = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / "test" / "attention_cluster_8qk_8pv" /
                   "run_sst.sh").read_text(encoding="utf-8")
         rocc = ROCC_SOURCE.read_text(encoding="utf-8")
         self.assertIn(
@@ -405,7 +405,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("header.attention_pv_cache_bytes", rocc)
 
     def test_8qk_8pv_prioritizes_rows_and_tree_broadcasts_v_into_local_sram(self):
-        runner = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / "baseline" / "attention_cluster_8qk_8pv" /
+        runner = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / "test" / "attention_cluster_8qk_8pv" /
                   "run_sst.sh").read_text(encoding="utf-8")
         rocc = ROCC_SOURCE.read_text(encoding="utf-8")
         wcp = WCP_SOURCE.read_text(encoding="utf-8")
@@ -419,7 +419,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
         self.assertIn("localWriteAsync", wcp)
 
     def test_8qk_8pv_dynamic_assignment_binds_rows_and_isolates_accumulators(self):
-        runner = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / "baseline" / "attention_cluster_8qk_8pv" /
+        runner = (next(p for p in pathlib.Path(__file__).resolve().parents if (p / 'configure.ac').is_file()) / "test" / "attention_cluster_8qk_8pv" /
                   "run_sst.sh").read_text(encoding="utf-8")
         rocc = ROCC_SOURCE.read_text(encoding="utf-8")
         transport = GLOBAL_MEMORY_SOURCE.read_text(encoding="utf-8")
@@ -863,7 +863,7 @@ class FlashAttentionBaselineContractTest(unittest.TestCase):
     def test_wrapper_targets_8qk_8pv_runner(self):
         text = WRAPPER.read_text()
         self.assertIn(
-            'exec "$WORKTREE_ROOT/baseline/attention_cluster_8qk_8pv/run_sst.sh" "$@"', text
+            'exec "$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/run_sst.sh" "$@"', text
         )
         self.assertNotIn("/data/", text)
 

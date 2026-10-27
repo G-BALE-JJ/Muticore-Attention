@@ -48,9 +48,9 @@ def combine(root):
         if clean_versions is not None and clean_versions != provenance['sha256']:
             raise ValueError('clean startup source versions differ')
         clean_versions = provenance['sha256']
-        allowed = {'src/sst/elements/golem/tests/small/muticore_attention/golem_attention_runtime.cpp',
-                   'src/sst/elements/golem/tests/small/muticore_attention/golem_projection_runtime.h',
-                   'src/sst/elements/golem/tests/small/muticore_attention/Makefile'}
+        allowed = {'test/golem/small/muticore_attention/golem_attention_runtime.cpp',
+                   'test/golem/small/muticore_attention/golem_projection_runtime.h',
+                   'test/golem/small/muticore_attention/Makefile'}
         shared = set(clean_versions) & set(logged['source_sha256'])
         differences = {name for name in shared if clean_versions[name] != logged['source_sha256'][name]}
         if differences - allowed:
@@ -77,7 +77,7 @@ def combine(root):
     for name, expected in clean_versions.items():
         if digest(ROOT / name) != expected:
             raise ValueError('clean experiment source/binary changed after simulation')
-    quiet = ROOT / 'src/sst/elements/golem/tests/small/muticore_attention/riscv64/clean_startup/fused_attention'
+    quiet = ROOT / 'test/golem/small/muticore_attention/riscv64/clean_startup/fused_attention'
     quiet_batch = quiet.parent.parent / 'clean_batch/fused_attention'
     if digest(quiet) != digest(quiet_batch):
         raise ValueError('quiet batching equivalence check failed')

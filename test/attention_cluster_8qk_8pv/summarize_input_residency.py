@@ -63,7 +63,7 @@ def audit(root):
     for name,sha in fixed.items():
         if digest(ROOT/name)!=sha:raise ValueError('fixed hardware source changed: '+name)
     old_state=read(ROOT/'results/software_dataflow_next_20261021/before_state.json')
-    original=ROOT / 'Muticore-Attention'
+    original=ROOT / 'test/history/legacy-primary'
     if (subprocess.check_output(['git','diff','HEAD'],cwd=original,text=True)!=old_state['original_diff'] or
             digest(original/'install/lib/sst-elements-library/libgolem.so')!=old_state['original_library']):
         raise ValueError('original baseline changed')

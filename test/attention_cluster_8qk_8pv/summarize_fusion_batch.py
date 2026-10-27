@@ -37,7 +37,7 @@ def fixed_hardware():
     text=re.sub(r'    // Stage-chain Wo output temporarily aliases.*?"Wo handoff overlaps retained residual input"\);\n',
                 '',(ROOT/layout).read_text(),flags=re.S)
     if hashlib.sha256(text.encode()).hexdigest()!=old:raise ValueError('GM layout changed beyond the existing software alias')
-    guest_env='src/sst/elements/golem/tests/architecture/ncores_selfcom_dma_ctrl.py'
+    guest_env='test/golem/architecture/ncores_selfcom_dma_ctrl.py'
     env_sha=fixed.pop(guest_env)
     original_env=(ROOT/guest_env).read_text()
     for flag in ('GOLEM_DECODER_ADD_NORM_FUSION','GOLEM_DECODER_EAGER_FINAL_NORM'):
@@ -48,7 +48,7 @@ def fixed_hardware():
         raise ValueError('system configuration changed beyond two guest software environment variables')
     for name,sha in fixed.items():
         if digest(ROOT/name)!=sha:raise ValueError('fixed hardware source changed: '+name)
-    state=read(snapshot/'before_state.json');original=ROOT / 'Muticore-Attention'
+    state=read(snapshot/'before_state.json');original=ROOT / 'test/history/legacy-primary'
     if (subprocess.check_output(['git','diff','HEAD'],cwd=original,text=True)!=state['original_diff'] or
             digest(original/'install/lib/sst-elements-library/libgolem.so')!=state['original_library']):
         raise ValueError('original baseline changed')
@@ -66,7 +66,7 @@ def audit(root):
     builds={n:read(root/n/'experiment_provenance.json') for n in names}
     for n in names:
         if results[n]['status']!='PASS' or reports[n]['status']!='PASS':raise ValueError('full numerical/resource/reuse-window audit failed: '+n)
-        if read(cases[n]/'verification_provenance.json')['verifier_source_sha256']!=digest(ROOT/'baseline/attention_cluster_8qk_8pv/run_decoder_stack.py'):
+        if read(cases[n]/'verification_provenance.json')['verifier_source_sha256']!=digest(ROOT/'test/attention_cluster_8qk_8pv/run_decoder_stack.py'):
             raise ValueError('numerical verifier changed after verification: '+n)
     binary_keys=('guest_sha256','sst_library_sha256','sst_memhierarchy_sha256')
     if any(provenance[a][k]!=provenance[b][k] for k in binary_keys):raise ValueError('paired binaries differ')
@@ -148,7 +148,7 @@ def audit(root):
         binaries={k:provenance[b][k] for k in binary_keys},runtime_source_sha256=builds[b]['source_sha256'],
         guest_source_sha256={name:sha for name,sha in provenance[b]['source_sha256'].items()
             if name.endswith(('golem_attention_runtime.cpp','golem_decoder_runtime.h'))},
-        host_validation_source_sha256={name:digest(ROOT/'baseline/attention_cluster_8qk_8pv'/name) for name in
+        host_validation_source_sha256={name:digest(ROOT/'test/attention_cluster_8qk_8pv'/name) for name in
             ('run_decoder_stack.py','run_all_gemm_reuse_window_baseline.py','verification_retained_input.py',
              'verify_software_stage_chain.py','verify_add_norm_fusion.py','verify_layer_residency.py',
              'verify_decoder_dataflow_resources.py','verify_lm_head.py','summarize_fusion_batch.py')},

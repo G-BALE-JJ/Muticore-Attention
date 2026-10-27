@@ -2,7 +2,7 @@
 
 These designs are retained for reproducing earlier experiments. The active
 architecture and public runner use 8 QK/SFU workers plus 8 PV workers; see
-`../baseline/attention_cluster_8qk_8pv/README.md`.
+`../attention_cluster_8qk_8pv/README.md`.
 
 - `attention_sequential_64/`: sequential 64-array worker design and measurements.
 - `baseline_attention_cluster_4qk_12pv/`: 4 QK/SFU + 12 PV comparison.

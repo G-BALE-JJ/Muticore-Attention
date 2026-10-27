@@ -105,7 +105,7 @@ def main():
     fixed=read(r/'fixed_hardware_sources.json')
     for name,sha in fixed.items():
         if digest(ROOT/name)!=sha:raise ValueError('hardware or architecture source changed: '+name)
-    source_state=read(r/'before_state.json');original=ROOT / 'Muticore-Attention'
+    source_state=read(r/'before_state.json');original=ROOT / 'test/history/legacy-primary'
     if subprocess.check_output(['git','diff','HEAD'],cwd=original,text=True)!=source_state['original_diff'] or digest(original/'install/lib/sst-elements-library/libgolem.so')!=source_state['original_library']:
         raise ValueError('original baseline changed')
     frozen=read(r/'measured_binaries.json')
@@ -129,7 +129,7 @@ def main():
       '小尺寸同样为 S1024、16 worker、两层：详细数字见 summary.json small。完成延迟以模拟周期计，宿主机 wall time 仅为执行成本。',
       '测试、负例、时序与资源审计见 checks/，硬件固定证据见 fixed_hardware_sources.json，原始基线保护证据见 before_state.json / final_validation.json。','',
       '## 复现','', '```bash',
-      'OPENBLAS_NUM_THREADS=1 python3 baseline/attention_cluster_8qk_8pv/run_all_gemm_reuse_window_baseline.py \\',
+      'OPENBLAS_NUM_THREADS=1 python3 test/attention_cluster_8qk_8pv/run_all_gemm_reuse_window_baseline.py \\',
       '  --artifact-root results/software_stage_chain_reproduction --shape formal --run \\',
       '  --window-a-prefetch 1 --lm-n-parallel 1 --gm-stage-chain --cpu-set 0-7','```','',
       '移除 --gm-stage-chain 得到同构建对照。原始 Muticore-Attention 仓库保持不变。']

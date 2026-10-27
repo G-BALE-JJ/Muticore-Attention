@@ -22,10 +22,10 @@ VARIANTS = {
     'groups_only': (0, 0, 2),
 }
 SOURCES = [ROOT / 'src/sst/elements/golem/attention/projectionJob.h',
-           ROOT / 'src/sst/elements/golem/tests/small/muticore_attention/report_projection_e2e.py',
-           ROOT / 'src/sst/elements/golem/tests/small/muticore_attention/run_fused_attention_scale.sh',
+           ROOT / 'test/golem/small/muticore_attention/report_projection_e2e.py',
+           ROOT / 'test/golem/small/muticore_attention/run_fused_attention_scale.sh',
            ROOT / 'install/lib/sst-elements-library/libgolem.so',
-           ROOT / 'src/sst/elements/golem/tests/small/muticore_attention/riscv64/fused_attention']
+           ROOT / 'test/golem/small/muticore_attention/riscv64/fused_attention']
 SOURCES += [ROOT / path for path in (
     'src/sst/elements/golem/attention/resourceTrace.h',
     'src/sst/elements/golem/globalmemory/globalmemory.cc',
@@ -39,10 +39,10 @@ SOURCES += [ROOT / path for path in (
     'src/sst/elements/memHierarchy/membackend/ramulator2Backend.cc',
     'src/sst/elements/memHierarchy/membackend/ramulator2Backend.h',
     'install/lib/sst-elements-library/libmemHierarchy.so',
-    'baseline/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py',
-    'baseline/attention_cluster_8qk_8pv/report_dma_e2e.py',
-    'baseline/attention_cluster_8qk_8pv/analyze_dma_lower_bound.py',
-    'baseline/attention_cluster_8qk_8pv/run_sst.sh',
+    'test/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py',
+    'test/attention_cluster_8qk_8pv/report_dma_e2e.py',
+    'test/attention_cluster_8qk_8pv/analyze_dma_lower_bound.py',
+    'test/attention_cluster_8qk_8pv/run_sst.sh',
 )]
 
 

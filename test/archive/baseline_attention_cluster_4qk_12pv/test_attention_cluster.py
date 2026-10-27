@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 
-PATH = Path(__file__).parents[2] / "baseline" / "attention_cluster_8qk_8pv" / "attention_cluster_model.py"
+PATH = next(p for p in Path(__file__).resolve().parents if (p / "configure.ac").is_file()) / "test" / "attention_cluster_8qk_8pv" / "attention_cluster_model.py"
 SPEC = importlib.util.spec_from_file_location("attention_cluster", PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE

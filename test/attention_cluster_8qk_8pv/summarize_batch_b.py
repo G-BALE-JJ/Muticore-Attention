@@ -37,7 +37,7 @@ def combine(baseline_root, shard_roots, sequences=(1024,2048)):
             # runner difference rather than silently equating source versions.
             differences = [name for name,value in previous['sha256'].items()
                            if current['sha256'].get(name) != value]
-            allowed = ['baseline/attention_cluster_8qk_8pv/run_batch_b.py']
+            allowed = ['test/attention_cluster_8qk_8pv/run_batch_b.py']
             if any(name not in allowed for name in differences):
                 raise ValueError(f'model/guest changed: {key} {differences}')
             row['provenance_difference_from_baseline'] = differences
