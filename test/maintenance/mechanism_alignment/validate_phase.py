@@ -75,7 +75,8 @@ def main():
                 stage_run(stage)
             prefill.result()
         run([sys.executable,str(ROOT/'test/summarize_stages.py'),
-             '--run-name',name,'--output-dir',str(evidence)],'summary.log')
+             '--run-name',name,'--output-dir',str(evidence),
+             '--configuration',str(config)],'summary.log')
         summary=json.loads((evidence/'summary.json').read_text())
         measured={row['stage']:row['end_to_end_cycles'] for row in summary['stages']}
         if summary['status']!='PASS' or measured!=EXPECTED:

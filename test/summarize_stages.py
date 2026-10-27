@@ -39,11 +39,29 @@ def unique(paths):
     return paths[0]
 
 
+def load_selection(configuration=None):
+    public_path = ROOT / 'test/attention_cluster_8qk_8pv/SELECTED_PREFILL_2026-10-26.json'
+    public = load(public_path, passed=True)
+    if configuration is None:
+        return public
+    candidate = load(configuration, passed=True)
+    # A rebuilt candidate may replace only the installed-library pin. Guest,
+    # workload, schedule, numerical references and latency contract stay fixed.
+    for key, value in public.items():
+        if key != 'measured_library_sha256' and candidate.get(key) != value:
+            raise ValueError(f'Candidate changes selected prefill contract: {key}')
+    if not candidate.get('candidate_validation', {}).get('public_selection_unchanged'):
+        raise ValueError('Candidate configuration lacks explicit validation provenance')
+    return candidate
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-name', required=True)
     parser.add_argument('--gemm-run-name', help='optional GEMM run with explicit A@B verification')
     parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--configuration', type=Path,
+                        help='explicit rebuilt candidate pin; preserves the public workload and guest')
     args = parser.parse_args()
     library = digest(ROOT / 'install/lib/sst-elements-library/libgolem.so')
     rows, invocations, cases, evidence = [], {}, {}, {}
@@ -166,7 +184,7 @@ def main():
         cursor = stop
     if sum(part['cycles'] for part in breakdown) != prefill['embedding']['end_to_end_cycles']:
         raise ValueError('Incomplete prefill latency partition')
-    selection = load(ROOT / 'test/attention_cluster_8qk_8pv/SELECTED_PREFILL_2026-10-26.json', passed=True)
+    selection = load_selection(args.configuration)
     selected_guest = selection['measured_guest_sha256']
     provenance = load(cases['prefill'] / 'reuse_window_probe/decoder_stack_provenance.json')
     if library != selection['measured_library_sha256'] or provenance['guest_sha256'] != selected_guest:
