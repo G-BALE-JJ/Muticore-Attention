@@ -130,6 +130,7 @@ struct WcpWindowTransaction {
     uint32_t attentionPackedVecTilesPerBand = 0;
     uint64_t attentionPackedVecNodeStrideBytes = 0;
     uint64_t attentionPackedVecBaseOffset = 0;
+    std::vector<uint64_t> matSourceAddrs,vecSourceAddrs;
 };
 
 struct WcpTileTimelineDebug {

@@ -75,7 +75,7 @@ public:
  SST_ELI_DOCUMENT_SUBCOMPONENT_SLOTS({"array","Production TU","SST::Golem::ComputeArray"},{"engine","Production TE","SST::Golem::WorkerCommandProcessorAPI"},{"memory","Fixture memory","SST::Golem::GlobalMemoryAPI"},{"scheduler","Fixture scheduler","SST::Golem::RequestSchedulerAPI"})
  NativeEngineDriver(ComponentId_t id,Params&p):Component(id){
   instance=p.find<uint32_t>("instance",0);
-  placed=p.find<int>("placed",0);replicate=p.find<int>("replicate",0);functional=p.find<int>("functional",1);
+  const int placementMode=p.find<int>("placed",0);placed=placementMode!=0;packedPlacement=placementMode==2;replicate=p.find<int>("replicate",0);functional=p.find<int>("functional",1);
   a=loadUserSubComponent<ComputeArray>("array",ComponentInfo::SHARE_NONE,getTimeConverter("1ns"),new Event::Handler2<NativeEngineDriver,&NativeEngineDriver::arrayDone>(this));
   te=loadUserSubComponent<WorkerCommandProcessorAPI>("engine",ComponentInfo::SHARE_NONE);
   gm=loadUserSubComponent<GlobalMemoryAPI>("memory",ComponentInfo::SHARE_NONE);
@@ -85,7 +85,7 @@ public:
   registerClock("1GHz",new Clock::Handler2<NativeEngineDriver,&NativeEngineDriver::tick>(this));
   registerAsPrimaryComponent();primaryComponentDoNotEndSim();
  }
- void setup() override{launch();}
+ void setup() override{if(packedPlacement)code=2;launch();}
  void launch(){
   complete=false;outputs=0;
   WorkerTaskListHeader h;h.worker_slot=0;h.scheduler_worker_slot=instance;h.task_count=1;h.active_worker_cores=1;h.total_groups=1;
@@ -97,10 +97,10 @@ public:
   h.b_reuse_m_tiles=placed?2:1;h.a_reuse_n_tiles=placed?2:1;
   const auto mode=static_cast<XTileMC::ComputeMode>(code);
   XTileMC::PrecisionSpecV02 spec{code,XTileMC::inputBits(mode),XTileMC::integerMode(mode)?0u:1u,32,1,{0,0,0}};
-  h.vec_stride_bytes=placed?68:XTileMC::packedRowBytes(17,mode);h.mat_stride_bytes=3*h.vec_stride_bytes;
+  h.vec_stride_bytes=placed&&!packedPlacement?68:XTileMC::packedRowBytes(17,mode);h.mat_stride_bytes=3*h.vec_stride_bytes;
   const uint32_t ones[]={1,1,0x3c00,0x3f80,0x3f800000,0x3f800000,0x38,0x3c};
   auto payload=[&](unsigned rows,uint32_t raw){
-   const unsigned bits=placed?32:XTileMC::inputBits(mode);
+   const unsigned bits=placed&&!packedPlacement?32:XTileMC::inputBits(mode);
    const unsigned rowBytes=unsigned(h.vec_stride_bytes);
    std::vector<uint8_t>data(rows*rowBytes,0);
    for(unsigned row=0;row<rows;++row)for(unsigned k=0;k<17;++k){
@@ -113,8 +113,10 @@ public:
   WorkloadPlacement plan;plan.dataNodes={1+2*instance,2+2*instance};plan.taskNodes={1+2*instance};plan.aNodes={1+2*instance,2+2*instance};plan.bNodes={2+2*instance,1+2*instance};plan.replicateB=replicate;
 #endif
   for(uint32_t tile=0;tile<(placed?2u:1u);++tile)for(uint32_t kt=0;kt<2;++kt){
-   auto mat=payload(3,placed?floatToBits(float((instance+1)*(tile+1))):ones[code]);
-   auto vec=payload(2,placed?floatToBits(float((instance+1)*(tile+1))):ones[code]);
+   const float value=float((instance+1)*(tile+1));
+   const uint32_t placedBits=packedPlacement?GolemFp16(value).bits:floatToBits(value);
+   auto mat=payload(3,placed?placedBits:ones[code]);
+   auto vec=payload(2,placed?placedBits:ones[code]);
    uint64_t ma=1048576+h.off_gemm_mat_base+kt*h.mat_stride_bytes;
    uint64_t va=1048576+h.off_gemm_vec_base+kt*2*h.vec_stride_bytes;
 #ifdef TEST_PLACEMENT
@@ -133,7 +135,7 @@ public:
   },[this](uint64_t,uint64_t,uint64_t){complete=true;}),"callbacks rejected");
   bool ok=false;
 #ifdef TEST_PLACEMENT
-  if(placed)ok=te->startPlacedWindow(h,plan);
+  if(placed)ok=te->startPlacedWindow(h,plan,packedPlacement?&spec:nullptr);
   else
 #endif
   ok=te->startPrecisionWindow(h,spec);
@@ -151,5 +153,5 @@ public:
  void arrayDone(Event* e){auto*ae=dynamic_cast<ArrayEvent*>(e);require(ae!=nullptr,"bad TE array event");te->handleArrayDone(ae->getArrayID(),getCurrentSimTime("1GHz"));delete e;}
 private:
  ComputeArray*a=nullptr;WorkerCommandProcessorAPI*te=nullptr;GlobalMemoryAPI*gm=nullptr;RequestSchedulerAPI*sched=nullptr;
- bool placed=false,replicate=false,functional=true,complete=false;uint32_t instance=0,code=0,outputs=0;
+ bool placed=false,packedPlacement=false,replicate=false,functional=true,complete=false;uint32_t instance=0,code=0,outputs=0;
 };

@@ -656,6 +656,9 @@ void RequestSchedulerEndpoint::emitManagerPressureSummary() const {
 
 uint64_t RequestSchedulerEndpoint::submitWindowTransaction(const WcpWindowTransaction& txn)
 {
+    if((!txn.matSourceAddrs.empty() && txn.matSourceAddrs.size()!=(txn.useIndependentMatVecTiles?txn.matTileCount:txn.kTiles)) ||
+       (!txn.vecSourceAddrs.empty() && txn.vecSourceAddrs.size()!=(txn.useIndependentMatVecTiles?txn.vecTileCount:txn.kTiles)))return 0;
+
     if (role_ != RequestSchedulerRole::WORKER || gm_ == nullptr) {
         return 0;
     }
@@ -699,7 +702,8 @@ void RequestSchedulerEndpoint::enqueueWindowTiles(WorkerWindowTxnState& state)
         const uint32_t vecGroupIdx = state.txn.useIndependentMatVecTiles ? (i / kWindowTiles) : 0;
         const uint32_t vecKIdx = state.txn.useIndependentMatVecTiles ? (i % kWindowTiles) : i;
 
-        const uint64_t matSrcBase = state.txn.rowMajorPanels
+        const uint64_t matSrcBase = matValid && !state.txn.matSourceAddrs.empty()
+            ? state.txn.matSourceAddrs.at(i) : state.txn.rowMajorPanels
             ? state.txn.matBaseAddr +
                 static_cast<uint64_t>(matGroupIdx) * state.txn.matGroupStrideBytes +
                 static_cast<uint64_t>(matKIdx) * state.txn.kSliceStrideBytes
@@ -707,7 +711,8 @@ void RequestSchedulerEndpoint::enqueueWindowTiles(WorkerWindowTxnState& state)
                 static_cast<uint64_t>(state.txn.useIndependentMatVecTiles
                                           ? (matGroupIdx * totalKTileCount + matKIdx)
                                           : i) * state.txn.matStrideBytes;
-        const uint64_t vecSrcBase = state.txn.attentionPackedVecTilesPerBand != 0
+        const uint64_t vecSrcBase = vecValid && !state.txn.vecSourceAddrs.empty()
+            ? state.txn.vecSourceAddrs.at(i) : state.txn.attentionPackedVecTilesPerBand != 0
             ? static_cast<uint64_t>(1u +
                 (state.txn.attentionPackedVecTileBegin + vecGroupIdx) /
                     state.txn.attentionPackedVecTilesPerBand) *

@@ -26,6 +26,7 @@
 #include <sst/elements/golem/array/computeArray.h>
 #include <sst/elements/golem/fp16.h>
 #include <sst/elements/golem/computeunit/multiPrecisionComputeUnit.h>
+#include <sst/elements/golem/tileengine/workloadPlacement.h>
 #include <sst/elements/golem/sfu/sfu.h>
 #include <sst/elements/golem/globalmemory/globalmemory.h>
 #include <sst/elements/golem/requestscheduler/requestscheduler.h>
@@ -133,6 +134,8 @@ public:
 
     virtual bool startWindow(const WorkerTaskListHeader& header) = 0;
     virtual bool startPrecisionWindow(const WorkerTaskListHeader&, const XTileMC::PrecisionSpecV02&) { return false; }
+    virtual bool startPlacedWindow(const WorkerTaskListHeader&, const WorkloadPlacement&,
+                                   const XTileMC::PrecisionSpecV02* = nullptr) { return false; }
     using WindowFusionTileCallback =
         std::function<bool(uint64_t, uint64_t, const std::vector<uint8_t>&)>;
     using WindowCompleteCallback =
@@ -1292,8 +1295,13 @@ public:
                               const XTileMC::PrecisionSpecV02& spec) override {
         return startWindowImpl(header,&spec);
     }
+    bool startPlacedWindow(const WorkerTaskListHeader& header,const WorkloadPlacement& placement,
+                           const XTileMC::PrecisionSpecV02* spec=nullptr) override {
+        return startWindowImpl(header,spec,&placement);
+    }
     bool startWindowImpl(const WorkerTaskListHeader& header,
-                         const XTileMC::PrecisionSpecV02* spec) {
+                         const XTileMC::PrecisionSpecV02* spec,
+                         const WorkloadPlacement* placement=nullptr) {
         if (isBusy() || cBufferMode_ != CBufferMode::FREE) {
             return false;
         }
@@ -1383,6 +1391,21 @@ public:
         precisionEnabled_ = spec != nullptr;
         if (spec) precision_ = *spec;
         else if (array_) array_->useLegacyPrecision();
+        if (placement) {
+            const uint32_t mt=header.block_m?header.m/header.block_m:0;
+            const uint32_t nt=header.block_n?header.n/header.block_n:0;
+            const uint32_t rm=std::max(header.b_reuse_m_tiles,1u),rn=std::max(header.a_reuse_n_tiles,1u);
+            const uint32_t tasks=((mt+rm-1)/rm)*((nt+rn-1)/rn);
+            // One-sided reuse uses an older resident protocol; reject it rather
+            // than applying a partial mapping to that protocol.
+            if(!placement->valid(header.data_memory_node_count,mt,nt,tasks) ||
+               ((rm>1)!=(rn>1)) || header.operand_layout!=0 ||
+               !header.active_worker_cores || header.worker_slot>=header.active_worker_cores ||
+               header.task_count!=(header.worker_slot<tasks ?
+                 (tasks-1-header.worker_slot)/header.active_worker_cores+1:0))return false;
+        }
+        placementEnabled_=placement!=nullptr;
+        placement_=placement?*placement:WorkloadPlacement{};
         WorkerTaskListHeader configuredHeader = header;
         ++attentionPvVectorReadGeneration_;
         attentionPvVectorReadInFlight_ = false;
@@ -3159,6 +3182,15 @@ private:
             (!is2DReuse() &&
              std::max<uint32_t>(header_.b_reuse_m_tiles, 1u) > 1 &&
              reuseMIndex_ > 0);
+        if(placementEnabled_) {
+            const uint32_t nt=header_.n/header_.block_n;
+            const uint32_t mt=uint32_t(current_.task_id/nt),nn=uint32_t(current_.task_id%nt);
+            const uint32_t cn=uint32_t(current_.c_base_addr/header_.mem_node_size);
+            for(uint32_t i=0;i<tiles;++i){
+                txn.matSourceAddrs.push_back(placement_.aAddress(mt,nextPrefetchK_+i,totalKTileCount_,header_.mem_node_size,header_.off_gemm_mat_base,current_.mat_stride_bytes));
+                txn.vecSourceAddrs.push_back(placement_.bAddress(nn,nextPrefetchK_+i,totalKTileCount_,cn,header_.mem_node_size,header_.off_gemm_vec_base,current_.vec_stride_bytes));
+            }
+        }
         activeTxnId_ = requestScheduler_->submitWindowTransaction(txn);
         activeTxnTileCount_ = tiles;
         nextTxnComputeTile_ = 0;
@@ -3250,6 +3282,16 @@ private:
         txn.matGroupStrideBytes = static_cast<uint64_t>(header_.block_m) * sourceRowStride;
         txn.vecGroupStrideBytes = static_cast<uint64_t>(header_.block_n) * sourceRowStride;
         txn.kSliceStrideBytes = static_cast<uint64_t>(header_.block_k) * header_.elem_bytes;
+        if(placementEnabled_) {
+            const uint32_t nt=header_.n/header_.block_n;
+            const uint32_t mt=uint32_t(current_.task_id/nt)-reuseMIndex_;
+            const uint32_t nn=uint32_t(current_.task_id%nt)-reuseNIndex_;
+            const uint32_t cn=uint32_t(current_.c_base_addr/header_.mem_node_size);
+            for(uint32_t i=0;i<txn.matTileCount;++i)
+                txn.matSourceAddrs.push_back(placement_.aAddress(mt+i/kCount,kBegin+i%kCount,totalKTileCount_,header_.mem_node_size,header_.off_gemm_mat_base,current_.mat_stride_bytes));
+            for(uint32_t i=0;i<txn.vecTileCount;++i)
+                txn.vecSourceAddrs.push_back(placement_.bAddress(nn+i/kCount,kBegin+i%kCount,totalKTileCount_,cn,header_.mem_node_size,header_.off_gemm_vec_base,current_.vec_stride_bytes));
+        }
         txnIds.push_back(requestScheduler_->submitWindowTransaction(txn));
         const uint64_t txnId = txnIds.back();
         if (usesAttentionPackedPanels() && txnId != 0 && extOutput_ != nullptr) {
@@ -5059,6 +5101,7 @@ private:
         const uint64_t output_task_id = static_cast<uint64_t>(m_tile) * n_tiles + n_tile;
         const uint32_t activeWorkers = std::max<uint32_t>(header_.active_worker_cores, 1u);
         auto nodeForMacroTask = [&](uint32_t macroTaskId) -> uint32_t {
+            if(placementEnabled_)return placement_.taskNodes.at(macroTaskId);
             const uint32_t owner_slot = macroTaskId % activeWorkers;
             const uint32_t group_id = header_.total_groups > 0 ? (owner_slot % header_.total_groups) : 0;
             const uint32_t dataMapKey = header_.data_node_map_mode != 0 ? owner_slot : group_id;
@@ -5077,22 +5120,23 @@ private:
         const uint32_t macro_slot = macroSlotInNode(macro_task_id, c_node_idx);
         const uint32_t a_owner_macro = m_group;
         const uint32_t b_owner_macro = n_group;
-        const uint32_t a_node_idx = nodeForMacroTask(a_owner_macro);
-        const uint32_t b_node_idx = nodeForMacroTask(b_owner_macro);
+        const uint32_t a_node_idx = placementEnabled_?placement_.aNodes.at(m_tile):nodeForMacroTask(a_owner_macro);
+        const uint32_t b_node_idx = placementEnabled_?(placement_.replicateB?c_node_idx:placement_.bNodes.at(n_tile)):nodeForMacroTask(b_owner_macro);
         uint32_t a_slot = 0;
         for (uint32_t mt = 0; mt < m_tile; ++mt) {
             const uint32_t mt_group = mt / reuseM;
-            if (nodeForMacroTask(mt_group) == a_node_idx) {
+            if ((placementEnabled_?placement_.aNodes.at(mt):nodeForMacroTask(mt_group)) == a_node_idx) {
                 a_slot++;
             }
         }
         uint32_t b_slot = 0;
         for (uint32_t nt = 0; nt < n_tile; ++nt) {
             const uint32_t nt_group = nt / reuseN;
-            if (nodeForMacroTask(nt_group) == b_node_idx) {
+            if ((placementEnabled_?placement_.bNodes.at(nt):nodeForMacroTask(nt_group)) == b_node_idx) {
                 b_slot++;
             }
         }
+        if(placementEnabled_ && placement_.replicateB)b_slot=n_tile;
         uint64_t a_node_base = static_cast<uint64_t>(a_node_idx) * header_.mem_node_size;
         uint64_t b_node_base = static_cast<uint64_t>(b_node_idx) * header_.mem_node_size;
         const uint64_t c_node_base = static_cast<uint64_t>(c_node_idx) * header_.mem_node_size;
@@ -5206,6 +5250,8 @@ private:
 
     int verbose_ = 0;
     bool outputIsFloat_ = false;
+    bool placementEnabled_ = false;
+    WorkloadPlacement placement_;
     bool precisionEnabled_ = false;
     XTileMC::PrecisionSpecV02 precision_{};
     bool stage3Trace_ = false;

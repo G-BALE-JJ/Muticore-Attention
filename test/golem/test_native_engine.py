@@ -33,7 +33,7 @@ for instance in range(int(os.environ.get('CHECK_INSTANCES','1'))):
  c.setSubComponent('scheduler','llmnative.Scheduler')
 """)
             cases=[(0,0,1,1),(0,0,0,1)]
-            if placement:cases+=[(1,0,1,1),(1,1,1,1)]
+            if placement:cases+=[(1,0,1,1),(1,1,1,1),(2,1,1,1)]
             if fast_path_available:cases.append((0,0,0,0))
             cycles={}
             for placed,replicate,functional,fast in cases:

@@ -31,6 +31,7 @@ libgolem_la_SOURCES = \
 	sfu/sfu.cc \
 	workercmdproc/workercmdproc.h \
 	tileengine/tileEngine.h \
+	tileengine/workloadPlacement.h \
 	tileunit/tileUnitAPI.h \
 	tileunit/tileUnit.h \
 	tileunit/tileUnitArray.h \
