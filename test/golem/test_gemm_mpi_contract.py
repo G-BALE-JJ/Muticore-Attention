@@ -62,10 +62,19 @@ class GemmMpiContractTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("GOLEM_MPI_PARTITIONING=1", result.stdout)
-        self.assertIn("/bin/echo -np 2 /tmp/golem-test-sst", result.stdout)
+        self.assertIn("/bin/echo --output-filename ", result.stdout)
+        self.assertIn("/mpi_rank_output -np 2 /tmp/golem-test-sst", result.stdout)
         self.assertIn("--num-threads=1", result.stdout)
         self.assertIn("--partitioner=sst.self", result.stdout)
         self.assertIn("architecture/ncores_selfcom_dma_ctrl.py", result.stdout)
+
+    def test_runner_preserves_explicit_rank_stream_destination(self):
+        result = self._dry_run('--mpi-ranks', '2', '--mpi-launcher', '/bin/echo',
+                               '--mpi-args', '--bind-to core --output-filename /tmp/my-rank-streams')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        command = next(line for line in result.stdout.splitlines() if 'SST command' in line)
+        self.assertEqual(command.count('--output-filename'), 1)
+        self.assertIn('/tmp/my-rank-streams -np 2', command)
 
     def test_runner_rejects_being_launched_once_per_rank(self):
         env = os.environ.copy()

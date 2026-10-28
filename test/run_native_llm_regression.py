@@ -14,6 +14,8 @@ CASES = [dict(name='qkv_' + mode, operator='qkv', precision=mode, flags=[])
 CASES += [dict(name=operator, operator=operator, precision='fp16', flags=['--reuse', '1'])
           for operator in ('wo', 'gate', 'up', 'down', 'lm_head')]
 CASES += [
+    dict(name='qkv_formal128', operator='qkv', precision='fp16',
+         flags=['--shape', 'formal', '--sequence', '128']),
     dict(name='qkv_striped', operator='qkv', precision='fp16', flags=['--panel-mapping', 'reuse-striped']),
     dict(name='qkv_replicated', operator='qkv', precision='fp16', flags=['--replicate-b']),
     dict(name='qkv_independent2', operator='qkv', precision='fp16',
@@ -70,7 +72,8 @@ def main():
                 if any(n['status'] != expected for n in result['numerics']):
                     raise ValueError('unexpected numerical validation status')
                 pair[mode] = result
-            keys = ('cycles', 'output_tiles', 'native_workers', 'logical_shape', 'padded_shape', 'instances')
+            keys = ('cycles', 'output_tiles', 'native_workers', 'logical_shape', 'padded_shape',
+                    'instances', 'input_sha256', 'panel_mapping', 'replicate_b')
             if any(pair['full-functional'][k] != pair['full-timing'][k] for k in keys):
                 raise ValueError('functional/timing workload or cycle mismatch: '+case['name'])
             report['cases'].append(dict(**case, status='PASS', delta_cycles=0, pairs=pair))

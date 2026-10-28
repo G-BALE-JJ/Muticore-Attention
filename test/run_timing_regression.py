@@ -16,6 +16,7 @@ CASES=[
  dict(name='attention_causal_rope',stage='Attention',flags=['--query-length','512','--kv-length','512','--head-dim','64','--causal','--rope','--mpi-ranks','4']),
  dict(name='gqa_group4',stage='GQA',flags=['--query-length','512','--kv-length','512','--head-dim','64','--num-query-heads','4','--num-kv-heads','1','--mpi-ranks','2']),
  dict(name='gqa_group2_d128',stage='GQA',flags=['--query-length','512','--kv-length','1024','--head-dim','128','--num-query-heads','4','--num-kv-heads','2','--mpi-ranks','4']),
+ dict(name='gqa_q1024_k512',stage='GQA',flags=['--query-length','1024','--kv-length','512','--head-dim','64','--num-query-heads','4','--num-kv-heads','2','--mpi-ranks','2']),
  dict(name='prefill_token1',stage='prefill',flags=['--layers','1','--sequence','1','--mpi-ranks','2']),
  dict(name='prefill_l2_token65',stage='prefill',flags=['--layers','2','--sequence','65','--mpi-ranks','4']),
  dict(name='prefill_padded2048',stage='prefill',flags=['--layers','1','--sequence','1025','--mpi-ranks','4']),

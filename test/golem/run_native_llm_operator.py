@@ -109,6 +109,9 @@ def verify(root,config,mode):
     if set(map(int,done))!=set(range(4,20)):raise ValueError('missing timed native worker completion')
     return dict(status='PASS',sim_mode=mode,operator=config['operator'],precision=config['precision'],
         logical_shape=config['logical_shape'],padded_shape=config['padded_shape'],instances=len(p['instances']),
+        input_sha256=[dict(a=digest(root/f'input_a_{i}.npy'),b=digest(root/f'input_b_{i}.npy'))
+                      for i in range(len(p['instances']))],
+        panel_mapping=p['panel_mapping'],replicate_b=p['replicate_b'],
         native_workers=16,output_tiles=tiles,numerics=errors,latency_unit='cycles',
         cycles=float(metrics['gemm_system_latency_cycles']),
         scope='first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1',

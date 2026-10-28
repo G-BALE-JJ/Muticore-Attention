@@ -1,0 +1,4764 @@
+{
+  "status": "PASS",
+  "latency_unit": "cycles",
+  "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+  "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+  "implementation_commit": "295fe0ca2c276e0a64e87f475bdb9bedb935f7cf",
+  "source_sha256": {
+    "src/sst/elements/golem/rocc/roccAnalog.h": "3e9ae6dbe993ce4d69648b242f9e7e90fa1e50274919b16725c6da1a30fe3349",
+    "src/sst/elements/golem/tileengine/tileEngine.h": "8fc83c3cf20e203019b05418c7719ddf5c5240e2d32c79a6cf3e41786568ae13",
+    "src/sst/elements/golem/array/mvmComputeArray.h": "6772109de148fd22b0c8e2aaf7590bc25ff49175d2847436ad1e72c68524c4a4",
+    "src/sst/elements/golem/computeunit/peTiming.def": "b5ad05c6749f4ee9ab39710ac2e468ed080fe08bf243d2244c7329e630c6c46b",
+    "test/run.py": "e30465c69e9e0a3e9a781d431a1f221e989929d2c317d29e672b02755ec323d4",
+    "test/run_timing_regression.py": "50131d5c7306c62898ed5854678f50cfcf0a5b66d18a30e600c4247724b93246",
+    "test/run_native_llm_regression.py": "52d4b3e40725ace577a3c94f1275974dd167a071250f2875663ae04f9b202f04",
+    "test/golem/run_native_llm_operator.py": "5b57e1a6435b97ba12ce33b90afc7608c6b811994341bd1abf56de6acfc5ed49",
+    "test/golem/run_noc_dma_pipeline.sh": "717e54cf7621d971d5bd3a236573e2e814266c7f4c07321f1165fe3f13d15b0e",
+    "test/golem/tools/native_llm_workload.py": "144c8b4ca1a5abe42bf20bf20bdc9d252a67aa4851b0424ebb33bd379a259c14",
+    "test/golem/tools/native_workload_plan.py": "65c3c220392d2c134c2709f5110a0a73d6d3f43851702d213f36d6c7bd4388bd",
+    "test/golem/tools/gen_hbm_init.py": "ba84a3a80385b6cae6bed8999dc4c955713338ac08e132efc3118b9712d6feab",
+    "test/golem/architecture/cpu_builder.py": "d7d8ae570efa8d4bc26ed27363986225d23f2e15d445c707702eedd312a945a8",
+    "test/golem/small/muticore_attention/run_fused_attention_scale.sh": "4f4097675e3857b3d73e76ed8c47d38d075ad9c2d3cdbb7375e6b6c1d1c44bda",
+    "test/maintenance/mechanism_alignment/validate_timing.py": "2ec8952f3f0af22e1818a0b3923bda6dd147cc4ecb8b380a5a3d61e0906fc1f4"
+  },
+  "formal_gate": {
+    "status": "PASS",
+    "phase": "native_workloads_verified",
+    "source_commit": "295fe0ca2c276e0a64e87f475bdb9bedb935f7cf",
+    "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+    "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+    "stages": {
+      "GEMM": "PASS",
+      "Attention": "PASS",
+      "GQA": "PASS",
+      "prefill": "PASS"
+    },
+    "cycles": {
+      "GEMM": 3500.0,
+      "Attention": 12852,
+      "GQA": 37928,
+      "prefill": 6084167.75
+    },
+    "delta_from_public_cycles": {
+      "GEMM": 0.0,
+      "Attention": 0,
+      "GQA": 0,
+      "prefill": 0.0
+    }
+  },
+  "timing_regression": {
+    "status": "PASS",
+    "latency_unit": "cycles",
+    "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+    "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+    "cases": [
+      {
+        "name": "gemm_k64",
+        "stage": "GEMM",
+        "flags": [
+          "--gemm-k",
+          "64"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "cycles": 3158.0,
+            "completion": {
+              "final_c_writebacks": 4
+            },
+            "scope": "first descriptor start through last WCP completion, inclusive +1",
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/gemm_k64/full-functional"
+          },
+          "full-timing": {
+            "cycles": 3158.0,
+            "completion": {
+              "final_c_writebacks": 4
+            },
+            "scope": "first descriptor start through last WCP completion, inclusive +1",
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/gemm_k64/full-timing"
+          }
+        }
+      },
+      {
+        "name": "gemm_k192_mpi2",
+        "stage": "GEMM",
+        "flags": [
+          "--gemm-m",
+          "256",
+          "--gemm-k",
+          "192",
+          "--mpi-ranks",
+          "2"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "cycles": 5008.0,
+            "completion": {
+              "final_c_writebacks": 8
+            },
+            "scope": "first descriptor start through last WCP completion, inclusive +1",
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/gemm_k192_mpi2/full-functional"
+          },
+          "full-timing": {
+            "cycles": 5008.0,
+            "completion": {
+              "final_c_writebacks": 8
+            },
+            "scope": "first descriptor start through last WCP completion, inclusive +1",
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/gemm_k192_mpi2/full-timing"
+          }
+        }
+      },
+      {
+        "name": "attention_d64_mpi2",
+        "stage": "Attention",
+        "flags": [
+          "--query-length",
+          "512",
+          "--kv-length",
+          "512",
+          "--head-dim",
+          "64",
+          "--mpi-ranks",
+          "2"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "cycles": 4645,
+            "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+            "completion": {
+              "jobs": 8,
+              "stages": {
+                "qk": 8,
+                "sfu": 8,
+                "pv": 16
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/attention_d64_mpi2/full-functional"
+          },
+          "full-timing": {
+            "cycles": 4645,
+            "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+            "completion": {
+              "jobs": 8,
+              "stages": {
+                "qk": 8,
+                "sfu": 8,
+                "pv": 16
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/attention_d64_mpi2/full-timing"
+          }
+        }
+      },
+      {
+        "name": "attention_causal_rope",
+        "stage": "Attention",
+        "flags": [
+          "--query-length",
+          "512",
+          "--kv-length",
+          "512",
+          "--head-dim",
+          "64",
+          "--causal",
+          "--rope",
+          "--mpi-ranks",
+          "4"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "cycles": 5289,
+            "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+            "completion": {
+              "jobs": 8,
+              "stages": {
+                "qk": 8,
+                "sfu": 8,
+                "pv": 12
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/attention_causal_rope/full-functional"
+          },
+          "full-timing": {
+            "cycles": 5289,
+            "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+            "completion": {
+              "jobs": 8,
+              "stages": {
+                "qk": 8,
+                "sfu": 8,
+                "pv": 12
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/attention_causal_rope/full-timing"
+          }
+        }
+      },
+      {
+        "name": "gqa_group4",
+        "stage": "GQA",
+        "flags": [
+          "--query-length",
+          "512",
+          "--kv-length",
+          "512",
+          "--head-dim",
+          "64",
+          "--num-query-heads",
+          "4",
+          "--num-kv-heads",
+          "1",
+          "--mpi-ranks",
+          "2"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "cycles": 10594,
+            "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+            "completion": {
+              "jobs": 8,
+              "stages": {
+                "qk": 8,
+                "sfu": 8,
+                "pv": 64
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/gqa_group4/full-functional"
+          },
+          "full-timing": {
+            "cycles": 10594,
+            "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+            "completion": {
+              "jobs": 8,
+              "stages": {
+                "qk": 8,
+                "sfu": 8,
+                "pv": 64
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/gqa_group4/full-timing"
+          }
+        }
+      },
+      {
+        "name": "gqa_group2_d128",
+        "stage": "GQA",
+        "flags": [
+          "--query-length",
+          "512",
+          "--kv-length",
+          "1024",
+          "--head-dim",
+          "128",
+          "--num-query-heads",
+          "4",
+          "--num-kv-heads",
+          "2",
+          "--mpi-ranks",
+          "4"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "cycles": 21595,
+            "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+            "completion": {
+              "jobs": 16,
+              "stages": {
+                "qk": 16,
+                "sfu": 16,
+                "pv": 128
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/gqa_group2_d128/full-functional"
+          },
+          "full-timing": {
+            "cycles": 21595,
+            "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+            "completion": {
+              "jobs": 16,
+              "stages": {
+                "qk": 16,
+                "sfu": 16,
+                "pv": 128
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/gqa_group2_d128/full-timing"
+          }
+        }
+      },
+      {
+        "name": "gqa_q1024_k512",
+        "stage": "GQA",
+        "flags": [
+          "--query-length",
+          "1024",
+          "--kv-length",
+          "512",
+          "--head-dim",
+          "64",
+          "--num-query-heads",
+          "4",
+          "--num-kv-heads",
+          "2",
+          "--mpi-ranks",
+          "2"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "cycles": 19147,
+            "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+            "completion": {
+              "jobs": 16,
+              "stages": {
+                "qk": 16,
+                "sfu": 16,
+                "pv": 128
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/gqa_q1024_k512/full-functional"
+          },
+          "full-timing": {
+            "cycles": 19147,
+            "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+            "completion": {
+              "jobs": 16,
+              "stages": {
+                "qk": 16,
+                "sfu": 16,
+                "pv": 128
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/gqa_q1024_k512/full-timing"
+          }
+        }
+      },
+      {
+        "name": "prefill_token1",
+        "stage": "prefill",
+        "flags": [
+          "--layers",
+          "1",
+          "--sequence",
+          "1",
+          "--mpi-ranks",
+          "2"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "cycles": 469442.625,
+            "scope": "first token-ID DMA send to last-token logits final output DMA ACK",
+            "completion": {
+              "lifecycle": {
+                "status": "PASS",
+                "projection_jobs": 16,
+                "decoder_ops": 144,
+                "reset_ack_count": 32,
+                "epoch_flags": false,
+                "layers": 1,
+                "scratch_retire_count": 32,
+                "distinct_attention_tags": true,
+                "all_attention_jobs_checked": 16,
+                "stage_spans": {
+                  "1": {
+                    "1": {
+                      "start_tick": 443646000,
+                      "end_tick": 455351000,
+                      "span_cycles": 11705.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2621440,
+                      "hbm_write_bytes": 524288
+                    },
+                    "2": {
+                      "start_tick": 453930000,
+                      "end_tick": 460227000,
+                      "span_cycles": 6297.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524288
+                    },
+                    "3": {
+                      "start_tick": 458684000,
+                      "end_tick": 470874000,
+                      "span_cycles": 12190.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 540672,
+                      "hbm_write_bytes": 524288
+                    },
+                    "4": {
+                      "start_tick": 467094000,
+                      "end_tick": 509744000,
+                      "span_cycles": 42650.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "5": {
+                      "start_tick": 503307000,
+                      "end_tick": 548092000,
+                      "span_cycles": 44785.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "6": {
+                      "start_tick": 539609000,
+                      "end_tick": 625295000,
+                      "span_cycles": 85686.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2097152,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "7": {
+                      "start_tick": 613820000,
+                      "end_tick": 651950000,
+                      "span_cycles": 38130.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 4194304,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "8": {
+                      "start_tick": 631340000,
+                      "end_tick": 689423000,
+                      "span_cycles": 58083.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 10485760,
+                      "hbm_write_bytes": 524288
+                    },
+                    "9": {
+                      "start_tick": 667703000,
+                      "end_tick": 694149000,
+                      "span_cycles": 26446.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524416
+                    }
+                  }
+                },
+                "ffn_panel_flow": [],
+                "ffn_down_flow": [],
+                "attention_start_ticks": {
+                  "1": 387683000
+                }
+              },
+              "embedding_bytes": 524288,
+              "logits_bytes": 16512,
+              "lm_jobs": 32,
+              "shape": {
+                "S": 1,
+                "padded_S": 1024,
+                "hidden": 256,
+                "intermediate": 1024,
+                "layers": 1
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/prefill_token1/full-functional"
+          },
+          "full-timing": {
+            "cycles": 469442.625,
+            "scope": "first token-ID DMA send to last-token logits final output DMA ACK",
+            "completion": {
+              "lifecycle": {
+                "status": "PASS",
+                "projection_jobs": 16,
+                "decoder_ops": 144,
+                "reset_ack_count": 32,
+                "epoch_flags": false,
+                "layers": 1,
+                "scratch_retire_count": 32,
+                "distinct_attention_tags": true,
+                "all_attention_jobs_checked": 16,
+                "stage_spans": {
+                  "1": {
+                    "1": {
+                      "start_tick": 443646000,
+                      "end_tick": 455351000,
+                      "span_cycles": 11705.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2621440,
+                      "hbm_write_bytes": 524288
+                    },
+                    "2": {
+                      "start_tick": 453930000,
+                      "end_tick": 460227000,
+                      "span_cycles": 6297.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524288
+                    },
+                    "3": {
+                      "start_tick": 458684000,
+                      "end_tick": 470874000,
+                      "span_cycles": 12190.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 540672,
+                      "hbm_write_bytes": 524288
+                    },
+                    "4": {
+                      "start_tick": 467094000,
+                      "end_tick": 509744000,
+                      "span_cycles": 42650.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "5": {
+                      "start_tick": 503307000,
+                      "end_tick": 548092000,
+                      "span_cycles": 44785.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "6": {
+                      "start_tick": 539609000,
+                      "end_tick": 625295000,
+                      "span_cycles": 85686.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2097152,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "7": {
+                      "start_tick": 613820000,
+                      "end_tick": 651950000,
+                      "span_cycles": 38130.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 4194304,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "8": {
+                      "start_tick": 631340000,
+                      "end_tick": 689423000,
+                      "span_cycles": 58083.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 10485760,
+                      "hbm_write_bytes": 524288
+                    },
+                    "9": {
+                      "start_tick": 667703000,
+                      "end_tick": 694149000,
+                      "span_cycles": 26446.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524416
+                    }
+                  }
+                },
+                "ffn_panel_flow": [],
+                "ffn_down_flow": [],
+                "attention_start_ticks": {
+                  "1": 387683000
+                }
+              },
+              "embedding_bytes": 524288,
+              "logits_bytes": 16512,
+              "lm_jobs": 32,
+              "shape": {
+                "S": 1,
+                "padded_S": 1024,
+                "hidden": 256,
+                "intermediate": 1024,
+                "layers": 1
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/prefill_token1/full-timing"
+          }
+        }
+      },
+      {
+        "name": "prefill_l2_token65",
+        "stage": "prefill",
+        "flags": [
+          "--layers",
+          "2",
+          "--sequence",
+          "65",
+          "--mpi-ranks",
+          "4"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "cycles": 855409.625,
+            "scope": "first token-ID DMA send to last-token logits final output DMA ACK",
+            "completion": {
+              "lifecycle": {
+                "status": "PASS",
+                "projection_jobs": 32,
+                "decoder_ops": 288,
+                "reset_ack_count": 64,
+                "epoch_flags": false,
+                "layers": 2,
+                "scratch_retire_count": 64,
+                "distinct_attention_tags": true,
+                "all_attention_jobs_checked": 32,
+                "stage_spans": {
+                  "1": {
+                    "1": {
+                      "start_tick": 449086000,
+                      "end_tick": 460857000,
+                      "span_cycles": 11771.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2621440,
+                      "hbm_write_bytes": 524288
+                    },
+                    "2": {
+                      "start_tick": 459763000,
+                      "end_tick": 465654000,
+                      "span_cycles": 5891.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524288
+                    },
+                    "3": {
+                      "start_tick": 464343000,
+                      "end_tick": 476849000,
+                      "span_cycles": 12506.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 540672,
+                      "hbm_write_bytes": 524288
+                    },
+                    "4": {
+                      "start_tick": 472419000,
+                      "end_tick": 515429000,
+                      "span_cycles": 43010.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "5": {
+                      "start_tick": 508170000,
+                      "end_tick": 553102000,
+                      "span_cycles": 44932.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "6": {
+                      "start_tick": 544683000,
+                      "end_tick": 629864000,
+                      "span_cycles": 85181.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2097152,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "7": {
+                      "start_tick": 618689000,
+                      "end_tick": 659147000,
+                      "span_cycles": 40458.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 4194304,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "8": {
+                      "start_tick": 635482000,
+                      "end_tick": 696263000,
+                      "span_cycles": 60781.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 10485760,
+                      "hbm_write_bytes": 524288
+                    },
+                    "9": {
+                      "start_tick": 672262000,
+                      "end_tick": 701202000,
+                      "span_cycles": 28940.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524416
+                    }
+                  },
+                  "2": {
+                    "1": {
+                      "start_tick": 838048000,
+                      "end_tick": 850188000,
+                      "span_cycles": 12140.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2621440,
+                      "hbm_write_bytes": 524288
+                    },
+                    "2": {
+                      "start_tick": 848663000,
+                      "end_tick": 855068000,
+                      "span_cycles": 6405.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524288
+                    },
+                    "3": {
+                      "start_tick": 853095000,
+                      "end_tick": 865924000,
+                      "span_cycles": 12829.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 540672,
+                      "hbm_write_bytes": 524288
+                    },
+                    "4": {
+                      "start_tick": 861031000,
+                      "end_tick": 904178000,
+                      "span_cycles": 43147.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "5": {
+                      "start_tick": 896871000,
+                      "end_tick": 942233000,
+                      "span_cycles": 45362.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "6": {
+                      "start_tick": 933720000,
+                      "end_tick": 1019414000,
+                      "span_cycles": 85694.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2097152,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "7": {
+                      "start_tick": 1007814000,
+                      "end_tick": 1045048000,
+                      "span_cycles": 37234.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 4194304,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "8": {
+                      "start_tick": 1025294000,
+                      "end_tick": 1081035000,
+                      "span_cycles": 55741.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 10485760,
+                      "hbm_write_bytes": 524288
+                    },
+                    "9": {
+                      "start_tick": 1060595000,
+                      "end_tick": 1085816000,
+                      "span_cycles": 25221.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524416
+                    }
+                  }
+                },
+                "ffn_panel_flow": [],
+                "ffn_down_flow": [],
+                "attention_start_ticks": {
+                  "1": 393109000,
+                  "2": 789562000
+                }
+              },
+              "embedding_bytes": 524288,
+              "logits_bytes": 16512,
+              "lm_jobs": 32,
+              "shape": {
+                "S": 65,
+                "padded_S": 1024,
+                "hidden": 256,
+                "intermediate": 1024,
+                "layers": 2
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/prefill_l2_token65/full-functional"
+          },
+          "full-timing": {
+            "cycles": 855409.625,
+            "scope": "first token-ID DMA send to last-token logits final output DMA ACK",
+            "completion": {
+              "lifecycle": {
+                "status": "PASS",
+                "projection_jobs": 32,
+                "decoder_ops": 288,
+                "reset_ack_count": 64,
+                "epoch_flags": false,
+                "layers": 2,
+                "scratch_retire_count": 64,
+                "distinct_attention_tags": true,
+                "all_attention_jobs_checked": 32,
+                "stage_spans": {
+                  "1": {
+                    "1": {
+                      "start_tick": 449086000,
+                      "end_tick": 460857000,
+                      "span_cycles": 11771.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2621440,
+                      "hbm_write_bytes": 524288
+                    },
+                    "2": {
+                      "start_tick": 459763000,
+                      "end_tick": 465654000,
+                      "span_cycles": 5891.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524288
+                    },
+                    "3": {
+                      "start_tick": 464343000,
+                      "end_tick": 476849000,
+                      "span_cycles": 12506.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 540672,
+                      "hbm_write_bytes": 524288
+                    },
+                    "4": {
+                      "start_tick": 472419000,
+                      "end_tick": 515429000,
+                      "span_cycles": 43010.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "5": {
+                      "start_tick": 508170000,
+                      "end_tick": 553102000,
+                      "span_cycles": 44932.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "6": {
+                      "start_tick": 544683000,
+                      "end_tick": 629864000,
+                      "span_cycles": 85181.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2097152,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "7": {
+                      "start_tick": 618689000,
+                      "end_tick": 659147000,
+                      "span_cycles": 40458.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 4194304,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "8": {
+                      "start_tick": 635482000,
+                      "end_tick": 696263000,
+                      "span_cycles": 60781.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 10485760,
+                      "hbm_write_bytes": 524288
+                    },
+                    "9": {
+                      "start_tick": 672262000,
+                      "end_tick": 701202000,
+                      "span_cycles": 28940.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524416
+                    }
+                  },
+                  "2": {
+                    "1": {
+                      "start_tick": 838048000,
+                      "end_tick": 850188000,
+                      "span_cycles": 12140.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2621440,
+                      "hbm_write_bytes": 524288
+                    },
+                    "2": {
+                      "start_tick": 848663000,
+                      "end_tick": 855068000,
+                      "span_cycles": 6405.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524288
+                    },
+                    "3": {
+                      "start_tick": 853095000,
+                      "end_tick": 865924000,
+                      "span_cycles": 12829.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 540672,
+                      "hbm_write_bytes": 524288
+                    },
+                    "4": {
+                      "start_tick": 861031000,
+                      "end_tick": 904178000,
+                      "span_cycles": 43147.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "5": {
+                      "start_tick": 896871000,
+                      "end_tick": 942233000,
+                      "span_cycles": 45362.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8912896,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "6": {
+                      "start_tick": 933720000,
+                      "end_tick": 1019414000,
+                      "span_cycles": 85694.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2097152,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "7": {
+                      "start_tick": 1007814000,
+                      "end_tick": 1045048000,
+                      "span_cycles": 37234.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 4194304,
+                      "hbm_write_bytes": 2097152
+                    },
+                    "8": {
+                      "start_tick": 1025294000,
+                      "end_tick": 1081035000,
+                      "span_cycles": 55741.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 10485760,
+                      "hbm_write_bytes": 524288
+                    },
+                    "9": {
+                      "start_tick": 1060595000,
+                      "end_tick": 1085816000,
+                      "span_cycles": 25221.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1048576,
+                      "hbm_write_bytes": 524416
+                    }
+                  }
+                },
+                "ffn_panel_flow": [],
+                "ffn_down_flow": [],
+                "attention_start_ticks": {
+                  "1": 393109000,
+                  "2": 789562000
+                }
+              },
+              "embedding_bytes": 524288,
+              "logits_bytes": 16512,
+              "lm_jobs": 32,
+              "shape": {
+                "S": 65,
+                "padded_S": 1024,
+                "hidden": 256,
+                "intermediate": 1024,
+                "layers": 2
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/prefill_l2_token65/full-timing"
+          }
+        }
+      },
+      {
+        "name": "prefill_padded2048",
+        "stage": "prefill",
+        "flags": [
+          "--layers",
+          "1",
+          "--sequence",
+          "1025",
+          "--mpi-ranks",
+          "4"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "cycles": 788735.625,
+            "scope": "first token-ID DMA send to last-token logits final output DMA ACK",
+            "completion": {
+              "lifecycle": {
+                "status": "PASS",
+                "projection_jobs": 16,
+                "decoder_ops": 144,
+                "reset_ack_count": 32,
+                "epoch_flags": false,
+                "layers": 1,
+                "scratch_retire_count": 32,
+                "distinct_attention_tags": true,
+                "all_attention_jobs_checked": 16,
+                "stage_spans": {
+                  "1": {
+                    "1": {
+                      "start_tick": 522830000,
+                      "end_tick": 544824000,
+                      "span_cycles": 21994.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 5242880,
+                      "hbm_write_bytes": 1048576
+                    },
+                    "2": {
+                      "start_tick": 543196000,
+                      "end_tick": 555588000,
+                      "span_cycles": 12392.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2097152,
+                      "hbm_write_bytes": 1048576
+                    },
+                    "3": {
+                      "start_tick": 552329000,
+                      "end_tick": 573337000,
+                      "span_cycles": 21008.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1081344,
+                      "hbm_write_bytes": 1048576
+                    },
+                    "4": {
+                      "start_tick": 568723000,
+                      "end_tick": 648825000,
+                      "span_cycles": 80102.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 17825792,
+                      "hbm_write_bytes": 4194304
+                    },
+                    "5": {
+                      "start_tick": 639946000,
+                      "end_tick": 724307000,
+                      "span_cycles": 84361.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 17825792,
+                      "hbm_write_bytes": 4194304
+                    },
+                    "6": {
+                      "start_tick": 712513000,
+                      "end_tick": 877997000,
+                      "span_cycles": 165484.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 4194304,
+                      "hbm_write_bytes": 4194304
+                    },
+                    "7": {
+                      "start_tick": 860580000,
+                      "end_tick": 925020000,
+                      "span_cycles": 64440.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8388608,
+                      "hbm_write_bytes": 4194304
+                    },
+                    "8": {
+                      "start_tick": 895392000,
+                      "end_tick": 997252000,
+                      "span_cycles": 101860.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 20971520,
+                      "hbm_write_bytes": 1048576
+                    },
+                    "9": {
+                      "start_tick": 965058000,
+                      "end_tick": 1007010000,
+                      "span_cycles": 41952.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2097152,
+                      "hbm_write_bytes": 1048704
+                    }
+                  }
+                },
+                "ffn_panel_flow": [],
+                "ffn_down_flow": [],
+                "attention_start_ticks": {
+                  "1": 419373000
+                }
+              },
+              "embedding_bytes": 1048576,
+              "logits_bytes": 16512,
+              "lm_jobs": 32,
+              "shape": {
+                "S": 1025,
+                "padded_S": 2048,
+                "hidden": 256,
+                "intermediate": 1024,
+                "layers": 1
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/prefill_padded2048/full-functional"
+          },
+          "full-timing": {
+            "cycles": 788735.625,
+            "scope": "first token-ID DMA send to last-token logits final output DMA ACK",
+            "completion": {
+              "lifecycle": {
+                "status": "PASS",
+                "projection_jobs": 16,
+                "decoder_ops": 144,
+                "reset_ack_count": 32,
+                "epoch_flags": false,
+                "layers": 1,
+                "scratch_retire_count": 32,
+                "distinct_attention_tags": true,
+                "all_attention_jobs_checked": 16,
+                "stage_spans": {
+                  "1": {
+                    "1": {
+                      "start_tick": 522830000,
+                      "end_tick": 544824000,
+                      "span_cycles": 21994.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 5242880,
+                      "hbm_write_bytes": 1048576
+                    },
+                    "2": {
+                      "start_tick": 543196000,
+                      "end_tick": 555588000,
+                      "span_cycles": 12392.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2097152,
+                      "hbm_write_bytes": 1048576
+                    },
+                    "3": {
+                      "start_tick": 552329000,
+                      "end_tick": 573337000,
+                      "span_cycles": 21008.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 1081344,
+                      "hbm_write_bytes": 1048576
+                    },
+                    "4": {
+                      "start_tick": 568723000,
+                      "end_tick": 648825000,
+                      "span_cycles": 80102.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 17825792,
+                      "hbm_write_bytes": 4194304
+                    },
+                    "5": {
+                      "start_tick": 639946000,
+                      "end_tick": 724307000,
+                      "span_cycles": 84361.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 17825792,
+                      "hbm_write_bytes": 4194304
+                    },
+                    "6": {
+                      "start_tick": 712513000,
+                      "end_tick": 877997000,
+                      "span_cycles": 165484.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 4194304,
+                      "hbm_write_bytes": 4194304
+                    },
+                    "7": {
+                      "start_tick": 860580000,
+                      "end_tick": 925020000,
+                      "span_cycles": 64440.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 8388608,
+                      "hbm_write_bytes": 4194304
+                    },
+                    "8": {
+                      "start_tick": 895392000,
+                      "end_tick": 997252000,
+                      "span_cycles": 101860.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 20971520,
+                      "hbm_write_bytes": 1048576
+                    },
+                    "9": {
+                      "start_tick": 965058000,
+                      "end_tick": 1007010000,
+                      "span_cycles": 41952.0,
+                      "workers": 16,
+                      "hbm_read_bytes": 2097152,
+                      "hbm_write_bytes": 1048704
+                    }
+                  }
+                },
+                "ffn_panel_flow": [],
+                "ffn_down_flow": [],
+                "attention_start_ticks": {
+                  "1": 419373000
+                }
+              },
+              "embedding_bytes": 1048576,
+              "logits_bytes": 16512,
+              "lm_jobs": 32,
+              "shape": {
+                "S": 1025,
+                "padded_S": 2048,
+                "hidden": 256,
+                "intermediate": 1024,
+                "layers": 1
+              }
+            },
+            "artifact_root": "/data/jjgong/LLM/test/reports/native_updates_final_matrix/prefill_padded2048/full-timing"
+          }
+        }
+      }
+    ]
+  },
+  "native_regression": {
+    "status": "PASS",
+    "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+    "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+    "latency_unit": "cycles",
+    "cases": [
+      {
+        "name": "qkv_int4",
+        "operator": "qkv",
+        "precision": "int4",
+        "flags": [],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "int4",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 3638.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "92dbac88fd15fd5048465fa8bcaa13e572784f79745fbd205864cdfb20063cbb",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ],
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "int4",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 3638.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "9626b3a7418b74153f055fb2ff57862e70fb44a9927093ae208945e2007721f9",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ],
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_int8",
+        "operator": "qkv",
+        "precision": "int8",
+        "flags": [],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "int8",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4233.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "2027b8d5bdd7015ddea0f0ef51d47cf76236e2bbd423eef43b506208a0ecaa32",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ],
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "int8",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4233.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "e3aa0dce46a35968175040b0fa4cfb7a6af87534ded104ae8a0d4b94bacb7a41",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ],
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_fp16",
+        "operator": "qkv",
+        "precision": "fp16",
+        "flags": [],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4989.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "2affb3bba80b79709aa59d5c7b36a0153d78d021bf7c9d8902ef57048f997e9a",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ],
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4989.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "644000152fc5de5e8c2af5d20c8e2c23e7cd575337219a7017cbef996a953b19",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ],
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_bf16",
+        "operator": "qkv",
+        "precision": "bf16",
+        "flags": [],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "bf16",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4989.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "ca89117e00be8f2118a5515b4ca46ae71d2c9248f2e471c4bf199241dbf6989a",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "bf16",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4989.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "4353a26362d15515f7b3ccc272e1fe994b434fbbdb00c04ada33e1c2d1ef6f7f",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_tf32",
+        "operator": "qkv",
+        "precision": "tf32",
+        "flags": [],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "tf32",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 6279.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "9da51e7a0976cbbbfe6183be5210ba298c77d91db61199b2aa4497df2a63419a",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "tf32",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 6279.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "01e5a9ff0f0b093ad2ea8008eba856ac4a944e60c6bca9577e383543169a006c",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_fp32",
+        "operator": "qkv",
+        "precision": "fp32",
+        "flags": [],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "fp32",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 6282.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "71f7b20252af560a0299a1a1f81ee04cdf3b9af3acd197e36116c15ac05a8694",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "fp32",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 6282.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "e9f99620f6f1a6d98a51132c3f421d77d4361bf2334d18aa717ed82f9fa9c957",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_fp8e4m3",
+        "operator": "qkv",
+        "precision": "fp8e4m3",
+        "flags": [],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "fp8e4m3",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4233.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "2eb432fe0c9d0b657b7dfcc963fecd7b11ec7d48d0558fbf4d7b78d1b90728bd",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "fp8e4m3",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4233.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "8310358e3ea278ec9695a90976544db51b7e447025d8ec60998d10880ce07148",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_fp8e5m2",
+        "operator": "qkv",
+        "precision": "fp8e5m2",
+        "flags": [],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "fp8e5m2",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4233.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "e8a5eed034cbf92e7c7a19d8b506d6c3b65104d989e9c657b1f06cd315285a19",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "fp8e5m2",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4233.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "9c95d755fd43989f1f629c6d9e9745968d3f8bd16590d02e0f2363fb1a321325",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "wo",
+        "operator": "wo",
+        "precision": "fp16",
+        "flags": [
+          "--reuse",
+          "1"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "wo",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              128,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              128,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "c0efab9c7999cff5f7bf9fe6411e16c3e29e764f4ee670bbb86041a75331e24b"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 32,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4344.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "83c9718b6b80f23091b1a152881af79ea2d3bc67c1dcaaebc5485e77a06ae02b",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "128",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "wo",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              128,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              128,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "c0efab9c7999cff5f7bf9fe6411e16c3e29e764f4ee670bbb86041a75331e24b"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 32,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4344.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "82120c7ae7e2e659d4e476b737db49e5f7d15cf19047833e9cd050156016603e",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "128",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "gate",
+        "operator": "gate",
+        "precision": "fp16",
+        "flags": [
+          "--reuse",
+          "1"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "gate",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              512,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              512,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "577ed0f7d77eae7d654f00bf6246ff5c3b4d2910ffde194f0708d3b468fe4d27"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 128,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 9104.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "fd982f24cbdd8c00666d898a26177ba5c2532794732d2948c7e7a683ec02b960",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "512",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "gate",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              512,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              512,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "577ed0f7d77eae7d654f00bf6246ff5c3b4d2910ffde194f0708d3b468fe4d27"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 128,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 9104.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "c60d37fabc43630e8ad6bda05f3f9d5e3e38f6f100f04fd319507f43aa433cf0",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "512",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "up",
+        "operator": "up",
+        "precision": "fp16",
+        "flags": [
+          "--reuse",
+          "1"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "up",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              512,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              512,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "577ed0f7d77eae7d654f00bf6246ff5c3b4d2910ffde194f0708d3b468fe4d27"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 128,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 9104.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "c5c40642736f3986dcf3d0330fe2fc128bc532f7b43d33c5fff928aa0493b532",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "512",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "up",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              512,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              512,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "577ed0f7d77eae7d654f00bf6246ff5c3b4d2910ffde194f0708d3b468fe4d27"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 128,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 9104.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "37a82788a788dd16e1d4e3e4ef9f08323b716440ef70d4a0f8355d140982f3d4",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "512",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "down",
+        "operator": "down",
+        "precision": "fp16",
+        "flags": [
+          "--reuse",
+          "1"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "down",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              128,
+              512
+            ],
+            "padded_shape": [
+              1024,
+              128,
+              512
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "0e075e328e7e77c574e4c2996c115cc0991ca80b0c5253f04999eb40717f60ac",
+                "b": "02823ece783c6042bdf24b741c2dcbf3c4a2424922dd89185d82a71d0bbd5f3a"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 32,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 8592.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "36c0524c8a26dc392aab97fff116ceafe667e959145dc9196cb131d6cf4585a1",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "128",
+              "--gemm-k",
+              "512",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "down",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              128,
+              512
+            ],
+            "padded_shape": [
+              1024,
+              128,
+              512
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "0e075e328e7e77c574e4c2996c115cc0991ca80b0c5253f04999eb40717f60ac",
+                "b": "02823ece783c6042bdf24b741c2dcbf3c4a2424922dd89185d82a71d0bbd5f3a"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 32,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 8592.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "74c8402463949bd566b0a48bb6df9336eb74d793b251e093e4befaac9c4b3e92",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "128",
+              "--gemm-k",
+              "512",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "lm_head",
+        "operator": "lm_head",
+        "precision": "fp16",
+        "flags": [
+          "--reuse",
+          "1"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "lm_head",
+            "precision": "fp16",
+            "logical_shape": [
+              1,
+              8201,
+              128
+            ],
+            "padded_shape": [
+              64,
+              8256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "5c327e73f80052201d805eecd1d03c689f3da5b47b1c5a0527be28839ec8da9f",
+                "b": "40fc36b8bd629fb0295dd2c844efd2d6ab3d327b41ece1113e0871e1868bd803"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 129,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 14619.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "4e4e87208a864e4731c8607b45e54d123759223a3bf627e02e7585d25445d812",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "64",
+              "--gemm-n",
+              "8256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "lm_head",
+            "precision": "fp16",
+            "logical_shape": [
+              1,
+              8201,
+              128
+            ],
+            "padded_shape": [
+              64,
+              8256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "5c327e73f80052201d805eecd1d03c689f3da5b47b1c5a0527be28839ec8da9f",
+                "b": "40fc36b8bd629fb0295dd2c844efd2d6ab3d327b41ece1113e0871e1868bd803"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 129,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 14619.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "2b83fd556b329ce97e58e162a07e8258b058812863fbdc75b2e9e32775a7785a",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "64",
+              "--gemm-n",
+              "8256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_striped",
+        "operator": "qkv",
+        "precision": "fp16",
+        "flags": [
+          "--panel-mapping",
+          "reuse-striped"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "reuse-striped",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4474.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "77824fd7ecb42a3b1264487eed12693cea3a7d541f87df0ff14d2f3089a5d95c",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "reuse-striped",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4474.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "17dad4c9449fa7e97b6e83035b1701e2e163f2c960c0f8cb95d14a50ca12d890",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_replicated",
+        "operator": "qkv",
+        "precision": "fp16",
+        "flags": [
+          "--replicate-b"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": true,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4498.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "f731dc65de1ed436798eaf5b87d830a42b326d80d84cb839f8000b1e382eb4ea",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": true,
+            "native_workers": 16,
+            "output_tiles": 64,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 4498.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "06114d67c83fc3e55c22214229d22b436318a9da797c8a89a726501c49d1e450",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_independent2",
+        "operator": "qkv",
+        "precision": "fp16",
+        "flags": [
+          "--instances",
+          "2",
+          "--panel-mapping",
+          "reuse-striped",
+          "--replicate-b"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 2,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              },
+              {
+                "a": "e4bc3a4276f0a4d36bbaadaa85f9a79c9f106feffcb9109f28a86c9a9c9470e4",
+                "b": "b6e267a67e6eb4617fc368e2b2fd4b70a6a509996073ed73d43a2ba86eb51c9a"
+              }
+            ],
+            "panel_mapping": "reuse-striped",
+            "replicate_b": true,
+            "native_workers": 16,
+            "output_tiles": 128,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              },
+              {
+                "instance": 1,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 6403.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "4b7ac06caeadc288e9b1b9831b64cd24ebc6a874a1cb26f3015e1df7ef48ba4e",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "fp16",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 2,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              },
+              {
+                "a": "e4bc3a4276f0a4d36bbaadaa85f9a79c9f106feffcb9109f28a86c9a9c9470e4",
+                "b": "b6e267a67e6eb4617fc368e2b2fd4b70a6a509996073ed73d43a2ba86eb51c9a"
+              }
+            ],
+            "panel_mapping": "reuse-striped",
+            "replicate_b": true,
+            "native_workers": 16,
+            "output_tiles": 128,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              },
+              {
+                "instance": 1,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 6403.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "df88a801e9bb7dd3518df53d6ace4ffa25613cf596b1cd82e9f7e5fe0339d35f",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_independent4_mpi4",
+        "operator": "qkv",
+        "precision": "int8",
+        "flags": [
+          "--instances",
+          "4",
+          "--mpi-ranks",
+          "4"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "int8",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 4,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              },
+              {
+                "a": "e4bc3a4276f0a4d36bbaadaa85f9a79c9f106feffcb9109f28a86c9a9c9470e4",
+                "b": "b6e267a67e6eb4617fc368e2b2fd4b70a6a509996073ed73d43a2ba86eb51c9a"
+              },
+              {
+                "a": "20923760c79c91ba3e20f377f1bfb100b335b38d745049b3cd471981fa38249b",
+                "b": "402f979b772487fe599a1feb94d77890e61b43419c2d5301c8cb16c7dd766b44"
+              },
+              {
+                "a": "6cb608b104d3f607e5aedc1a476863b854cf405ccb4a1b090027c63360c7028b",
+                "b": "4506b22278df9ded5d7040392dec111451915ef87730fbb59d0176e15a1c4414"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 256,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              },
+              {
+                "instance": 1,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              },
+              {
+                "instance": 2,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              },
+              {
+                "instance": 3,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 8852.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "9aa5dc2d9219658bf995707346a040e8b9a993b171f96e6761957490ff110242",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "4",
+              "--sim-mode",
+              "full-functional"
+            ]
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "int8",
+            "logical_shape": [
+              1024,
+              256,
+              128
+            ],
+            "padded_shape": [
+              1024,
+              256,
+              128
+            ],
+            "instances": 4,
+            "input_sha256": [
+              {
+                "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+                "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+              },
+              {
+                "a": "e4bc3a4276f0a4d36bbaadaa85f9a79c9f106feffcb9109f28a86c9a9c9470e4",
+                "b": "b6e267a67e6eb4617fc368e2b2fd4b70a6a509996073ed73d43a2ba86eb51c9a"
+              },
+              {
+                "a": "20923760c79c91ba3e20f377f1bfb100b335b38d745049b3cd471981fa38249b",
+                "b": "402f979b772487fe599a1feb94d77890e61b43419c2d5301c8cb16c7dd766b44"
+              },
+              {
+                "a": "6cb608b104d3f607e5aedc1a476863b854cf405ccb4a1b090027c63360c7028b",
+                "b": "4506b22278df9ded5d7040392dec111451915ef87730fbb59d0176e15a1c4414"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 256,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              },
+              {
+                "instance": 1,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              },
+              {
+                "instance": 2,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              },
+              {
+                "instance": 3,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 8852.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "cc26c2827d56859b0620d79d476aec9a6d3514009e1715060795294e528c25bc",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "1024",
+              "--gemm-n",
+              "256",
+              "--gemm-k",
+              "128",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "4",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      },
+      {
+        "name": "qkv_formal128",
+        "operator": "qkv",
+        "precision": "fp16",
+        "flags": [
+          "--shape",
+          "formal",
+          "--sequence",
+          "128"
+        ],
+        "status": "PASS",
+        "delta_cycles": 0,
+        "pairs": {
+          "full-functional": {
+            "status": "PASS",
+            "sim_mode": "full-functional",
+            "operator": "qkv",
+            "precision": "fp16",
+            "logical_shape": [
+              128,
+              3072,
+              2048
+            ],
+            "padded_shape": [
+              128,
+              3072,
+              2048
+            ],
+            "instances": 1,
+            "native_workers": 16,
+            "output_tiles": 96,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "PASS",
+                "max_abs_error": 0.0
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 66934.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "e0f49a9b9b3ac11edb901910e5fb6d78e5ce95543976b3bb19f82214f8b7c739",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "128",
+              "--gemm-n",
+              "3072",
+              "--gemm-k",
+              "2048",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-functional"
+            ],
+            "input_sha256": [
+              {
+                "a": "de46b6a20bf0fa5b624077d20a854cc671c679ca69dbdf16be76abdcc505e83b",
+                "b": "f9eff0019b6a298cb94f2d388e700b21f4c425e94f8003228b9e4efcfb45f44b"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false
+          },
+          "full-timing": {
+            "status": "PASS",
+            "sim_mode": "full-timing",
+            "operator": "qkv",
+            "precision": "fp16",
+            "logical_shape": [
+              128,
+              3072,
+              2048
+            ],
+            "padded_shape": [
+              128,
+              3072,
+              2048
+            ],
+            "instances": 1,
+            "input_sha256": [
+              {
+                "a": "de46b6a20bf0fa5b624077d20a854cc671c679ca69dbdf16be76abdcc505e83b",
+                "b": "f9eff0019b6a298cb94f2d388e700b21f4c425e94f8003228b9e4efcfb45f44b"
+              }
+            ],
+            "panel_mapping": "group-affine",
+            "replicate_b": false,
+            "native_workers": 16,
+            "output_tiles": 96,
+            "numerics": [
+              {
+                "instance": 0,
+                "status": "SKIPPED",
+                "max_abs_error": null
+              }
+            ],
+            "latency_unit": "cycles",
+            "cycles": 66934.0,
+            "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+            "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+            "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+            "config_sha256": "da59feab8aa92c90cffce56df22797e44c8a2167e8f0ed3ff6e83400aaa78377",
+            "real_noc_hbm": true,
+            "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+            "command": [
+              "bash",
+              "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+              "--groups",
+              "4",
+              "--num-cores",
+              "20",
+              "--gemm-cores",
+              "20",
+              "--num-mem-nodes",
+              "5",
+              "--mem-node-size",
+              "134217728",
+              "--mesh-dim-x",
+              "4",
+              "--gemm-m",
+              "128",
+              "--gemm-n",
+              "3072",
+              "--gemm-k",
+              "2048",
+              "--gemm-block-m",
+              "64",
+              "--gemm-block-n",
+              "64",
+              "--gemm-block-k",
+              "64",
+              "--dtype",
+              "fp32",
+              "--tensor-source",
+              "synthetic",
+              "--output-mode",
+              "hbm",
+              "--memory-backend",
+              "ramulator2",
+              "--mpi-ranks",
+              "1",
+              "--sim-mode",
+              "full-timing"
+            ]
+          }
+        },
+        "identical_input_and_placement_payloads_verified": true
+      }
+    ],
+    "case_count": 18
+  },
+  "external_operands": [
+    {
+      "status": "PASS",
+      "sim_mode": "full-functional",
+      "operator": "qkv",
+      "precision": "fp16",
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "instances": 1,
+      "native_workers": 16,
+      "output_tiles": 64,
+      "numerics": [
+        {
+          "instance": 0,
+          "status": "PASS",
+          "max_abs_error": 2.682209014892578e-07
+        }
+      ],
+      "latency_unit": "cycles",
+      "cycles": 4989.0,
+      "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+      "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+      "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+      "config_sha256": "328beb0c8efc701fd0c7170bdef912847dec577338c32e88eae879e5879bdbfb",
+      "real_noc_hbm": true,
+      "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+      "command": [
+        "bash",
+        "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+        "--groups",
+        "4",
+        "--num-cores",
+        "20",
+        "--gemm-cores",
+        "20",
+        "--num-mem-nodes",
+        "5",
+        "--mem-node-size",
+        "134217728",
+        "--mesh-dim-x",
+        "4",
+        "--gemm-m",
+        "1024",
+        "--gemm-n",
+        "256",
+        "--gemm-k",
+        "128",
+        "--gemm-block-m",
+        "64",
+        "--gemm-block-n",
+        "64",
+        "--gemm-block-k",
+        "64",
+        "--dtype",
+        "fp32",
+        "--tensor-source",
+        "synthetic",
+        "--output-mode",
+        "hbm",
+        "--memory-backend",
+        "ramulator2",
+        "--mpi-ranks",
+        "1",
+        "--sim-mode",
+        "full-functional"
+      ],
+      "input_sha256": {
+        "a": "8f2691f7137dba8bba42940a71f179dc7f8a5361837293f73b46ca84c2791663",
+        "b": "3aea9a9a47959f19543343a7b6e7f3b399e06eb04383b92dd4ba30476bf423a3"
+      }
+    },
+    {
+      "status": "PASS",
+      "sim_mode": "full-functional",
+      "operator": "qkv",
+      "precision": "int8",
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "instances": 1,
+      "native_workers": 16,
+      "output_tiles": 64,
+      "numerics": [
+        {
+          "instance": 0,
+          "status": "PASS",
+          "max_abs_error": 0.0
+        }
+      ],
+      "latency_unit": "cycles",
+      "cycles": 4233.0,
+      "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+      "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+      "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+      "config_sha256": "ddeb72f619a93340ef3f39272311c8af9735731619ab8dc0e8a61a5600a30506",
+      "real_noc_hbm": true,
+      "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+      "command": [
+        "bash",
+        "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+        "--groups",
+        "4",
+        "--num-cores",
+        "20",
+        "--gemm-cores",
+        "20",
+        "--num-mem-nodes",
+        "5",
+        "--mem-node-size",
+        "134217728",
+        "--mesh-dim-x",
+        "4",
+        "--gemm-m",
+        "1024",
+        "--gemm-n",
+        "256",
+        "--gemm-k",
+        "128",
+        "--gemm-block-m",
+        "64",
+        "--gemm-block-n",
+        "64",
+        "--gemm-block-k",
+        "64",
+        "--dtype",
+        "fp32",
+        "--tensor-source",
+        "synthetic",
+        "--output-mode",
+        "hbm",
+        "--memory-backend",
+        "ramulator2",
+        "--mpi-ranks",
+        "1",
+        "--sim-mode",
+        "full-functional"
+      ],
+      "input_sha256": {
+        "a": "1f0ba7c8ee40f25b96640788b9b0c7ed654d436b003c37fadbb1b78112d9a1c6",
+        "b": "120c1239b7f7f7cb38edbd052f94a7bc5104adb234997940ea0632c16b6ffb36"
+      }
+    }
+  ],
+  "timing_fast_path": {
+    "status": "PASS",
+    "cycles": 3500.0,
+    "latency_unit": "cycles",
+    "scope": "first descriptor start through last WCP completion, inclusive +1",
+    "mode": "full-timing",
+    "timing_numerical_fast_path": 1,
+    "command": [
+      "taskset",
+      "-c",
+      "12",
+      "bash",
+      "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+      "--groups",
+      "4",
+      "--num-cores",
+      "20",
+      "--gemm-cores",
+      "20",
+      "--num-mem-nodes",
+      "5",
+      "--mesh-dim-x",
+      "4",
+      "--gemm-m",
+      "128",
+      "--gemm-n",
+      "128",
+      "--gemm-k",
+      "128",
+      "--gemm-block-m",
+      "64",
+      "--gemm-block-n",
+      "64",
+      "--gemm-block-k",
+      "64",
+      "--mpi-ranks",
+      "1",
+      "--output-mode",
+      "hbm",
+      "--tensor-source",
+      "sample",
+      "--sim-mode",
+      "full-timing",
+      "--cpuset",
+      "12"
+    ],
+    "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+    "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+    "metrics_sha256": {
+      "execution_summary.csv": "91610435ab73c3210e0badd521b7718bb7ac7f7cdeb7e93fd8926c3a680fdb5e",
+      "terminal_summary.csv": "d6911d741b08d4e3002440e88eeaa29a96a6a29c82d83d852a32726b99a28b0d",
+      "memory_summary.csv": "9aa15fbf60221484d87e9bf59cf68584f449ff9eeb479db14ff94a46b54898be",
+      "dma_summary.csv": "39b24773fefa69ac0c1e5b4246836efea70b30e5dd2e5a60fcb0aeb1be51fd40",
+      "noc_summary.csv": "73cf9bc7cef249ac46379d8f2e8228e5feedc51a4dd4920b9f9783c78584c930",
+      "hbm_read_command_summary.csv": "05ebabff45ef30055b86c8c082dabffe9fee91a2dccfc0e0d7048798fdf65bad"
+    },
+    "final_c_writeback_complete_ratio": "4/4",
+    "source_commit": "295fe0ca2c276e0a64e87f475bdb9bedb935f7cf",
+    "observed_backend_mode": {
+      "functional": 0,
+      "timing_fast_path": 1,
+      "materialize": 0,
+      "observed_arrays": 16
+    },
+    "paired_control": "test/reports/alignment_06_timing_fast_path/result.json",
+    "delta_cycles": 0.0,
+    "same_build_control": "/data/jjgong/LLM/test/reports/native_updates_verified_timing_same_build_control/result.json",
+    "same_build_metrics_equal": true,
+    "same_build_delta_cycles": 0
+  },
+  "timing_control": {
+    "status": "PASS",
+    "cycles": 3500.0,
+    "latency_unit": "cycles",
+    "scope": "first descriptor start through last WCP completion, inclusive +1",
+    "mode": "full-timing",
+    "timing_numerical_fast_path": 0,
+    "command": [
+      "taskset",
+      "-c",
+      "12",
+      "bash",
+      "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+      "--groups",
+      "4",
+      "--num-cores",
+      "20",
+      "--gemm-cores",
+      "20",
+      "--num-mem-nodes",
+      "5",
+      "--mesh-dim-x",
+      "4",
+      "--gemm-m",
+      "128",
+      "--gemm-n",
+      "128",
+      "--gemm-k",
+      "128",
+      "--gemm-block-m",
+      "64",
+      "--gemm-block-n",
+      "64",
+      "--gemm-block-k",
+      "64",
+      "--mpi-ranks",
+      "1",
+      "--output-mode",
+      "hbm",
+      "--tensor-source",
+      "sample",
+      "--sim-mode",
+      "full-timing",
+      "--cpuset",
+      "12"
+    ],
+    "library_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+    "memhierarchy_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+    "metrics_sha256": {
+      "execution_summary.csv": "91610435ab73c3210e0badd521b7718bb7ac7f7cdeb7e93fd8926c3a680fdb5e",
+      "terminal_summary.csv": "d6911d741b08d4e3002440e88eeaa29a96a6a29c82d83d852a32726b99a28b0d",
+      "memory_summary.csv": "9aa15fbf60221484d87e9bf59cf68584f449ff9eeb479db14ff94a46b54898be",
+      "dma_summary.csv": "39b24773fefa69ac0c1e5b4246836efea70b30e5dd2e5a60fcb0aeb1be51fd40",
+      "noc_summary.csv": "73cf9bc7cef249ac46379d8f2e8228e5feedc51a4dd4920b9f9783c78584c930",
+      "hbm_read_command_summary.csv": "05ebabff45ef30055b86c8c082dabffe9fee91a2dccfc0e0d7048798fdf65bad"
+    },
+    "final_c_writeback_complete_ratio": "4/4",
+    "source_commit": "295fe0ca2c276e0a64e87f475bdb9bedb935f7cf",
+    "observed_backend_mode": {
+      "functional": 0,
+      "timing_fast_path": 0,
+      "materialize": 1,
+      "observed_arrays": 16
+    }
+  },
+  "note": "18 native pairs collected from the 17-case suite and the separate formal-H2048 case, all on identical libraries. Input arrays and packed payload identities independently rechecked at collection. Native operator outputs use INT32/FP32, independent from the default FP16 decoder contract."
+}
