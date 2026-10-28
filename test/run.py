@@ -85,7 +85,11 @@ def main():
         if args.dry_run:
             command.append('--schedule-only')
     command += extra
-    details = dict(stage=args.stage, workspace=str(workspace), artifact_root=str(artifacts), command=command,
+    sim_mode=env.get('GOLEM_SIM_MODE','full-functional') if args.stage!='prefill' else 'full-functional'
+    for index, option in enumerate(extra):
+        if option=='--sim-mode' and index+1<len(extra):sim_mode=extra[index+1]
+        elif option.startswith('--sim-mode='):sim_mode=option.split('=',1)[1]
+    details = dict(stage=args.stage, sim_mode=sim_mode, workspace=str(workspace), artifact_root=str(artifacts), command=command,
                    environment_overrides={k: env[k] for k in config.get('environment', {})},
                    latency_unit='cycles', mode='smoke' if args.smoke else 'dry-run' if args.dry_run else 'run')
     print(json.dumps(details, indent=2, ensure_ascii=False), flush=True)

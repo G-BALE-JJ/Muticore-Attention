@@ -11,7 +11,8 @@
       "test_prefill_generalization.py",
       "test_decoder_stack.py",
       "test_selected_guest_digest.py",
-      "test_prefill_hbm_audit.py"
+      "test_prefill_hbm_audit.py",
+      "test_timing_mode.py"
     ]
   },
   "stage": "prefill",

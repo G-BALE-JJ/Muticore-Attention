@@ -35,6 +35,7 @@ def main():
     p.add_argument('--baseline-result', type=Path)
     p.add_argument('--cpu-set', default='8-15')
     p.add_argument('--schedule-only', action='store_true')
+    p.add_argument('--sim-mode',choices=('full-functional','full-timing'),default='full-functional')
     a = p.parse_args()
     config = json.loads(a.configuration.read_text())
     if config['status'] != 'PASS' or config['latency_unit'] != 'cycles':
@@ -43,7 +44,7 @@ def main():
                '--artifact-root', str(a.artifact_root), '--cpu-set', a.cpu_set,
                '--baseline-result', str(a.baseline_result or ROOT/config['baseline_result']),
                '--verification-reference', str(a.verification_reference or ROOT/config['verification_reference']),
-               *config['flags']]
+               *config['flags'], '--sim-mode', a.sim_mode]
     if not a.schedule_only:
         command.append('--run')
         if config.get('measured_library_sha256'):

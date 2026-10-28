@@ -5,7 +5,7 @@ import numpy as np
 from run_decoder_layer import linear_reference,read_bands
 
 
-def verify_lm_head(case,m,log,final,timing):
+def verify_lm_head(case,m,log,final,timing,numerical=True):
     from run_decoder_stack import fields,compare
     from analyze_resource_timeline import FIELDS,merged
     layout=m['layout'];lm=layout['lm_head'];stride=layout['node_stride'];hidden=m['hidden']
@@ -135,30 +135,32 @@ def verify_lm_head(case,m,log,final,timing):
             for tile in range(node-1,columns//64,4):logits[tile*64:(tile+1)*64]=data[tile*64:(tile+1)*64]
             stream.seek(lm['done']);done=np.frombuffer(stream.read(32),dtype='<u8')
             if len(done)!=4 or not np.all(done==base_epoch+chunks-1):raise ValueError('stale LM completion epoch')
-    weight=np.load(case/'lm_weight.npy',mmap_mode='r')
-    actual_input=read_bands(case,layout['final_norm']['output'],hidden,rows=rows)[logical-1:logical]
-    local=linear_reference(actual_input,weight).reshape(-1)
-    local_result=compare(logits,local,0,'last-token LM head local')
-    composed=linear_reference(np.load(case/'final_reference_last_token.npy'),weight).reshape(-1)
-    composed_result=compare(logits[:vocab],composed[:vocab],6e-3,'last-token LM head composed')
-    if columns>vocab and not np.all(logits[vocab:]==0):raise ValueError('nonzero padded vocabulary logits')
-    np.save(case/'last_token_logits.npy',logits[:vocab])
-    from select_next_token import select_next_token
-    selection=select_next_token(logits,vocab)
-    local_selection=select_next_token(local,vocab);composed_selection=select_next_token(composed,vocab)
-    if selection['token_id']!=local_selection['token_id']:raise ValueError('host token differs from local CPU reference')
-    selection.update({'status':'PASS','local_reference_token_id':local_selection['token_id'],
-        'composed_reference_token_id':composed_selection['token_id'],
-        'composed_reference_agrees':selection['token_id']==composed_selection['token_id'],
-        'timing_scope':'host argmax only; excluded from accelerator cycles'})
-    (case/'next_token.json').write_text(json.dumps(selection,indent=2)+'\n')
-    precision_result={}
-    if (case/'fp32_final_reference_last_token.npy').exists():
-        from prefill_precision_reference import error
-        fp32_logits=(np.load(case/'fp32_final_reference_last_token.npy')@weight.astype(np.float32).T).reshape(-1)[:vocab]
-        precision_result=error(logits[:vocab],fp32_logits)
-        precision_result['fp32_token_id']=int(np.argmax(fp32_logits))
-        precision_result['greedy_agrees']=precision_result['fp32_token_id']==selection['token_id']
+    selection=local_result=composed_result=precision_result={'status':'SKIPPED','reason':'full-timing skips array numerical MACs'}
+    if numerical:
+        weight=np.load(case/'lm_weight.npy',mmap_mode='r')
+        actual_input=read_bands(case,layout['final_norm']['output'],hidden,rows=rows)[logical-1:logical]
+        local=linear_reference(actual_input,weight).reshape(-1)
+        local_result=compare(logits,local,0,'last-token LM head local')
+        composed=linear_reference(np.load(case/'final_reference_last_token.npy'),weight).reshape(-1)
+        composed_result=compare(logits[:vocab],composed[:vocab],6e-3,'last-token LM head composed')
+        if columns>vocab and not np.all(logits[vocab:]==0):raise ValueError('nonzero padded vocabulary logits')
+        np.save(case/'last_token_logits.npy',logits[:vocab])
+        from select_next_token import select_next_token
+        selection=select_next_token(logits,vocab)
+        local_selection=select_next_token(local,vocab);composed_selection=select_next_token(composed,vocab)
+        if selection['token_id']!=local_selection['token_id']:raise ValueError('host token differs from local CPU reference')
+        selection.update({'status':'PASS','local_reference_token_id':local_selection['token_id'],
+            'composed_reference_token_id':composed_selection['token_id'],
+            'composed_reference_agrees':selection['token_id']==composed_selection['token_id'],
+            'timing_scope':'host argmax only; excluded from accelerator cycles'})
+        (case/'next_token.json').write_text(json.dumps(selection,indent=2)+'\n')
+        precision_result={}
+        if (case/'fp32_final_reference_last_token.npy').exists():
+            from prefill_precision_reference import error
+            fp32_logits=(np.load(case/'fp32_final_reference_last_token.npy')@weight.astype(np.float32).T).reshape(-1)[:vocab]
+            precision_result=error(logits[:vocab],fp32_logits)
+            precision_result['fp32_token_id']=int(np.argmax(fp32_logits))
+            precision_result['greedy_agrees']=precision_result['fp32_token_id']==selection['token_id']
     return {'status':'PASS','token_index':logical-1,'M':1,'vocab':vocab,'padded_vocab':columns,
         'stream_mode':stream_mode,'input_producer_core':producer_core,'input_ready_ack_tick':input_ready,
         'handoff_protocol':m.get('lm_handoff_protocol','legacy'),'producer_first':priority,

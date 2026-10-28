@@ -1,0 +1,123 @@
+{
+  "status": "PASS",
+  "latency_unit": "cycles",
+  "library_sha256": "82d12d42b8091e5c12fa6982ce5fdb30bc74753d273021831f0077eea91042e2",
+  "pairs": [
+    {
+      "stage": "Attention",
+      "status": "PASS",
+      "functional": "test/Attention/results/full-functional_validated_20261028",
+      "timing": "test/Attention/results/full-timing_validated_retry_20261028",
+      "functional_cycles": 12852,
+      "timing_cycles": 12852,
+      "delta_cycles": 0,
+      "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+      "timing_backend": {
+        "status": "PASS",
+        "sim_mode": "full-timing",
+        "observed_workers": 16,
+        "array_numerical_macs": false,
+        "numerics": {
+          "status": "SKIPPED",
+          "reason": "full-timing skips array numerical MACs"
+        }
+      }
+    },
+    {
+      "stage": "GQA",
+      "status": "PASS",
+      "functional": "test/GQA/results/full-functional_validated_20261028",
+      "timing": "test/GQA/results/full-timing_validated_retry_20261028",
+      "functional_cycles": 37928,
+      "timing_cycles": 37928,
+      "delta_cycles": 0,
+      "scope": "QK WCP + online SFU + NoC P dispatch + PV WCP + final PV ACK",
+      "timing_backend": {
+        "status": "PASS",
+        "sim_mode": "full-timing",
+        "observed_workers": 16,
+        "array_numerical_macs": false,
+        "numerics": {
+          "status": "SKIPPED",
+          "reason": "full-timing skips array numerical MACs"
+        }
+      }
+    },
+    {
+      "stage": "prefill",
+      "size": "smoke",
+      "status": "PASS",
+      "functional": "test/prefill/results/full-functional_smoke_validated_20261028",
+      "timing": "test/prefill/results/full-timing_smoke_validated_20261028",
+      "functional_reference": "new full-functional run",
+      "functional_cycles": 469442.625,
+      "timing_cycles": 469442.625,
+      "delta_cycles": 0.0,
+      "scope": "first token-ID DMA send to last-token logits final output DMA ACK",
+      "timing_backend": {
+        "status": "PASS",
+        "sim_mode": "full-timing",
+        "observed_workers": 16,
+        "array_numerical_macs": false,
+        "numerics": {
+          "status": "SKIPPED",
+          "reason": "full-timing skips array numerical MACs"
+        }
+      },
+      "shape": {
+        "S": 1,
+        "padded_S": 1024,
+        "hidden": 256,
+        "intermediate": 1024,
+        "layers": 1
+      },
+      "vocab": 8201
+    },
+    {
+      "stage": "prefill",
+      "size": "formal",
+      "status": "PASS",
+      "functional": "test/prefill/results/alignment_main_integration_20261027",
+      "timing": "test/prefill/results/full-timing_validated_20261028",
+      "functional_reference": "prior full-functional acceptance, same guest and libraries",
+      "functional_cycles": 6084167.75,
+      "timing_cycles": 6084167.75,
+      "delta_cycles": 0.0,
+      "scope": "first token-ID DMA send to last-token logits final output DMA ACK",
+      "timing_backend": {
+        "status": "PASS",
+        "sim_mode": "full-timing",
+        "observed_workers": 16,
+        "array_numerical_macs": false,
+        "numerics": {
+          "status": "SKIPPED",
+          "reason": "full-timing skips array numerical MACs"
+        }
+      },
+      "shape": {
+        "S": 1024,
+        "padded_S": 1024,
+        "hidden": 2048,
+        "intermediate": 8192,
+        "layers": 2
+      },
+      "vocab": 128256
+    }
+  ],
+  "source_sha256": {
+    "test/run.py": "49ef2a3c5e41850821fec07587a879acbffcea06f0022accb4e58c7a6a1eab61",
+    "scripts/test_flash_attention.sh": "0929ea3a8fa741796898b868a95028378c52c2aff4abc355fcf5ab3b140ac589",
+    "test/golem/small/muticore_attention/run_fused_attention_scale.sh": "ad356d5d1a39dddf813c78c4c4c6416d68540a676dc4cdf63f4335c896b7e80a",
+    "test/attention_cluster_8qk_8pv/run_selected_prefill.py": "1adef2147fd01ffac3b4fc42db4f04eb3bff49c15761d066924e7d39c0d4cf6c",
+    "test/attention_cluster_8qk_8pv/run_decoder_stack.py": "5f3a538a25b15051c6343dd1a7ccd56295a2bf1ef3e0e4eeb649258b2dab2db7",
+    "test/attention_cluster_8qk_8pv/run_all_gemm_reuse_window_baseline.py": "458be2e6a5c78c027e80343a7208ee09a354fcbecc66064423bafb94dbc1d03a",
+    "test/attention_cluster_8qk_8pv/verify_lm_head.py": "dae98de125327bb684392116c677d6fdfd6ee726513e749fc3cc6e2255149f9b",
+    "test/attention_cluster_8qk_8pv/timing_mode.py": "47afeb6795e3098f414b6f2f98e704b1546e23785fc943d5107828304118abec",
+    "test/attention_cluster_8qk_8pv/test_timing_mode.py": "a86b41a52ab0a829ea6b74ff48f8686b7d5f7296107ae5f0e4bc90e6c6d6eefd"
+  },
+  "validation_notes": [
+    "Formal prefill uses the previously accepted full-functional result with identical simulator, memory library and guest digests; the small prefill functional regression was rerun with the new drivers.",
+    "Superseded validation attempts were aborted or failed because a shared shell file was edited while running, or because a host contract test assumed a literal numerical stage name / inherited timing mode. Final entry runs use a stable script, isolate host-test mode and pass.",
+    "Timing mode keeps numerical SFU/embedding execution, physical resources, transport and completion dependencies; array numerical MACs are disabled. CPU scheduler/wait shortcuts default off in these timing entries."
+  ]
+}

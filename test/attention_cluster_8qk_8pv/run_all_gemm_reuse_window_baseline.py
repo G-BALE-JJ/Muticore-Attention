@@ -295,17 +295,19 @@ def summarize(case, baseline_path):
     result=json.loads((case/'decoder_stack_result.json').read_text())
     baseline=json.loads(baseline_path.read_text())
     audit=coverage(case,result)
-    panels=projection_panel_audit(case)
+    timing=result.get('sim_mode')=='full-timing'
+    panels={'status':'SKIPPED','reason':'full-timing skips array numerical MACs'} if timing else projection_panel_audit(case)
     prov=json.loads((case/'decoder_stack_provenance.json').read_text())
     oldprov_path=baseline_path.parent/'decoder_stack_provenance.json'
     oldprov=json.loads(oldprov_path.read_text()) if oldprov_path.exists() else {}
     diff={k:dict(baseline=oldprov.get('environment',{}).get(k), experiment=v)
           for k,v in prov.get('environment',{}).items()
           if oldprov.get('environment',{}).get(k)!=v and not any(s in k for s in ('FILE','ROOT','MANIFEST','EXECUTABLE','MPI_ARGS'))}
-    return dict(status='PASS' if result['status']=='PASS' and audit['status']=='PASS' and panels['status']=='PASS' else 'FAIL',
+    return dict(status='PASS' if result['status']=='PASS' and audit['status']=='PASS' and panels['status'] in ('PASS','SKIPPED') else 'FAIL',
                 all_gemm_reuse_window_implemented=True, baseline_preserved=True,
                 result_file=str(case/'decoder_stack_result.json'), baseline_result_file=str(baseline_path),
-                shape=result['shape'], coverage=audit, projection_panels=panels, comparison=comparison(baseline,result),
+                sim_mode=result.get('sim_mode','full-functional'), shape=result['shape'], coverage=audit, projection_panels=panels,
+                comparison={'status':'SKIPPED','reason':'functional baseline uses numerical MACs'} if timing else comparison(baseline,result),
                 next_token=result['lm_head']['next_token'],
                 provenance=dict(guest_matches=prov.get('guest_sha256')==oldprov.get('guest_sha256'),
                                 memory_model_library_matches=prov.get('sst_memhierarchy_sha256')==oldprov.get('sst_memhierarchy_sha256'),
@@ -372,6 +374,7 @@ def main():
     p.add_argument('--lm-input-residency',action='store_true',help='retain last-token GM input across LM chunks')
     p.add_argument('--elide-intermediate-output',action='store_true',help='elide non-final layer output HBM mirror while GM stage-chain owns the consumer')
     p.add_argument('--lm-n-parallel',type=int,choices=(1,2,4,8),default=4)
+    p.add_argument('--sim-mode',choices=('full-functional','full-timing'),default='full-functional')
     p.add_argument('--weight-cohort',type=int,choices=(0,2,4),default=0)
     a=p.parse_args()
     if a.pv_wo_gm_handoff and a.shape!='formal':p.error('--pv-wo-gm-handoff requires --shape formal')
@@ -437,7 +440,7 @@ def main():
                      '--vocab',str(a.vocab),'--mpi-ranks','8','--cpu-set',a.cpu_set,
                      '--gemm-prefetch','--prefetch-slots','4','--weight-trace',
                      '--ffn-down-fusion','--down-residual-fusion','--ffn-panel-tiles',str(a.ffn_panel_tiles),
-                     '--ffn-array-groups','2','--ffn-layout','2','--lm-n-parallel',str(a.lm_n_parallel)]
+                     '--ffn-array-groups','2','--ffn-layout','2','--lm-n-parallel',str(a.lm_n_parallel),'--sim-mode',a.sim_mode]
                 cmd+=['--ffn-gm-lookahead',str(a.ffn_gm_lookahead)]
                 if a.ffn_demand_order:cmd.append('--ffn-demand-order')
                 if a.pv_wo_gm_handoff:cmd.append('--pv-wo-gm-handoff')

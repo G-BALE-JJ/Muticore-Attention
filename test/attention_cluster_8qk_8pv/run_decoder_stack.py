@@ -700,6 +700,7 @@ def main():
     p.add_argument('--cpu-set',help='default: one physical core per rank, starting at core 0')
     p.add_argument('--mpi-ranks',type=int,choices=(2,4,8),default=4)
     p.add_argument('--verify-only',action='store_true')
+    p.add_argument('--sim-mode',choices=('full-functional','full-timing'),default='full-functional')
     p.add_argument('--validate-inputs',action='store_true')
     p.add_argument('--final-norm',action='store_true',help='append independent final RMSNorm after both layers')
     p.add_argument('--lm-head',action='store_true',help='append final norm and last-token LM head')
@@ -764,10 +765,14 @@ def main():
     if a.validate_inputs:validate_inputs(case);return
     if a.verify_only:
         m=validate_inputs(case)
+        provenance=json.loads((case/'decoder_stack_provenance.json').read_text())
+        recorded_mode=provenance['environment'].get('GOLEM_SIM_MODE','full-functional')
+        if recorded_mode!=a.sim_mode:raise ValueError('verification mode differs from recorded simulation mode')
+        numerical=a.sim_mode=='full-functional'
         log,begin,end,lifecycle=verify_lifecycle(case,m)
         m['_lifecycle']=lifecycle
         result={'status':'PASS','shape':{'S':m.get('logical_sequence',m['sequence']),'padded_S':m['sequence'],'hidden':m['hidden'],'intermediate':4*m['hidden'],'layers':m['layers']},
-            'numerics':verify_numerics(case,m),'lifecycle':lifecycle,'dma_timing':verify_dma(log,m,begin,end),
+            'sim_mode':a.sim_mode,'numerics':verify_numerics(case,m) if numerical else {'status':'SKIPPED','reason':'full-timing skips array numerical MACs'},'lifecycle':lifecycle,'dma_timing':verify_dma(log,m,begin,end),
             'memory':{'per_node_used_bytes':m['layout']['used_bytes'],'per_node_capacity_bytes':m['layout']['node_stride'],
                       'activation_slots':m['layers']+1 if m.get('retain_outputs') else 2,
                       'shared_scratch':True,'weight_sets':m['layers']}}
@@ -775,12 +780,15 @@ def main():
             result['final_norm']=verify_final_norm(case,m,log,end,result['dma_timing'])
         if m.get('lm_head'):
             from verify_lm_head import verify_lm_head
-            result['lm_head']=verify_lm_head(case,m,log,result['final_norm'],result['dma_timing'])
+            result['lm_head']=verify_lm_head(case,m,log,result['final_norm'],result['dma_timing'],numerical=numerical)
         if m.get('embedding'):
             from verify_embedding import verify_embedding
             result['embedding']=verify_embedding(case,m,log,begin,result['lm_head'])
         from verify_decoder_dataflow_resources import verify as verify_resources
         from verify_gm_banked import verify as verify_banks
+        if not numerical:
+            from timing_mode import verify_timing_backend
+            result['timing_backend']=verify_timing_backend(log)
         result['resources']=verify_resources(case)
         result['gm_banks']=verify_banks(case)
         result['padding']={'logical_rows':m.get('logical_sequence',m['sequence']),
@@ -840,6 +848,9 @@ def main():
         if a.pv_wo_direct_input:m['pv_wo_direct_input']=True
         (case/'decoder_stack_inputs.json').write_text(json.dumps(m,indent=2)+'\n')
     env=environment(case,(1,1,1),'none',m['sequence'],a.shape)
+    env['GOLEM_SIM_MODE']=a.sim_mode
+    if a.sim_mode=='full-timing':
+        env.update(GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER='0',GOLEM_VANADIS_ROCC_WAIT_FASTPATH='0')
     env.update({'GOLEM_LOCAL_GM_MODEL':getattr(a, 'gm_model', 'legacy'),
         'GOLEM_LOCAL_GM_RESPONSE_CYCLES':str(getattr(a, 'gm_response_cycles', 1)),
         'GOLEM_LOCAL_GM_RESPONSE_CAPACITY':'32'})
@@ -890,7 +901,7 @@ def main():
     if a.lm_head:env['GOLEM_DECODER_VOCAB']=str(vocab)
     command=[str(HERE/'run_sst.sh'),'--projection','--query-length',str(m['sequence']),'--kv-length',str(m['sequence']),
         '--num-query-heads',str(m['num_query_heads']),'--num-kv-heads',str(m['num_kv_heads']),
-        '--head-dim','64','--causal','--rope','--artifact-root',str(case)]
+        '--head-dim','64','--causal','--rope','--artifact-root',str(case),'--sim-mode',a.sim_mode]
     sources=[ROOT/'src/sst/elements/golem'/name for name in (
         'sfu/sfu.cc','sfu/sfu.h','sfu/vector_math.h','sfu/hardware_pipeline.h','sfu/vector_pipeline.h',
         'tests/architecture/cpu_builder.py',
@@ -908,7 +919,7 @@ def main():
     sources.extend([HERE/'run_sst.sh',HERE/'merge_mpi_rank_logs.py',HERE/'artifact_storage.py',HERE/'run_decoder_layer.py',HERE/'dense_reference.py',HERE/'dense_linear_reference.cpp',HERE/'prefill_precision_reference.py',ROOT/'test/golem/architecture/partition_planner.py'])
     if a.lm_head:sources.extend([HERE/'verify_lm_head.py',HERE/'select_next_token.py'])
     if a.embedding:sources.append(HERE/'verify_embedding.py')
-    sources.extend([HERE/'verify_pv_wo_direct.py',HERE/'verify_decoder_dataflow_resources.py',HERE/'verification_retained_input.py'])
+    sources.extend([HERE/'verify_pv_wo_direct.py',HERE/'verify_decoder_dataflow_resources.py',HERE/'verification_retained_input.py',HERE/'timing_mode.py'])
     for source in sources:
         target=case/'source_snapshot'/source.relative_to(ROOT)
         target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,target)

@@ -794,7 +794,7 @@ generic configuration line that must remain archived
             'echo "Fused Attention ${SCALE_POINT^^} PASS', runner_text
         )
         self.assertIn(
-            'if run_attention_stage numerical_verify "${VERIFY_CMD[@]}"',
+            'if run_attention_stage "$NUMERICAL_VERIFY_STAGE" "${VERIFY_CMD[@]}"',
             runner_text,
         )
 

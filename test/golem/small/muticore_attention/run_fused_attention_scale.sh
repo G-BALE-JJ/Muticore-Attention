@@ -14,6 +14,8 @@ BASE_RUNNER="$TESTS_DIR/run_noc_dma_pipeline.sh"
 LOCAL_ELEMENT_LIB="$WORKTREE_ROOT/install/lib/sst-elements-library"
 ARTIFACT_ROOT=""
 BASELINE_JSON=""
+SIM_MODE="${GOLEM_SIM_MODE:-full-functional}"
+NUMERICAL_VERIFY_STAGE=numerical_verify
 TIMEOUT_SECONDS=7200
 DRY_RUN=0
 REUSE_WINDOW_QK_BRIDGE="${GOLEM_ATTENTION_REUSE_WINDOW_QK_BRIDGE:-0}"
@@ -219,7 +221,7 @@ ATTENTION_PROJECTION="${GOLEM_ATTENTION_PROJECTION:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --artifact-root|--baseline|--timeout|--query-length|--kv-length|--num-query-heads|--num-kv-heads|--queries|--keys|--heads|--query-heads|--kv-heads|--head-dim|--kv-tile-rows|--key-block-rows|--kv-query-group-size|--dtype)
+    --artifact-root|--baseline|--sim-mode|--timeout|--query-length|--kv-length|--num-query-heads|--num-kv-heads|--queries|--keys|--heads|--query-heads|--kv-heads|--head-dim|--kv-tile-rows|--key-block-rows|--kv-query-group-size|--dtype)
       option="$1"
       if [[ $# -lt 2 ]]; then
         echo "Missing value for $option" >&2
@@ -228,6 +230,7 @@ while [[ $# -gt 0 ]]; do
       case "$option" in
         --artifact-root) ARTIFACT_ROOT="$2" ;;
         --baseline) BASELINE_JSON="$2" ;;
+        --sim-mode) SIM_MODE="$2" ;;
         --timeout) TIMEOUT_SECONDS="$2" ;;
         --query-length|--queries) QUERY_LENGTH="$2" ;;
         --kv-length|--keys) KV_LENGTH="$2" ;;
@@ -308,11 +311,21 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       echo "Worker dataflow: selected by the architecture wrapper"
       echo "KV tile override: [--kv-tile-rows 32|64]"
-      echo "Usage: run_fused_attention_scale.sh [--query-length N] [--kv-length N] [--num-query-heads N] [--num-kv-heads N] [--head-dim N] [--qk-score-row-burst|--no-qk-score-row-burst] [--artifact-root DIR] [--timeout SEC] [--dry-run]"
+      echo "Usage: run_fused_attention_scale.sh [--sim-mode full-functional|full-timing] [--query-length N] [--kv-length N] [--num-query-heads N] [--num-kv-heads N] [--head-dim N] [--qk-score-row-burst|--no-qk-score-row-burst] [--artifact-root DIR] [--timeout SEC] [--dry-run]"
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+case "$SIM_MODE" in
+  full-functional|full-timing) ;;
+  *) echo "--sim-mode must be full-functional or full-timing" >&2; exit 2 ;;
+esac
+export GOLEM_SIM_MODE="$SIM_MODE"
+if [[ "$SIM_MODE" == full-timing ]]; then
+  # Isolate MAC elision from optional CPU/control scheduling accelerations.
+  export GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER="${GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER:-0}"
+  export GOLEM_VANADIS_ROCC_WAIT_FASTPATH="${GOLEM_VANADIS_ROCC_WAIT_FASTPATH:-0}"
+fi
 if (( CROSS_TILE_OPERAND_PIPELINE )); then
   echo "Cross-tile operand pipeline is unavailable: extra array operand banks were removed" >&2
   exit 2
@@ -976,6 +989,17 @@ if (( ATTENTION_PROJECTION )); then
   if (( GOLEM_FUSION_PROJECTION_ROPE )); then LAYOUT_PROJECTION_ARGS+=(--rotated-panels); fi
   if (( GOLEM_FUSION_SKIP_AUDIT_OUTPUT )); then LAYOUT_PROJECTION_ARGS+=(--skip-audit-output); fi
 fi
+if [[ "$SIM_MODE" == full-timing ]]; then
+  if [[ -n "$BASELINE_JSON" ]]; then
+    echo "full-timing requires a timing baseline; functional frozen baselines are unsupported" >&2
+    exit 2
+  fi
+  NUMERICAL_VERIFY_STAGE=timing_backend_verify
+  VERIFY_CMD=(python3 "$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/timing_mode.py"
+    --log "$SST_RUNTIME_LOG" --output "$RESULT_JSON")
+fi
+
+
 VERIFY_STATS_CMD=(python3 "$SCRIPT_DIR/verify_fused_attention_scale_stats.py"
   --case-id "$RUN_ID"
   --query-length "$QUERY_LENGTH" --kv-length "$KV_LENGTH" \
@@ -1224,6 +1248,7 @@ attention_stage_label() {
     sst) echo "SST simulation" ;;
     backend_verify) echo "memory backend verification" ;;
     numerical_verify) echo "numerical verification" ;;
+    timing_backend_verify) echo "timing backend verification" ;;
     lifecycle_verify) echo "lifecycle verification" ;;
     mpi_partition_verify) echo "MPI partition verification" ;;
     baseline_verify) echo "baseline verification" ;;
@@ -1322,6 +1347,7 @@ PY
     "$(attention_elapsed_seconds "$TEST_START_NS" "$(date +%s%N)")s"
 }
 
+
 TEST_START_NS="$(date +%s%N)"
 ARTIFACT_STORAGE="$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/artifact_storage.py"
 python3 "$ARTIFACT_STORAGE" preflight "$ARTIFACT_ROOT"
@@ -1371,7 +1397,7 @@ if [[ -n "${GOLEM_DECODER_STACK_MANIFEST:-}" ]]; then
   run_attention_stage backend_verify verify_attention_memory_backend "$SST_RUNTIME_LOG" ramulator2
   run_attention_stage decoder_stack_verify python3 \
     "$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/run_decoder_stack.py" \
-    --artifact-root "$ARTIFACT_ROOT" --verify-only
+    --artifact-root "$ARTIFACT_ROOT" --verify-only --sim-mode "$SIM_MODE"
   attention_ui_key_value "Decoder stack result" "$ARTIFACT_ROOT/decoder_stack_result.json"
   exit 0
 fi
@@ -1392,7 +1418,7 @@ if (( REUSE_WINDOW_QK_BRIDGE )); then
     attention_print_worker_cluster_summary "$QK_BRIDGE_RESULT"
     run_attention_stage backend_verify \
       verify_attention_memory_backend "$SST_RUNTIME_LOG" ramulator2
-    run_attention_stage numerical_verify "${VERIFY_CMD[@]}"
+    run_attention_stage "$NUMERICAL_VERIFY_STAGE" "${VERIFY_CMD[@]}"
     run_attention_stage mpi_partition_verify "${VERIFY_MPI_CMD[@]}"
     run_attention_stage hbm_layout_verify python3 "$SCRIPT_DIR/verify_attention_hbm_layout.py" \
       --q-file "$Q_FILE" --k-file "$K_FILE" --v-file "$V_FILE" --hbm-dir "$HBM_DIR" \
@@ -1430,7 +1456,7 @@ PY
     python3 "$WORKTREE_ROOT/test/archive/reuse_window_flash_attention/report_sst_qk_bridge.py" \
       --log "$SST_RUNTIME_LOG" --num-kv-heads "$NUM_KV_HEADS" \
       --output "$QK_BRIDGE_RESULT"
-  run_attention_stage numerical_verify "${VERIFY_CMD[@]}"
+  run_attention_stage "$NUMERICAL_VERIFY_STAGE" "${VERIFY_CMD[@]}"
   attention_ui_key_value "Artifacts" "$ARTIFACT_ROOT"
   attention_ui_key_value "Reuse-window result" "$QK_BRIDGE_RESULT"
   exit 0
@@ -1438,7 +1464,7 @@ fi
 run_attention_stage backend_verify \
   verify_attention_memory_backend "$SST_RUNTIME_LOG" ramulator2
 ATTENTION_TEST_RC=0
-if run_attention_stage numerical_verify "${VERIFY_CMD[@]}"; then
+if run_attention_stage "$NUMERICAL_VERIFY_STAGE" "${VERIFY_CMD[@]}"; then
   :
 else
   ATTENTION_TEST_RC=$?

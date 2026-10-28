@@ -21,3 +21,10 @@ cd /data/jjgong/LLM/test/prefill
 
 共享测试实现位于 `../golem/` 与 `../attention_cluster_8qk_8pv/`，
 历史证据位于 `../history/`。这些共享实现只维护一份。
+
+使用 `./run.sh --run -- --sim-mode full-timing` 运行正式规模时序仿真；
+`--smoke -- --sim-mode full-timing` 可运行小规模用例。默认仍为 `full-functional`。
+Timing 模式只跳过阵列 GEMM 的数值 MAC（并默认跳过数值打包/解包），
+保留 SFU 运算、计算延迟、DMA/NoC/HBM、任务依赖及最终输出 ACK 检查。
+依赖 GEMM 结果的数值正确性校验标为 `SKIPPED`，prefill 不生成真实 logits 或 next token。
+Timing 模式默认关闭额外的 CPU wait / scheduler 快捷路径，便于隔离比较数值 MAC 的影响。

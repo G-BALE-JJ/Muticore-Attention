@@ -23,6 +23,7 @@ Run one end-to-end Attention test from this worktree.
   --timeout SEC        Test timeout (default: 7200)
   --artifact-root DIR  Output directory (default: /tmp/<case-id>[_mpiN])
   --baseline FILE      Optionally compare against an explicit frozen baseline
+  --sim-mode MODE      full-functional (default) or full-timing (skip array MACs)
   --show-config        Print resolved parameters without running the test
 
 The public runner fixes the verified 8+8 worker-cluster dataflow with row-priority
@@ -42,6 +43,7 @@ TIMEOUT=7200
 MPI_RANKS=4
 ARTIFACT_ROOT=""
 BASELINE_JSON=""
+SIM_MODE="${GOLEM_SIM_MODE:-full-functional}"
 SHOW_CONFIG=0
 GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES="${GOLEM_ATTENTION_PV_V_TILE_BUFFER_BYTES:-16384}"
 GOLEM_ATTENTION_PV_V_TILE_BUFFER_HIT_TICKS="${GOLEM_ATTENTION_PV_V_TILE_BUFFER_HIT_TICKS:-1}"
@@ -61,7 +63,7 @@ fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --query-length|--kv-length|--num-query-heads|--num-kv-heads|--queries|--keys|--heads|--query-heads|--kv-heads|--head-dim|--timeout|--mpi-ranks|--artifact-root|--baseline|--dtype)
+    --query-length|--kv-length|--num-query-heads|--num-kv-heads|--queries|--keys|--heads|--query-heads|--kv-heads|--head-dim|--timeout|--mpi-ranks|--artifact-root|--baseline|--dtype|--sim-mode)
       option="$1"
       if [[ $# -lt 2 ]]; then
         echo "Missing value for $option" >&2
@@ -80,6 +82,7 @@ while [[ $# -gt 0 ]]; do
         --mpi-ranks) MPI_RANKS="$2" ;;
         --artifact-root) ARTIFACT_ROOT="$2" ;;
         --baseline) BASELINE_JSON="$2" ;;
+        --sim-mode) SIM_MODE="$2" ;;
       esac
       shift 2
       ;;
@@ -90,6 +93,16 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+case "$SIM_MODE" in
+  full-functional|full-timing) ;;
+  *) echo "--sim-mode must be full-functional or full-timing" >&2; exit 2 ;;
+esac
+export GOLEM_SIM_MODE="$SIM_MODE"
+if [[ "$SIM_MODE" == full-timing ]]; then
+  # Isolate MAC elision from optional CPU/control scheduling accelerations.
+  export GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER="${GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER:-0}"
+  export GOLEM_VANADIS_ROCC_WAIT_FASTPATH="${GOLEM_VANADIS_ROCC_WAIT_FASTPATH:-0}"
+fi
 if [[ "$DTYPE" != "fp16" && "$DTYPE" != "fp32" ]]; then
   echo "--dtype must be fp16 or fp32" >&2
   exit 2
@@ -205,6 +218,7 @@ DISPLAY_QK_SCORE_ROW_BURST=1
 if [[ "$SHOW_CONFIG" == "1" ]]; then
   printf '%s\n' \
     "CASE_ID=$CASE_ID" \
+    "GOLEM_SIM_MODE=$SIM_MODE" \
     "QUERY_LENGTH=$QUERY_LENGTH" \
     "KV_LENGTH=$KV_LENGTH" \
     "QUERIES=$QUERY_LENGTH" \
@@ -290,7 +304,8 @@ fi
 # Sources may be newer than a cached guest copied from an earlier experiment.
 make -C "$ATTENTION_DIR" scale
 
-env -u GOLEM_ATTENTION_PV_INPUT_RESIDENCY \
+env -u GOLEM_SIM_MODE \
+    -u GOLEM_ATTENTION_PV_INPUT_RESIDENCY \
     -u GOLEM_ATTENTION_O_ACCUMULATOR_CBUFFER \
     -u GOLEM_ATTENTION_KV_PAIR_REUSE \
     -u GOLEM_ATTENTION_KV_QUERY_GROUP_SIZE \
@@ -313,7 +328,7 @@ GOLEM_MPI_RANKS="$MPI_RANKS" \
   --num-query-heads "$NUM_QUERY_HEADS" --num-kv-heads "$NUM_KV_HEADS" \
   --head-dim "$HEAD_DIM" \
   "${CAUSAL_ARGS[@]}" \
-  --timeout "$TIMEOUT" --artifact-root "$ARTIFACT_ROOT" \
+  --sim-mode "$SIM_MODE" --timeout "$TIMEOUT" --artifact-root "$ARTIFACT_ROOT" \
   "${BASELINE_ARGS[@]}"
 
 echo "[ATTENTION] $CASE_ID PASS"

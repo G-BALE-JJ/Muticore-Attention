@@ -18,6 +18,9 @@
     "guest": [
       "test_flash_attention_baseline_contract.py",
       "test_attention_metrics_report.py"
+    ],
+    "baseline": [
+      "test_timing_mode.py"
     ]
   },
   "stage": "Attention",
