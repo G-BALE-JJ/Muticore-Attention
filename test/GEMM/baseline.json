@@ -47,7 +47,8 @@
       "test_native_llm_workload.py",
       "test_native_workload_placement.py",
       "test_native_engine.py",
-      "test_native_packed_array.py"
+      "test_native_packed_array.py",
+      "test_native_descriptor.py"
     ],
     "guest": [
       "test_reuse_window_gemm.py",

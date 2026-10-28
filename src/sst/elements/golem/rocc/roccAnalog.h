@@ -56,6 +56,7 @@
 #include <vector>
 #include <iostream>
 
+#include <sst/elements/golem/isa/nativeDescriptor.h>
 using namespace SST::Interfaces;
 using namespace SST::Golem;
 
@@ -1721,7 +1722,89 @@ public:
         return true;
     }
 
+    // rs2!=0 selects a versioned native descriptor; rs2==0 remains legacy WCP.
+    uint64_t nativeToken_=0,nextNativeToken_=1;
+    void nativeReply(SST::Vanadis::RoCCCommand* cmd,int64_t value) {
+        enqueueResponse(new SST::Vanadis::RoCCResponse(cmd->inst->rd,uint64_t(value),cmd->cmd_id,cmd->hw_thread));
+        delete cmd;
+    }
+    bool tryStartNativeDescriptor(SST::Vanadis::RoCCCommand* cmd) {
+        using namespace GolemNative;
+        auto fail=[&](GolemNative::Status s){nativeReply(cmd,-int64_t(s));return true;};
+        if(!workerCommandProcessor) return fail(GolemNative::Status::Unsupported);
+        // A completed, unconsumed token still owns the single descriptor slot.
+        if(nativeToken_ || workerCommandProcessor->isBusy()) return fail(GolemNative::Status::QueueFull);
+        const uint64_t gmBase=globalMem->getBaseAddr();
+        if(cmd->rs1!=gmBase+0x2000 || cmd->rs2<sizeof(Command) || cmd->rs2>MaxCommandBytes || cmd->rs2%8)
+            return fail(GolemNative::Status::InvalidDescriptor);
+        std::vector<uint8_t> raw;
+        globalMem->rd_from_globalmem(cmd->rs1,cmd->rs2,raw);
+        if(raw.size()!=cmd->rs2) return fail(GolemNative::Status::InvalidDescriptor);
+        Command c{};std::memcpy(&c,raw.data(),sizeof(c));
+        auto status=validate(c,raw.size());
+        if(status!=GolemNative::Status::Success) return fail(status);
+        if(coreID<4 || coreID>=20 || c.physical_worker!=coreID-4 ||
+           checksum(raw.data(),raw.size())!=c.checksum) return fail(GolemNative::Status::InvalidDescriptor);
+        WorkloadPlacement placement;
+        auto map=[&](uint32_t offset,uint32_t count){std::vector<uint32_t> v(count);
+            std::memcpy(v.data(),raw.data()+offset,count*4);return v;};
+        placement.dataNodes=map(c.data_map,c.data_count);
+        placement.taskNodes=map(c.task_map,c.task_count);
+        placement.aNodes=map(c.a_map,c.a_count);
+        placement.bNodes=map(c.b_map,c.b_count);
+        placement.replicateB=(c.flags&1)!=0;
+        if(!placement.valid(4,c.m/64,c.n/64,c.task_count)) return fail(GolemNative::Status::InvalidDescriptor);
+        const auto mode=static_cast<XTileMC::ComputeMode>(c.precision);
+        const uint64_t inputTileBytes=64*XTileMC::packedRowBytes(64,mode);
+        const uint64_t kTiles=c.k/64;
+        for(auto node:placement.dataNodes) {
+            const uint64_t aTiles=std::count(placement.aNodes.begin(),placement.aNodes.end(),node);
+            const uint64_t bTiles=placement.replicateB?c.b_count:
+                std::count(placement.bNodes.begin(),placement.bNodes.end(),node);
+            const uint64_t tasks=std::count(placement.taskNodes.begin(),placement.taskNodes.end(),node);
+            if(aTiles*kTiles*inputTileBytes>c.b_offset-c.a_offset ||
+               bTiles*kTiles*inputTileBytes>c.c_offset-c.b_offset ||
+               tasks*c.reuse*c.reuse*64*64*4>c.node_bytes-c.c_offset)
+                return fail(GolemNative::Status::InvalidDescriptor);
+        }
+        WorkerTaskListHeader h{};
+        h.worker_slot=c.logical_worker;h.active_worker_cores=c.worker_count;
+        h.scheduler_worker_slot=c.physical_worker;h.total_groups=4;h.data_memory_node_count=4;
+        h.mem_node_size=c.node_bytes;h.m=c.m;h.n=c.n;h.k=c.k;
+        h.hw_input_size=h.hw_output_size=h.block_m=h.block_n=h.block_k=64;h.elem_bytes=4;
+        h.mat_stride_bytes=inputTileBytes;h.vec_stride_bytes=XTileMC::packedRowBytes(64,mode);
+        h.off_gemm_mat_base=c.a_offset;h.off_gemm_vec_base=c.b_offset;h.off_gemm_out_base=c.c_offset;
+        h.a_reuse_n_tiles=h.b_reuse_m_tiles=c.reuse;
+        h.m_group_count=(c.m/64+c.reuse-1)/c.reuse;
+        h.n_group_count=(c.n/64+c.reuse-1)/c.reuse;
+        h.task_count=c.logical_worker<c.task_count?(c.task_count-1-c.logical_worker)/c.worker_count+1:0;
+        h.local_mat_ping_gm_addr=gmBase+0x10000;
+        h.local_vec_ping_gm_addr=gmBase+0x90000;
+        h.local_mat_slot_stride_bytes=h.local_vec_slot_stride_bytes=64*64*4;
+        h.local_slot_count=24;h.local_accum_gm_addr=gmBase+0x110000;
+        h.local_out_gm_addr=gmBase+0x114000;h.descriptor_start_cycle=c.start_cycle;
+        XTileMC::PrecisionSpecV02 precision{c.precision,XTileMC::inputBits(mode),
+            XTileMC::integerMode(mode)?0u:1u,32,1,{0,0,0}};
+        if(!workerCommandProcessor->startPlacedWindow(h,placement,&precision)) return fail(GolemNative::Status::ExecutionFault);
+        nativeToken_=nextNativeToken_++;
+        if(!nextNativeToken_ || nextNativeToken_>uint64_t(INT64_MAX)) nextNativeToken_=1;
+        std::printf("[NATIVE_WORKLOAD] core=%u mode=%u physical_worker=%u logical_worker=%u workers=%u tasks=%u replicate_b=%u\n",
+            unsigned(coreID),c.precision,c.physical_worker,c.logical_worker,c.worker_count,h.task_count,unsigned(placement.replicateB));
+        std::printf("[NATIVE_DESCRIPTOR_ACCEPT] core=%u token=%llu bytes=%zu\n",unsigned(coreID),
+            (unsigned long long)nativeToken_,raw.size());
+        nativeReply(cmd,int64_t(nativeToken_));return true;
+    }
+    bool tryWaitNativeDescriptor(SST::Vanadis::RoCCCommand* cmd) {
+        using namespace GolemNative;
+        if(cmd->rs1!=nativeToken_ || !nativeToken_) {
+            nativeReply(cmd,int64_t(GolemNative::Status::BadToken));return true;
+        }
+        if(workerCommandProcessor && workerCommandProcessor->isBusy()) return false;
+        nativeToken_=0;nativeReply(cmd,int64_t(GolemNative::Status::Success));return true;
+    }
+
     bool tryStartWorkerWindow(SST::Vanadis::RoCCCommand* cmd) {
+        if(cmd && cmd->inst && cmd->rs2) return tryStartNativeDescriptor(cmd);
         if (workerCommandProcessor == nullptr || cmd == nullptr || cmd->inst == nullptr) {
             return true;
         }
@@ -1760,6 +1843,7 @@ public:
     }
 
     bool tryWaitWorkerWindow(SST::Vanadis::RoCCCommand* cmd) {
+        if(cmd && cmd->inst && cmd->rs1) return tryWaitNativeDescriptor(cmd);
         if (workerCommandProcessor == nullptr || cmd == nullptr || cmd->inst == nullptr) {
             return true;
         }

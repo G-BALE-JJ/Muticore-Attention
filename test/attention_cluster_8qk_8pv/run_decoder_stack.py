@@ -908,6 +908,7 @@ def main():
         'globalmemory/globalmemory.cc','globalmemory/globalmemory.h','globalmemory/localGmBankScheduler.h',
         'attention/decoderMemoryLayout.h','attention/projectionJobAbi.h','attention/projectionJob.h',
         'attention/pvWoHandoff.h','attention/pvWoInputInterface.h','attention/decoderOpAbi.h','attention/decoderOpJob.h','rocc/roccAnalog.h','workercmdproc/workercmdproc.h',
+        'tileunit/tileUnitArrayModel.h','tileunit/tileUnitAPI.h','tileunit/tileUnitArray.h',
         'tests/small/muticore_attention/golem_projection_runtime.h',
         'tests/small/muticore_attention/golem_decoder_runtime.h',
         'tests/small/muticore_attention/golem_tail_schedule.h',

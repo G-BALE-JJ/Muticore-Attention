@@ -51,7 +51,7 @@ def measure(name, fast_path, cpuset=None):
     if cycles != 3500 or terminal['c_writeback_complete_ratio'] != '4/4':
         raise ValueError('Timing or final-output completion changed')
     numerical_modes = []
-    if 'timingNumericalFastPath' in (ROOT/'src/sst/elements/golem/array/mvmComputeArray.h').read_text():
+    if 'timingNumericalFastPath' in (ROOT/'src/sst/elements/golem/tileunit/tileUnitArrayModel.h').read_text():
         pattern = r'\[ARRAY_NUMERICAL_DATA\] core=-?\d+ functional=(\d+) timing_fast_path=(\d+) materialize=(\d+)'
         for logfile in (artifacts/'logs').glob('*.log'):
             numerical_modes.extend(tuple(map(int, row)) for row in re.findall(pattern, logfile.read_text(errors='replace')))
@@ -78,7 +78,7 @@ def main():
         parser.error('name must be a directory name')
     control = None
     if args.compare:
-        if 'timingNumericalFastPath' not in (ROOT/'src/sst/elements/golem/array/mvmComputeArray.h').read_text():
+        if 'timingNumericalFastPath' not in (ROOT/'src/sst/elements/golem/tileunit/tileUnitArrayModel.h').read_text():
             raise ValueError('Same-build control requires the phase 06 validation switch')
         control_out, control = measure(args.name+'_same_build_control', 0,args.cpuset)
         (control_out/'result.json').write_text(json.dumps(control, indent=2)+'\n')

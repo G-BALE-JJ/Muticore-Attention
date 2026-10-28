@@ -39,9 +39,10 @@ def main():
     root.mkdir(parents=True, exist_ok=False)
     library = ROOT/'install/lib/sst-elements-library/libgolem.so'
     memory = library.with_name('libmemHierarchy.so')
-    signature = (digest(library), digest(memory))
+    vanadis=library.with_name('libvanadis.so')
+    signature = (digest(library), digest(memory),digest(vanadis))
     report = dict(status='RUNNING', library_sha256=signature[0], memhierarchy_sha256=signature[1],
-                  latency_unit='cycles', cases=[])
+                  vanadis_sha256=signature[2],latency_unit='cycles', cases=[])
 
     def save():
         (root/'result.json').write_text(json.dumps(report, indent=2)+'\n')
@@ -53,7 +54,7 @@ def main():
                 continue
             pair = {}
             for mode in ('full-functional', 'full-timing'):
-                if signature != (digest(library), digest(memory)):
+                if signature != (digest(library), digest(memory),digest(vanadis)):
                     raise ValueError('installed build changed')
                 out = root/case['name']/mode
                 command = [sys.executable, str(ROOT/'test/run.py'), 'prefill', '--smoke',
@@ -66,6 +67,10 @@ def main():
                     subprocess.run(command, cwd=ROOT, env=env, stdout=stream,
                                    stderr=subprocess.STDOUT, check=True)
                 result = json.loads((out/'native_case/result.json').read_text())
+                if result.get('launcher')!='fixed' or result.get('descriptor_status')!='PASS':
+                    raise ValueError('fixed descriptor launcher was not exercised')
+                if report['cases'] and result['guest_sha256']!=report['cases'][0]['pairs']['full-functional']['guest_sha256']:
+                    raise ValueError('changing the workload rebuilt or changed the fixed guest')
                 if result['status'] != 'PASS' or not result['real_noc_hbm']:
                     raise ValueError('native integration failed')
                 expected = 'PASS' if mode == 'full-functional' else 'SKIPPED'
@@ -73,13 +78,13 @@ def main():
                     raise ValueError('unexpected numerical validation status')
                 pair[mode] = result
             keys = ('cycles', 'output_tiles', 'native_workers', 'logical_shape', 'padded_shape',
-                    'instances', 'input_sha256', 'panel_mapping', 'replicate_b')
+                    'instances', 'input_sha256', 'panel_mapping', 'replicate_b', 'guest_sha256', 'bundle_sha256')
             if any(pair['full-functional'][k] != pair['full-timing'][k] for k in keys):
                 raise ValueError('functional/timing workload or cycle mismatch: '+case['name'])
             report['cases'].append(dict(**case, status='PASS', delta_cycles=0, pairs=pair))
             save()
             print(case['name']+' PASS '+str(pair['full-timing']['cycles'])+' cycles', flush=True)
-        if signature != (digest(library), digest(memory)):
+        if signature != (digest(library), digest(memory),digest(vanadis)):
             raise ValueError('installed build changed')
         report['status'] = 'PASS'
         save()

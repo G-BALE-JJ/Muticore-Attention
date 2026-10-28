@@ -117,6 +117,7 @@ def verify(root,config,mode):
         scope='first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1',
         library_sha256=digest(ROOT/'install/lib/sst-elements-library/libgolem.so'),
         memhierarchy_sha256=digest(ROOT/'install/lib/sst-elements-library/libmemHierarchy.so'),
+        vanadis_sha256=digest(ROOT/'install/lib/sst-elements-library/libvanadis.so'),
         config_sha256=digest(root/'native_config.json'),real_noc_hbm=True,
         output_contract='32-bit outputs; padded work is timed; no decoder next-token claim')
 
@@ -137,10 +138,16 @@ if __name__=='__main__':
     parser.add_argument('--mpi-ranks',type=int,choices=(1,2,4),default=1)
     parser.add_argument('--cpu-set',default='4-7')
     parser.add_argument('--input-a',type=Path);parser.add_argument('--input-b',type=Path)
+    parser.add_argument('--abi-selftest',action='store_true')
+    parser.add_argument('--launcher',choices=('fixed','legacy'),default='fixed')
     parser.add_argument('--prepare-only',action='store_true')
     args=parser.parse_args()
     if args.sequence<=0 or args.vocab<=0:parser.error('sequence/vocab must be positive')
     root,path,config=prepare(args)
+    native_bundle=None
+    if args.launcher=='fixed':
+        from tools.native_descriptor import write_bundle
+        native_bundle=write_bundle(path,root)
     if args.prepare_only:print(path);sys.exit(0)
     m,n,k=config['padded_shape']
     command=['bash',str(ROOT/'test/golem/run_noc_dma_pipeline.sh'),'--groups','4','--num-cores','20','--gemm-cores','20',
@@ -162,8 +169,34 @@ if __name__=='__main__':
         GOLEM_NOC_INPUT_BUF_SIZE='128KB',GOLEM_NOC_OUTPUT_BUF_SIZE='128KB',GOLEM_GM_BUFFER_LENGTH='128KB',
         GOLEM_REQUEST_SCHEDULER_EVENT_DRIVEN_WORKER='0',GOLEM_VANADIS_ROCC_WAIT_FASTPATH='0',
         GOLEM_MPI_ARGS='--bind-to core --cpu-set '+args.cpu_set,OPENBLAS_NUM_THREADS='1',OMP_NUM_THREADS='1')
+    guest=None
+    if native_bundle:
+        # This target depends only on runtime sources/ABI, never the workload.
+        subprocess.run(['make','-C',str(ROOT/'software/native')],check=True)
+        guest=ROOT/'build/native-guest/launcher'
+        env.update(GOLEM_SKIP_DEFAULT_GUEST_BUILD='1',VANADIS_EXE=str(guest),GOLEM_TEST_BINARY=str(guest),
+                   GOLEM_NATIVE_NODE0_INIT=native_bundle['node0_image'],GOLEM_ARRAY_TYPE='golem.TileUnitArray')
+    if args.abi_selftest:
+        if not guest:parser.error('--abi-selftest requires the fixed launcher')
+        env['GOLEM_NATIVE_ABI_SELFTEST']='1'
+    guest_before=digest(guest) if guest else None
     before=digest(ROOT/'install/lib/sst-elements-library/libgolem.so')
     with (root/'run.log').open('w') as stream:subprocess.run(command,cwd=ROOT,env=env,stdout=stream,stderr=subprocess.STDOUT,check=True)
     if before!=digest(ROOT/'install/lib/sst-elements-library/libgolem.so'):raise ValueError('library changed during native run')
     result=verify(root,config,args.sim_mode);result['command']=command
+    result['launcher']=args.launcher
+    if guest:
+        if digest(guest)!=guest_before:raise ValueError('fixed guest changed during run')
+        log='\n'.join(p.read_text(errors='replace') for p in (root/'simulation/stdout').rglob('stdout-*'))
+        done=re.findall(r'\[NATIVE_GUEST_DONE\] core=(\d+) token=(\d+) status=(\d+)',log)
+        if len(done)!=16 or {int(c) for c,t,s in done if int(t)>0 and s=='0'}!=set(range(4,20)):
+            raise ValueError('fixed guest token/completion failure')
+        if args.abi_selftest:
+            probes=re.findall(r'\[NATIVE_ABI_SELFTEST\] core=(\d+) status=PASS',log)
+            if len(probes)!=16 or set(map(int,probes))!=set(range(4,20)):
+                raise ValueError('not all workers passed native ABI self-tests')
+            result['abi_selftest']='PASS'
+        result.update(guest_sha256=guest_before,bundle_sha256=native_bundle['bundle_sha256'],
+                      descriptor_status='PASS',native_tu=True)
+
     (root/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))

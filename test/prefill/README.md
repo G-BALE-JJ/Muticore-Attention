@@ -39,13 +39,13 @@ python3 ../run_native_llm_regression.py --artifact-root /tmp/native-llm-matrix -
 ```
 
 可选算子为 `qkv/wo/gate/up/down/lm_head`，精度为
-`int4/int8/fp16/bf16/tf32/fp32/fp8e4m3/fp8e5m2`。通过原有 guest、生产 TE、
+`int4/int8/fp16/bf16/tf32/fp32/fp8e4m3/fp8e5m2`。默认通过固定 RISC-V guest、版本化描述符、生产 TE、
 调度器及真实 NoC/HBM 执行，保持 16 workers、每 worker 64 阵列及四个数据 HBM 节点。
 `--instances 1|2|4` 划分已有 worker 和 HBM，使用不同输入；`--panel-mapping`
 和 `--replicate-b` 控制放置。完整 prefill 默认仍采用原有 FP16 数值契约。
 
 该入口对单个矩阵算子使用 INT32/FP32 输出和原生累加语义，不运行完整 decoder，
-也不输出 next token。小规模 WO/down 请加 `--reuse 1`，保证 guest 至少有 16 个宏任务。
+也不输出 next token。小规模 WO/down 请加 `--reuse 1`，保证至少有 16 个宏任务。
 所有维度补齐至 64，补齐计算计入 cycles；尤其 LM-head 的逻辑单行补齐成 64 行，
 不能用其 cycles 直接比较现有优化过的 last-token LM-head。
 
@@ -54,3 +54,8 @@ python3 ../run_native_llm_regression.py --artifact-root /tmp/native-llm-matrix -
 整数输入须在原生位宽范围内；FP16 先量化到半精度。其余模式当前验证编码器只接受
 -2..2，不包含模型权重量化、scale 或 tokenizer 支持。功能模式逐项核对输出，
 timing 模式保留传输、计算完成事件及最后写回 ACK，数值检查标为 SKIPPED。
+
+固定 guest 只在 runtime/ABI 源码变化时编译；修改算子、形状、精度或放置时，
+主机重新生成描述符与输入数据，复用同一 guest 二进制。`--abi-selftest` 可额外检查
+描述符拒绝和 submit/wait token 生命周期；`--launcher legacy` 可切回之前的实验入口。
+具体 ABI、单槽限制和完成边界见 [runtime 文档](../../software/native/README.md)。

@@ -2,6 +2,11 @@
 #include <sst/elements/golem/array/computeArray.h>
 #include <sst/elements/golem/computeunit/multiPrecisionComputeUnit.h>
 #include <sst/elements/golem/computeunit/peTiming.h>
+#include <sst/elements/golem/tileunit/tileUnitArray.h>
+#include <sst/elements/golem/array/mvmComputeArray.h>
+#include <type_traits>
+static_assert(!std::is_base_of<SST::Golem::MVMComputeArray<float>,SST::Golem::TileUnitArray>::value,
+              "native TU must not inherit the legacy MVM implementation");
 #include <stdexcept>
 #include <cstdio>
 using namespace SST;

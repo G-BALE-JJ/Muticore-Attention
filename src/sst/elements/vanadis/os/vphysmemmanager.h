@@ -48,6 +48,8 @@ class PhysMemManager {
         void setBit( int pos ) { m_bitMap.at( pos/64 ) |= ( 1UL << ( pos % 64 ) ); }
         void clearBit( int pos ) { m_bitMap.at( pos/64 ) &= ~( 1UL << ( pos % 64 ) ); }
 
+        size_t size() const { return m_bitMap.size() * 64; }
+
         size_t findFirstEmptyBit( size_t start ) {
             for ( size_t i = start/64; i < m_bitMap.size(); i++ ) {
                 if ( m_bitMap[i] != 0xffffffffffff ) {
@@ -116,6 +118,22 @@ class PhysMemManager {
             pagesOut.push_back( findFreePage( pageSize ) );
             --numPages;
         }
+    }
+
+    bool reservePages( uint32_t startPage, uint32_t numPages ) {
+        if ( numPages == 0 || static_cast<size_t>(startPage) + numPages > m_bitMap.size() ) {
+            return false;
+        }
+        for ( uint32_t page = startPage; page < startPage + numPages; ++page ) {
+            if ( m_bitMap.getBit( page ) ) {
+                return false;
+            }
+        }
+        for ( uint32_t page = startPage; page < startPage + numPages; ++page ) {
+            m_bitMap.setBit( page );
+            ++m_numAllocated;
+        }
+        return true;
     }
 
     uint32_t allocPage( PageSize pageSize ) {

@@ -18,15 +18,15 @@ sst.setProgramOption('timebase','1ps')
 c=sst.Component('check','llmalign.PackedArrayDriver')
 f=int(os.environ['CHECK_FUNCTIONAL'])
 c.addParams({'functional':f})
-a=c.setSubComponent('array','golem.MVMFloatArray')
+a=c.setSubComponent('array',os.environ['CHECK_ARRAY_TYPE'])
 a.addParams({'verbose':0,'clock':'1GHz','numArrays':2,'arrayInputSize':64,
  'arrayOutputSize':3,'inputOperandSize':4,'outputOperandSize':4,
  'modeledComputeCycles':19,'functionalCompute':f})
 """)
-            for f in (1,0):
+            for array_type,f in ((t,f) for t in ('golem.MVMFloatArray','golem.TileUnitArray') for f in (1,0)):
                 result=subprocess.run(['/local/sstcore/bin/sst','--no-env-config',
                     '--lib-path='+str(p)+':'+str(ROOT/'install/lib/sst-elements-library'),
-                    str(config)],env=dict(os.environ,CHECK_FUNCTIONAL=str(f)),
+                    str(config)],env=dict(os.environ,CHECK_FUNCTIONAL=str(f),CHECK_ARRAY_TYPE=array_type),
                     capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stdout+result.stderr)
                 self.assertIn('[PASS] native packed TU',result.stdout)

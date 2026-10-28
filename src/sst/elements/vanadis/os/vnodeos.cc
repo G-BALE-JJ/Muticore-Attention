@@ -98,6 +98,11 @@ VanadisNodeOSComponent::VanadisNodeOSComponent(SST::ComponentId_t id, SST::Param
     m_pageSize = params.find<uint64_t>("page_size", 4096);
     m_pageShift = log2( m_pageSize );
 
+    const uint64_t nativeDescriptorVirtAddr = params.find<uint64_t>("native_descriptor_virt_addr", 0);
+    const uint64_t nativeDescriptorPhysAddr = params.find<uint64_t>("native_descriptor_phys_addr", 0);
+    const uint64_t nativeDescriptorRegionSize = params.find<uint64_t>("native_descriptor_region_size", 0);
+    OS::Device* nativeDescriptorDevice = nullptr;
+
     if ( params.find<bool>("useMMU",false) ) { ;
         m_mmu = loadUserSubComponent<SST::MMU_Lib::MMU>("mmu");
         if ( nullptr == m_mmu ) {
@@ -111,6 +116,30 @@ VanadisNodeOSComponent::VanadisNodeOSComponent(SST::ComponentId_t id, SST::Param
         // this assumes the first page allocated is physical address 0
         auto zeroPage = allocPage( );
         // we don't use it
+
+        if ( nativeDescriptorRegionSize != 0 ) {
+            if ( nativeDescriptorVirtAddr == 0 || nativeDescriptorPhysAddr == 0 ||
+                 ( nativeDescriptorVirtAddr % m_pageSize ) != 0 ||
+                 ( nativeDescriptorPhysAddr % m_pageSize ) != 0 ||
+                 ( nativeDescriptorRegionSize % m_pageSize ) != 0 ||
+                 nativeDescriptorPhysAddr + nativeDescriptorRegionSize > physMemSize.getRoundedValue() ) {
+                output->fatal(CALL_INFO, -1,
+                    "Invalid native descriptor mapping: virt=%#" PRIx64 " phys=%#" PRIx64
+                    " size=%" PRIu64 " page=%d physMem=%" PRIu64 "\n",
+                    nativeDescriptorVirtAddr, nativeDescriptorPhysAddr, nativeDescriptorRegionSize, m_pageSize,
+                    physMemSize.getRoundedValue());
+            }
+            const uint32_t firstPage = nativeDescriptorPhysAddr / m_pageSize;
+            const uint32_t pageCount = nativeDescriptorRegionSize / m_pageSize;
+            if ( ! m_physMemMgr->reservePages( firstPage, pageCount ) ) {
+                output->fatal(CALL_INFO, -1,
+                    "Unable to reserve native descriptor physical pages [%u, %u)\n",
+                    firstPage, firstPage + pageCount);
+            }
+            nativeDescriptorDevice = new OS::Device(
+                "golem.native-descriptor", nativeDescriptorPhysAddr, nativeDescriptorRegionSize);
+            m_deviceList[-3000] = nativeDescriptorDevice;
+        }
     }
 
     m_nodeNum = params.find<int>("node_id", -1);
@@ -144,6 +173,11 @@ VanadisNodeOSComponent::VanadisNodeOSComponent(SST::ComponentId_t id, SST::Param
 
                 unsigned tid = getNewTid();
                 m_threadMap[tid] = new OS::ProcessInfo( m_mmu, m_physMemMgr, m_nodeNum, tid, m_elfMap[exe], m_processDebugLevel, m_pageSize, m_numLogicalCores, tmp );
+                if ( nativeDescriptorDevice ) {
+                    m_threadMap[tid]->addMemRegion(
+                        "golem.native-descriptor", nativeDescriptorVirtAddr, nativeDescriptorRegionSize, 0x4,
+                        new OS::MemoryBacking( nativeDescriptorDevice ) );
+                }
                 ++numProcess;
             } else {
                 break;

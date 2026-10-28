@@ -7,7 +7,7 @@ import unittest
 ROOT=next(p for p in Path(__file__).resolve().parents if (p/'configure.ac').is_file())
 class NativeEngineTests(unittest.TestCase):
     def test_native_te_precision_and_explicit_panels(self):
-        fast_path_available='timingNumericalFastPath' in (ROOT/'src/sst/elements/golem/array/mvmComputeArray.h').read_text()
+        fast_path_available='timingNumericalFastPath' in (ROOT/'src/sst/elements/golem/tileunit/tileUnitArrayModel.h').read_text()
         placement=(ROOT/'src/sst/elements/golem/tileengine/workloadPlacement.h').is_file()
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)

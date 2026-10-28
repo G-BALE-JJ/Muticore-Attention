@@ -1285,7 +1285,7 @@ class CPU_Builder:
                         "fusion_dump_dir": fusion_dump_dir,
                     }
                 )
-                if native_config:
+                if native_config and not os.getenv("GOLEM_NATIVE_NODE0_INIT", ""):
                     from tools.native_llm_workload import engine_parameters
                     workerCommandProcessor.addParams(engine_parameters(native_config,cpuId,4))
                 if enable_all_stats:

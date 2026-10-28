@@ -134,6 +134,14 @@ memBytesPerNode = physMemBytes // NUM_MEMORY_NODES
 memSizePerNode = f"{memBytesPerNode // (1024**2)}MiB"
 os.environ["GOLEM_MEM_NODE_SIZE"] = f"{memBytesPerNode}B"
 
+NATIVE_NODE0_INIT=os.getenv("GOLEM_NATIVE_NODE0_INIT", "")
+NATIVE_REGION_BYTES=1024*1024
+if NATIVE_NODE0_INIT:
+    if not os.path.isfile(NATIVE_NODE0_INIT) or os.path.getsize(NATIVE_NODE0_INIT)!=memBytesPerNode:
+        raise ValueError('native descriptor Node0 image / capacity mismatch')
+    if memBytesPerNode<=NATIVE_REGION_BYTES:
+        raise ValueError('native descriptor mapping exceeds Node0')
+
 sst.setProgramOption("timebase", "1ps")
 sst.setStatisticOutput("sst.statOutputCSV", {"filepath": STATS_FILE, "separator": ","})
 sst.setStatisticLoadLevel(int(os.getenv("GOLEM_SST_STAT_LOAD_LEVEL", "16")))
@@ -183,12 +191,18 @@ osParams = {
     "checkpoint": "",
 }
 
+if NATIVE_NODE0_INIT:
+    osParams.update(native_descriptor_virt_addr=0x50000000,
+                    native_descriptor_phys_addr=memBytesPerNode-NATIVE_REGION_BYTES,
+                    native_descriptor_region_size=NATIVE_REGION_BYTES)
+
 full_exe_name = os.getenv(
     "VANADIS_EXE",
     os.path.join(TESTS_DIR, "small", "mvm_noc_int_array", "riscv64", "test_noc_dma"),
 )
 exe_name = full_exe_name.split("/")[-1]
 process_env_keys = [
+    "GOLEM_NATIVE_ABI_SELFTEST",
     "GOLEM_MATMUL_M",
     "GOLEM_MATMUL_N",
     "GOLEM_MATMUL_K",
@@ -679,7 +693,11 @@ for idx, router_id in enumerate(MEMORY_ROUTERS):
         "debug": mh_debug,
     }
     if idx == OS_MEMORY_NODE_INDEX:
-        mem_params.update({"backing": "malloc", "initBacking": 0})
+        if NATIVE_NODE0_INIT:
+            mem_params.update(backing="mmap",initBacking=1,backing_in_file=NATIVE_NODE0_INIT,
+                              backing_out_file=os.path.join(HBM_DIR,"native_node0_backing.bin"))
+        else:
+            mem_params.update({"backing": "malloc", "initBacking": 0})
     else:
         hbm_init_file = os.path.join(HBM_DIR, f"hbm_init_node{idx}.bin")
         hbm_out_file = (
