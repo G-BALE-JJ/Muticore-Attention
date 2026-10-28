@@ -12,7 +12,8 @@
       "test_decoder_stack.py",
       "test_selected_guest_digest.py",
       "test_prefill_hbm_audit.py",
-      "test_timing_mode.py"
+      "test_timing_mode.py",
+      "test_public_sim_mode.py"
     ]
   },
   "stage": "prefill",

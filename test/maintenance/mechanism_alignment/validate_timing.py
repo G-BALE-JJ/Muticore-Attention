@@ -18,17 +18,19 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def measure(name, fast_path):
+def measure(name, fast_path, cpuset=None):
     out = ROOT/'test/reports'/name
     out.mkdir(exist_ok=False)
     config = json.loads((ROOT/'test/GEMM/baseline.json').read_text())
     arguments = [x for x in config['arguments'] if x != '--verify-c']
+    artifacts=ROOT/'test/GEMM/results'/(name+'_timing')
+    cpuset=cpuset or str(min(os.sched_getaffinity(0)))
     env = dict(os.environ, **config['environment'],
-               GOLEM_ARTIFACT_ROOT=str(ROOT/'test/GEMM/results'/name+'_timing'),
+               GOLEM_ARTIFACT_ROOT=str(artifacts),
                GOLEM_TIMING_NUMERICAL_FAST_PATH=str(fast_path),
                OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1')
-    command = ['taskset', '-c', '20', 'bash', str(ROOT/'test/golem/run_noc_dma_pipeline.sh'),
-               *arguments, '--sim-mode', 'full-timing', '--cpuset', '20']
+    command = ['taskset', '-c', cpuset, 'bash', str(ROOT/'test/golem/run_noc_dma_pipeline.sh'),
+               *arguments, '--sim-mode', 'full-timing', '--cpuset', cpuset]
     compute = ROOT/'install/lib/sst-elements-library/libgolem.so'
     memory = ROOT/'install/lib/sst-elements-library/libmemHierarchy.so'
     before = (digest(compute), digest(memory))
@@ -37,7 +39,7 @@ def measure(name, fast_path):
                        stderr=subprocess.STDOUT, check=True)
     if before != (digest(compute), digest(memory)):
         raise ValueError('Installed libraries changed during timing run')
-    stats = list((ROOT/'test/GEMM/results'/name+'_timing').glob('**/execution_summary.csv'))
+    stats = list(artifacts.glob('**/execution_summary.csv'))
     if len(stats) != 1:
         raise ValueError('Expected one timing summary')
     def load(path):
@@ -51,7 +53,7 @@ def measure(name, fast_path):
     numerical_modes = []
     if 'timingNumericalFastPath' in (ROOT/'src/sst/elements/golem/array/mvmComputeArray.h').read_text():
         pattern = r'\[ARRAY_NUMERICAL_DATA\] core=-?\d+ functional=(\d+) timing_fast_path=(\d+) materialize=(\d+)'
-        for logfile in (ROOT/'test/GEMM/results'/name/'logs').glob('*.log'):
+        for logfile in (artifacts/'logs').glob('*.log'):
             numerical_modes.extend(tuple(map(int, row)) for row in re.findall(pattern, logfile.read_text(errors='replace')))
         if not numerical_modes or any(row != (0, fast_path, int(not fast_path)) for row in numerical_modes):
             raise ValueError('Backend did not observe the requested numerical materialization mode: '+str(numerical_modes))
@@ -70,6 +72,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('name')
     parser.add_argument('--compare', type=Path)
+    parser.add_argument('--cpuset', help='host CPU list; defaults to the first allowed CPU')
     args = parser.parse_args()
     if Path(args.name).name != args.name:
         parser.error('name must be a directory name')
@@ -77,9 +80,9 @@ def main():
     if args.compare:
         if 'timingNumericalFastPath' not in (ROOT/'src/sst/elements/golem/array/mvmComputeArray.h').read_text():
             raise ValueError('Same-build control requires the phase 06 validation switch')
-        control_out, control = measure(args.name+'_same_build_control', 0)
+        control_out, control = measure(args.name+'_same_build_control', 0,args.cpuset)
         (control_out/'result.json').write_text(json.dumps(control, indent=2)+'\n')
-    out, result = measure(args.name, 1)
+    out, result = measure(args.name, 1,args.cpuset)
     if args.compare:
         old = json.loads(args.compare.read_text())
         if old['status'] != 'PASS' or old['cycles'] != result['cycles'] or \

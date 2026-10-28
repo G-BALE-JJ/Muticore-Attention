@@ -5,6 +5,15 @@ remain the compatibility contract. The interfaces below are explicit native
 runtime entry points; the selected LLM guest does not automatically use them.
 No TileLang compiler, TileBin loader or compiler task descriptor is required.
 
+The public `prefill --native-operator` experiment now connects these interfaces
+to LLM-shaped QKV, WO, gate/up/down and LM-head matrices through the existing
+GEMM guest and real production NoC/HBM. `native_llm_workload.py` builds packed
+images; explicit per-TE parameters preserve physical scheduler slots while
+selecting logical instance slots, precision and placement. Default decoder
+execution retains its original FP16 contract. Native operator outputs use
+INT32/FP32; this entry does not claim full-decoder eight-precision inference.
+See `test/prefill/README.md` for padding and input-encoding limits.
+
 ## CU, TU and TE
 
 `computeunit/computeUnit.h` contains scalar reductions.
@@ -88,3 +97,10 @@ numerical-data fast path, then compares the optimized path with a control in
 the identical build. The same-build comparison checks execution, output,
 memory, DMA, NoC and HBM command statistics. Neither unchanged default cycles nor these fixture
 checks establish a performance improvement for an unmeasured opt-in workload.
+
+`test/run_native_llm_regression.py` additionally runs functional/timing pairs
+through the real public native operator entry on one installed build. It covers
+all eight precisions, all six operator shapes, separate stripe/replication
+controls and two/four independent workloads, including MPI. Functional outputs
+are compared with each instance's own input product; timing numerics are skipped.
+Every pair requires equal cycles, output counts and physical worker completion.

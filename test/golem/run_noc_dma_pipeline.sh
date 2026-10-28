@@ -2621,6 +2621,7 @@ fi
 if [[ " $GOLEM_SST_ARGS " != *"--num-threads"* ]]; then
 	SST_BASE_CMD+=("--num-threads=$GOLEM_SST_THREADS")
 fi
+PIPELINE_MPI_RANK_LOG_ROOT=""
 if [[ "$GOLEM_MPI_RANKS" -gt 1 ]]; then
 	if [[ " $GOLEM_SST_ARGS " != *"--partitioner"* ]]; then
 		SST_BASE_CMD+=("--partitioner=$GOLEM_MPI_PARTITIONER")
@@ -2628,6 +2629,18 @@ if [[ "$GOLEM_MPI_RANKS" -gt 1 ]]; then
 	MPI_EXTRA_ARGS=()
 	if [[ -n "$GOLEM_MPI_ARGS" ]]; then
 		read -r -a MPI_EXTRA_ARGS <<< "$GOLEM_MPI_ARGS"
+	fi
+	# Keep complete rank streams: MPI console forwarding can split a single
+	# diagnostic record and make completed work appear missing to validators.
+	for ((mpi_arg = 0; mpi_arg < ${#MPI_EXTRA_ARGS[@]}; mpi_arg++)); do
+		case "${MPI_EXTRA_ARGS[mpi_arg]}" in
+			--output-filename) PIPELINE_MPI_RANK_LOG_ROOT="${MPI_EXTRA_ARGS[mpi_arg+1]}" ;;
+			--output-filename=*) PIPELINE_MPI_RANK_LOG_ROOT="${MPI_EXTRA_ARGS[mpi_arg]#*=}" ;;
+		esac
+	done
+	if [[ -z "$PIPELINE_MPI_RANK_LOG_ROOT" ]]; then
+		PIPELINE_MPI_RANK_LOG_ROOT="$ARTIFACT_ROOT/mpi_rank_output"
+		MPI_EXTRA_ARGS+=(--output-filename "$PIPELINE_MPI_RANK_LOG_ROOT")
 	fi
 	SST_CMD=("$GOLEM_MPI_LAUNCHER" "${MPI_EXTRA_ARGS[@]}" -np "$GOLEM_MPI_RANKS" "${SST_BASE_CMD[@]}" "$GOLEM_ARCH_SCRIPT_PATH")
 	GOLEM_MPI_PARTITIONING=1
@@ -2911,6 +2924,12 @@ if [[ "$GOLEM_MPI_RANKS" -eq 1 ]]; then
 	done
 fi
 shopt -u nullglob
+if [[ -n "$PIPELINE_MPI_RANK_LOG_ROOT" ]]; then
+	# All ranks must close their streams before reports read them.
+	wait "$SST_PID"
+	python3 "$SCRIPT_DIR/../attention_cluster_8qk_8pv/merge_mpi_rank_logs.py" \
+		--root "$PIPELINE_MPI_RANK_LOG_ROOT" --output "$LOG_PATH" --ranks "$GOLEM_MPI_RANKS"
+fi
 ui_success "SST simulation complete"
 
 shopt -s nullglob

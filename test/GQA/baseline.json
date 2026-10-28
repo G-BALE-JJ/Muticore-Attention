@@ -22,7 +22,8 @@
     "baseline": [
       "test_attention_cluster_8qk_8pv.py",
       "test_causal_balance_analysis.py",
-      "test_timing_mode.py"
+      "test_timing_mode.py",
+      "test_public_sim_mode.py"
     ]
   },
   "stage": "GQA",

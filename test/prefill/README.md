@@ -28,3 +28,29 @@ Timing 模式只跳过阵列 GEMM 的数值 MAC（并默认跳过数值打包/�
 保留 SFU 运算、计算延迟、DMA/NoC/HBM、任务依赖及最终输出 ACK 检查。
 依赖 GEMM 结果的数值正确性校验标为 `SKIPPED`，prefill 不生成真实 logits 或 next token。
 Timing 模式默认关闭额外的 CPU wait / scheduler 快捷路径，便于隔离比较数值 MAC 的影响。
+
+原生精度与多实例矩阵算子是显式实验入口，例如：
+
+```bash
+./run.sh --smoke --native-operator qkv --sim-mode full-functional -- \
+  --precision int8 --instances 2 --panel-mapping reuse-striped --replicate-b
+./run.sh --smoke --native-operator qkv --sim-mode full-timing -- --precision int8
+python3 ../run_native_llm_regression.py --artifact-root /tmp/native-llm-matrix --cpu-set 4-7
+```
+
+可选算子为 `qkv/wo/gate/up/down/lm_head`，精度为
+`int4/int8/fp16/bf16/tf32/fp32/fp8e4m3/fp8e5m2`。通过原有 guest、生产 TE、
+调度器及真实 NoC/HBM 执行，保持 16 workers、每 worker 64 阵列及四个数据 HBM 节点。
+`--instances 1|2|4` 划分已有 worker 和 HBM，使用不同输入；`--panel-mapping`
+和 `--replicate-b` 控制放置。完整 prefill 默认仍采用原有 FP16 数值契约。
+
+该入口对单个矩阵算子使用 INT32/FP32 输出和原生累加语义，不运行完整 decoder，
+也不输出 next token。小规模 WO/down 请加 `--reuse 1`，保证 guest 至少有 16 个宏任务。
+所有维度补齐至 64，补齐计算计入 cycles；尤其 LM-head 的逻辑单行补齐成 64 行，
+不能用其 cycles 直接比较现有优化过的 last-token LM-head。
+
+默认验证输入为精确可表示的 -2..2；INT4/INT8、FP16/FP32 可通过
+`--input-a a.npy --input-b b.npy` 提供与逻辑形状匹配的外部原始张量（单实例）。
+整数输入须在原生位宽范围内；FP16 先量化到半精度。其余模式当前验证编码器只接受
+-2..2，不包含模型权重量化、scale 或 tokenizer 支持。功能模式逐项核对输出，
+timing 模式保留传输、计算完成事件及最后写回 ACK，数值检查标为 SKIPPED。

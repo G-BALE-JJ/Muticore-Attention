@@ -43,14 +43,19 @@
   "host_checks": {
     "golem": [
       "test_gemm_mpi_contract.py",
-      "test_riscv_toolchain_contract.py"
+      "test_riscv_toolchain_contract.py",
+      "test_native_llm_workload.py",
+      "test_native_workload_placement.py",
+      "test_native_engine.py",
+      "test_native_packed_array.py"
     ],
     "guest": [
       "test_reuse_window_gemm.py",
       "test_reuse_window_gm_schedule.py"
     ],
     "baseline": [
-      "test_reuse_window_panels.py"
+      "test_reuse_window_panels.py",
+      "test_public_sim_mode.py"
     ]
   },
   "stage": "GEMM",

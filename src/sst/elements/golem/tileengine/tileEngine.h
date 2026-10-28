@@ -376,6 +376,17 @@ public:
         SST::Golem::WorkerCommandProcessorAPI)
 
     SST_ELI_DOCUMENT_PARAMS(
+        {"native_precision_mode", "Opt-in packed native workload mode; -1 preserves guest ABI", "-1"},
+        {"native_worker_slot", "Logical worker within independent workload", "0"},
+        {"native_worker_count", "Workers allocated to independent workload", "0"},
+        {"native_data_nodes", "Explicit instance data nodes", "[]"},
+        {"native_task_nodes", "Explicit output macro task nodes", "[]"},
+        {"native_a_nodes", "Explicit input panel nodes", "[]"},
+        {"native_b_nodes", "Explicit weight panel nodes", "[]"},
+        {"native_replicate_b", "Replicate weights within instance data nodes", "0"},
+        {"native_a_offset", "Native input region offset", "0"},
+        {"native_b_offset", "Native weight region offset", "0"},
+        {"native_c_offset", "Native output region offset", "0"},
         {"verbose", "Verbosity", "0"},
         {"dtype_is_float", "Output vector stores float elements", "0"},
         {"stage3_trace", "Enable Stage3 2D window trace", "0"},
@@ -473,6 +484,20 @@ public:
                 CALL_INFO, -1,
                 "attention_tile_storage_banks must be in range [1, 16]\n");
         }
+        nativePrecisionMode_=params.find<int>("native_precision_mode",-1);
+        nativeWorkerSlot_=params.find<uint32_t>("native_worker_slot",0);
+        nativeWorkerCount_=params.find<uint32_t>("native_worker_count",0);
+        nativeAOffset_=params.find<uint64_t>("native_a_offset",0);
+        nativeBOffset_=params.find<uint64_t>("native_b_offset",0);
+        nativeCOffset_=params.find<uint64_t>("native_c_offset",0);
+        params.find_array<uint32_t>("native_data_nodes",nativePlacement_.dataNodes);
+        params.find_array<uint32_t>("native_task_nodes",nativePlacement_.taskNodes);
+        params.find_array<uint32_t>("native_a_nodes",nativePlacement_.aNodes);
+        params.find_array<uint32_t>("native_b_nodes",nativePlacement_.bNodes);
+        nativePlacement_.replicateB=params.find<int>("native_replicate_b",0)!=0;
+        if(nativePrecisionMode_ < -1 || nativePrecisionMode_ > 7 ||
+           (nativePrecisionMode_>=0 && (!nativeWorkerCount_ || nativeWorkerSlot_>=nativeWorkerCount_)))
+            output_.fatal(CALL_INFO,-1,"invalid native workload precision/worker partition\n");
         finalCWriteEnable_ = outputMode_ == "hbm";
         statGemmProxyCommandsIssued_ = registerStatistic<uint64_t>("gemm_proxy_commands_issued");
         statGemmProxyQueueFullStalls_ = registerStatistic<uint64_t>("gemm_proxy_queue_full_stalls");
@@ -1289,6 +1314,34 @@ public:
     }
 
     bool startWindow(const WorkerTaskListHeader& header) override {
+        if(nativePrecisionMode_>=0) {
+            // Only an explicit packed matrix workload opts into this ABI bridge.
+            // Attention/decoder headers retain their own numerical contracts.
+            if(header.operand_layout!=0 || header.elem_bytes!=4 || !header.block_m ||
+               !header.block_n || !header.block_k || header.m%header.block_m ||
+               header.n%header.block_n || header.k%header.block_k) return false;
+            WorkerTaskListHeader configured=header;
+            const auto mode=static_cast<XTileMC::ComputeMode>(nativePrecisionMode_);
+            XTileMC::PrecisionSpecV02 spec{uint32_t(nativePrecisionMode_),XTileMC::inputBits(mode),
+                XTileMC::integerMode(mode)?0u:1u,32,1,{0,0,0}};
+            configured.scheduler_worker_slot=header.worker_slot;
+            configured.worker_slot=nativeWorkerSlot_;
+            configured.active_worker_cores=nativeWorkerCount_;
+            configured.vec_stride_bytes=XTileMC::packedRowBytes(header.block_k,mode);
+            configured.mat_stride_bytes=header.block_m*configured.vec_stride_bytes;
+            configured.off_gemm_mat_base=nativeAOffset_;
+            configured.off_gemm_vec_base=nativeBOffset_;
+            configured.off_gemm_out_base=nativeCOffset_;
+            const uint32_t mt=header.m/header.block_m,nt=header.n/header.block_n;
+            const uint32_t rm=std::max(header.b_reuse_m_tiles,1u),rn=std::max(header.a_reuse_n_tiles,1u);
+            const uint32_t tasks=((mt+rm-1)/rm)*((nt+rn-1)/rn);
+            configured.task_count=nativeWorkerSlot_<tasks?(tasks-1-nativeWorkerSlot_)/nativeWorkerCount_+1:0;
+            const bool started=startWindowImpl(configured,&spec,&nativePlacement_);
+            if(started) std::printf("[NATIVE_WORKLOAD] core=%u mode=%d physical_worker=%u logical_worker=%u workers=%u tasks=%u replicate_b=%u\n",
+                coreId_,nativePrecisionMode_,header.worker_slot,nativeWorkerSlot_,nativeWorkerCount_,
+                configured.task_count,nativePlacement_.replicateB?1u:0u);
+            return started;
+        }
         return startWindowImpl(header,nullptr);
     }
     bool startPrecisionWindow(const WorkerTaskListHeader& header,
@@ -5187,13 +5240,13 @@ private:
             // existing header also uses this band for causal masking/RoPE.
             const uint32_t queryBand = header_.attention_query_band;
             const uint32_t queryLocalTile =
-                (queryRow % header_.attention_rows_per_band) / header_.block_m;
+                queryRow / header_.block_m;
             const uint32_t keyRow = n_tile * header_.block_n;
             const uint32_t keyBand = keyRow / header_.attention_rows_per_band;
             const uint32_t keyLocalTile =
                 (keyRow % header_.attention_rows_per_band) / header_.block_n;
             const uint32_t queryTilesPerBand =
-                header_.attention_rows_per_band / header_.block_m;
+                header_.attention_query_length / header_.block_m;
             const uint32_t keyTilesPerBand =
                 header_.attention_rows_per_band / header_.block_n;
             const uint64_t panelBytes = static_cast<uint64_t>(header_.block_m) *
@@ -5256,6 +5309,10 @@ private:
     bool outputIsFloat_ = false;
     bool placementEnabled_ = false;
     WorkloadPlacement placement_;
+    int nativePrecisionMode_=-1;
+    uint32_t nativeWorkerSlot_=0,nativeWorkerCount_=0;
+    uint64_t nativeAOffset_=0,nativeBOffset_=0,nativeCOffset_=0;
+    WorkloadPlacement nativePlacement_;
     bool precisionEnabled_ = false;
     XTileMC::PrecisionSpecV02 precision_{};
     bool stage3Trace_ = false;

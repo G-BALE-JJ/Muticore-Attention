@@ -20,7 +20,8 @@
       "test_attention_metrics_report.py"
     ],
     "baseline": [
-      "test_timing_mode.py"
+      "test_timing_mode.py",
+      "test_public_sim_mode.py"
     ]
   },
   "stage": "Attention",

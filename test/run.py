@@ -29,9 +29,16 @@ def main():
     mode.add_argument('--smoke', action='store_true', help='run a small SST case; prefill uses one layer and one logical token')
     parser.add_argument('--workspace', type=Path, default=ROOT, help='architecture workspace to test')
     parser.add_argument('--artifact-root', type=Path)
+    parser.add_argument('--sim-mode', choices=('full-functional', 'full-timing'))
+    parser.add_argument('--native-operator',choices=('qkv','wo','gate','up','down','lm_head'),help='opt-in native packed LLM operator experiment (prefill only)')
     args, extra = parser.parse_known_args()
     if extra[:1] == ['--']:
         extra = extra[1:]
+    mode_parser=argparse.ArgumentParser(add_help=False)
+    mode_parser.add_argument('--sim-mode', choices=('full-functional','full-timing'))
+    forwarded_mode,extra=mode_parser.parse_known_args(extra)
+    sim_mode=forwarded_mode.sim_mode or args.sim_mode or os.environ.get('GOLEM_SIM_MODE','full-functional')
+    if sim_mode not in ('full-functional','full-timing'):parser.error('invalid GOLEM_SIM_MODE')
     if not any((args.check, args.show_config, args.dry_run, args.run, args.smoke)):
         args.check = True
     workspace = args.workspace.resolve()
@@ -48,6 +55,8 @@ def main():
         if not baseline.is_dir():
             baseline = workspace / 'baseline' / 'attention_cluster_8qk_8pv'
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1')
+    if args.native_operator and (args.stage!='prefill' or args.check):
+        parser.error('--native-operator requires prefill --run/--smoke/--dry-run/--show-config')
     if args.check:
         if extra:
             parser.error('extra simulator arguments require --run, --smoke or --dry-run')
@@ -59,10 +68,16 @@ def main():
         return
     now = datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d_%H%M%S_%f')
     artifacts = (args.artifact_root or ROOT / 'test' / args.stage / 'results' / now).resolve()
-    if args.stage == 'GEMM':
-        command = ['bash', str(golem / 'run_noc_dma_pipeline.sh'), *config['arguments'],
+    if args.native_operator:
+        command=[sys.executable,str(golem/'run_native_llm_operator.py'),'--artifact-root',str(artifacts/'native_case'),
+                 '--operator',args.native_operator,'--shape','small' if args.smoke else 'formal']
+        if args.dry_run:command.append('--prepare-only')
+    elif args.stage == 'GEMM':
+        arguments=[x for x in config['arguments'] if not (sim_mode=='full-timing' and x=='--verify-c')]
+        command = ['bash', str(golem / 'run_noc_dma_pipeline.sh'), *arguments,
                    '--tensor-dir', str(artifacts / 'inputs')]
         env.update(config.get('environment', {}), GOLEM_ARTIFACT_ROOT=str(artifacts))
+        env.setdefault('GOLEM_TEST_BINARY',str(artifacts/'guest/test_noc_dma'))
         if args.dry_run:
             command.append('--dry-run')
     elif args.stage in ('Attention', 'GQA'):
@@ -84,12 +99,9 @@ def main():
         command = [sys.executable, str(baseline / 'run_selected_prefill.py'), '--artifact-root', str(artifacts)]
         if args.dry_run:
             command.append('--schedule-only')
-    command += extra
-    sim_mode=env.get('GOLEM_SIM_MODE','full-functional') if args.stage!='prefill' else 'full-functional'
-    for index, option in enumerate(extra):
-        if option=='--sim-mode' and index+1<len(extra):sim_mode=extra[index+1]
-        elif option.startswith('--sim-mode='):sim_mode=option.split('=',1)[1]
-    details = dict(stage=args.stage, sim_mode=sim_mode, workspace=str(workspace), artifact_root=str(artifacts), command=command,
+    command += [*extra,'--sim-mode',sim_mode]
+    env['GOLEM_SIM_MODE']=sim_mode
+    details = dict(stage=args.stage, native_operator=args.native_operator, sim_mode=sim_mode, workspace=str(workspace), artifact_root=str(artifacts), command=command,
                    environment_overrides={k: env[k] for k in config.get('environment', {})},
                    latency_unit='cycles', mode='smoke' if args.smoke else 'dry-run' if args.dry_run else 'run')
     print(json.dumps(details, indent=2, ensure_ascii=False), flush=True)
@@ -99,6 +111,7 @@ def main():
     if artifacts.exists() and any(artifacts.iterdir()):
         parser.error(f'output directory is not empty: {artifacts}')
     artifacts.mkdir(parents=True, exist_ok=True)
+    if args.stage=='GEMM':Path(env['GOLEM_TEST_BINARY']).parent.mkdir(parents=True,exist_ok=True)
     details['library_sha256'] = digest(workspace / 'install/lib/sst-elements-library/libgolem.so')
     details['git_head'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=workspace, text=True).strip()
     details['git_status'] = subprocess.check_output(['git', 'status', '--porcelain'], cwd=workspace, text=True)
@@ -107,6 +120,12 @@ def main():
     print(shlex.join(command), flush=True)
     # Inherited console output preserves existing simulator progress reporting.
     result = subprocess.run(command, cwd=workspace, env=env)
+    if result.returncode==0 and args.stage=='GEMM' and sim_mode=='full-timing':
+        sys.path.insert(0,str(baseline))
+        from timing_mode import verify_timing_backend
+        logs=list((artifacts/'logs').glob('*.log'))
+        if len(logs)!=1:raise ValueError('expected one GEMM runtime log')
+        (artifacts/'timing_backend.json').write_text(json.dumps(verify_timing_backend(logs[0]),indent=2)+'\n')
     details.update(exit_code=result.returncode, status='PASS' if result.returncode == 0 else 'FAIL')
     metadata.write_text(json.dumps(details, indent=2, ensure_ascii=False) + '\n')
     raise SystemExit(result.returncode)

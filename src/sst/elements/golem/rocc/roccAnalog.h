@@ -10657,7 +10657,7 @@ public:
         const uint64_t panelKOffset = stackLayout.valid ? stackLayout.k_panel : 0x05000000;
         header.off_gemm_mat_base = panelQOffset +
             static_cast<uint64_t>(state.dispatch.kvHeadIndex) * groupSize *
-                (state.dispatch.rowsPerBand / blockM) *
+                (state.dispatch.queryLength / blockM) *
                 (state.dispatch.headDim / blockK) * blockM * blockK * inputOperandSize +
             static_cast<uint64_t>(state.dispatch.groupQueryRowBegin) *
                 state.dispatch.headDim * inputOperandSize;

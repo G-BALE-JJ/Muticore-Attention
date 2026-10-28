@@ -1511,6 +1511,11 @@ def main(argv=None):
         _write_sfu_primitive_hbm_input(node_buffers)
         print("Preloaded SFU primitive HBM stream input into GEMM C tile region")
 
+    native_config=os.getenv("GOLEM_NATIVE_WORKLOAD_CONFIG","")
+    if native_config:
+        from tools.native_llm_workload import preload_native_images
+        preload_native_images(native_config,node_buffers,MEM_NODE_SIZE)
+
     for node_idx in DATA_NODE_IDS:
         init_file = os.path.join(HBM_DIR, f"hbm_init_node{node_idx}.bin")
         out_file = os.path.join(HBM_DIR, f"hbm_out_node{node_idx}.bin")

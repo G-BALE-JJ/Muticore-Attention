@@ -13,7 +13,7 @@ from pathlib import Path
 def build_plan(*, m_tiles, n_tiles, k_tiles, reuse_m, reuse_n, workers,
                groups, data_nodes, instances=1, panel_mapping='group-affine',
                replicate_b=False, block_m=64, block_n=64, block_k=64,
-               elem_bytes=4, node_bytes=64*1024**2):
+               elem_bytes=4, node_bytes=64*1024**2, input_bits=None):
     counts=(m_tiles,n_tiles,k_tiles,reuse_m,reuse_n,workers,groups,data_nodes,
             instances,block_m,block_n,block_k,elem_bytes,node_bytes)
     if any(not isinstance(x,int) or x<=0 for x in counts):
@@ -26,8 +26,11 @@ def build_plan(*, m_tiles, n_tiles, k_tiles, reuse_m, reuse_n, workers,
         raise ValueError('native placement requires no reuse or two-dimensional reuse')
     mg=(m_tiles+reuse_m-1)//reuse_m;ng=(n_tiles+reuse_n-1)//reuse_n
     wp=workers//instances;gp=groups//instances;dp=data_nodes//instances
-    mat_stride=block_m*block_k*elem_bytes
-    vec_stride=block_n*block_k*elem_bytes
+    if input_bits is not None and (input_bits not in (4,8,16,32) or elem_bytes!=4):
+        raise ValueError('packed native operands require 4/8/16/32 input bits and 32-bit outputs')
+    row_bytes=((block_k*input_bits+31)//32)*4 if input_bits else block_k*elem_bytes
+    mat_stride=block_m*row_bytes
+    vec_stride=block_n*row_bytes
     c_stride=((block_m*block_n*elem_bytes+255)//256)*256
     jobs=[]
     for instance in range(instances):
@@ -53,7 +56,7 @@ def build_plan(*, m_tiles, n_tiles, k_tiles, reuse_m, reuse_n, workers,
     plan=dict(schema='llm.native-workload-placement',version=1,instances=jobs,
               panel_mapping=panel_mapping,replicate_b=bool(replicate_b),node_bytes=node_bytes,
               geometry=dict(m_tiles=m_tiles,n_tiles=n_tiles,k_tiles=k_tiles,reuse_m=reuse_m,reuse_n=reuse_n,
-                            block_m=block_m,block_n=block_n,block_k=block_k,elem_bytes=elem_bytes),
+                            block_m=block_m,block_n=block_n,block_k=block_k,elem_bytes=elem_bytes,input_bits=input_bits),
               regions=dict(a=dict(offset=a_offset,stride=mat_stride),b=dict(offset=b_offset,stride=vec_stride),
                            c=dict(offset=c_offset,stride=c_stride),end=end))
     return plan

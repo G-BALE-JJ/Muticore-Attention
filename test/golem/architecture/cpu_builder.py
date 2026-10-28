@@ -1251,6 +1251,9 @@ class CPU_Builder:
                         "group_round_robin": request_scheduler_group_round_robin,
                     }
                 )
+            native_config=os.getenv("GOLEM_NATIVE_WORKLOAD_CONFIG","")
+            if native_config and not worker_command_processor_enable:
+                raise ValueError('native workloads require the production worker command processor')
             if worker_command_processor_enable:
                 workerCommandProcessor = cpu_rocc.setSubComponent(
                     "worker_command_processor", "golem.WorkerCommandProcessorLocal"
@@ -1282,6 +1285,9 @@ class CPU_Builder:
                         "fusion_dump_dir": fusion_dump_dir,
                     }
                 )
+                if native_config:
+                    from tools.native_llm_workload import engine_parameters
+                    workerCommandProcessor.addParams(engine_parameters(native_config,cpuId,4))
                 if enable_all_stats:
                     workerCommandProcessor.enableAllStatistics()
 

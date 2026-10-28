@@ -1388,7 +1388,7 @@ done
 run_attention_stage generate "${GENERATE_CMD[@]}"
 run_attention_stage sst "${RUN_CMD[@]}"
 SST_WALL_SECONDS="$ATTENTION_STAGE_SECONDS"
-if [[ -n "${GOLEM_MPI_RANK_LOG_ROOT:-}" ]]; then
+if [[ -n "${GOLEM_MPI_RANK_LOG_ROOT:-}" && ! -f "${SST_RUNTIME_LOG%.log}.mpi-console-raw" ]]; then
   python3 "$WORKTREE_ROOT/test/attention_cluster_8qk_8pv/merge_mpi_rank_logs.py" \
     --root "$GOLEM_MPI_RANK_LOG_ROOT" --output "$SST_RUNTIME_LOG" \
     --ranks "${GOLEM_MPI_RANKS:-4}"
