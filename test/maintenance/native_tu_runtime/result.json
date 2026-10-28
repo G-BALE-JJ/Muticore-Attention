@@ -1,0 +1,1147 @@
+{
+  "status": "PASS",
+  "latency_unit": "cycles",
+  "implementation_commits": [
+    "9a543c9",
+    "c43350a"
+  ],
+  "source_sha256": {
+    "software/native/Makefile": "01d7818efeebadee2cf728599cafe8c191ccfb16f76f682debb82d4d716ab712",
+    "software/native/README.md": "ef0de04f583ebc6f0b5e9398845170908c1ec644c1c695c426ca0087e9f375a1",
+    "software/native/apps/launcher.cpp": "19bfcab648b0a60c37d14f110d41ba4d73997aa5aa82938605939ea68150ea14",
+    "software/native/include/runtime.h": "01c649e817fa26f2931a8ec6ea3f7b6597a765f8692b95df1fc4530d2fe10378",
+    "software/native/runtime/runtime.cpp": "a312f643ddee6ef4435191d6a2e625e705283a63134f194341d79975e5e08f5b",
+    "src/sst/elements/golem/Makefile.am": "e864e985fc86658338b56a9c47ab01a9fcbe7476127e2988137cd173aadfa24f",
+    "src/sst/elements/golem/array/mvmComputeArray.h": "75b364560dcf3561c529cd4b39b257c293804439b8a242c810c4d8dc3f2a242d",
+    "src/sst/elements/golem/isa/nativeDescriptor.h": "336952174d5cfbc7fd56d6a04f3b993f08d9c74c6384dec49b701e3b67ad2108",
+    "src/sst/elements/golem/rocc/roccAnalog.h": "76bbc73871ba5a532d743b5597f8e49e66e739efb7d685657fb2edcc961631e0",
+    "src/sst/elements/golem/tileunit/README.md": "68dc448df89142527a59696eca448ef7702c26b7619f96a2a393ff6b68d26946",
+    "src/sst/elements/golem/tileunit/tileUnitArray.h": "a67d7a56fd722038bed2f4407bbeb6beb902595655fc72129601f10b99a1e051",
+    "src/sst/elements/golem/tileunit/tileUnitArrayModel.h": "4d1aef053a29ee7a115c04ca716f1a380a642015c5fece516cd9b45764ead2c3",
+    "src/sst/elements/vanadis/os/vnodeos.cc": "9d1c9ead85aedc133659ae487c3a86b811a6ca71fa589f35852c051ee8d1eb35",
+    "src/sst/elements/vanadis/os/vnodeos.h": "dac89457239670a9651e8f5ad29dd96c20b9741d0aed2bae645820f05723d8e7",
+    "src/sst/elements/vanadis/os/vphysmemmanager.h": "6b5d2d7f1c36513324039ceb97d056a60163b166c23da9a7d6c061360587f906",
+    "test/GEMM/baseline.json": "e221fa05741080a953fcd40899ca7790f000561c50e83b9cb31c08732bf67d2a",
+    "test/attention_cluster_8qk_8pv/run_decoder_stack.py": "ab9b8e2899ee05625de604e27c0532d04ce5ac702e609886d0e3b810ec7d26e6",
+    "test/golem/architecture/cpu_builder.py": "2062a8fcfc66989c2de5e285a558853c54a8f9acb898b9d722bb98c594b4cbb2",
+    "test/golem/architecture/ncores_selfcom_dma_ctrl.py": "7c71220b76bdcb8f5c43f6af0fdd9e43fb1a7d27d404e63f3d50e8148d34bc9f",
+    "test/golem/run_native_llm_operator.py": "3fb9effe1edd3a837c74a24b731a52331e3b26c05e472629ab8866eed633915e",
+    "test/golem/small/muticore_attention/test_flash_attention_baseline_contract.py": "0832273056a9b0a2136158e884f1aa17bb12b73fed15b5c188f1a2edec9aeb97",
+    "test/golem/test_native_descriptor.py": "cf1da6d5deb3e96a8fe4933a994e8b31856454b9270b0c9952f29b28121d2f29",
+    "test/golem/test_native_engine.py": "4075dc55e54f54ee4576d23dc4db8d29e55f5a5b0c3f47af969d4fa9265581d3",
+    "test/golem/test_native_packed_array.py": "b5c44ede9c617fcc1f1fe822e10c8c9e48ba33bec8b1efcd3ead356a077bf1ed",
+    "test/golem/tools/native_descriptor.py": "2ac84c9c005d62e9659e9f746ebf43c1bf07864af1c2485785ed143b05176468",
+    "test/golem/unit/native_pages_test.cpp": "4f31f30b50c309742cef8ea9abeffdc73338fd6ce719ed9ee12fe1fb7ba87c82",
+    "test/golem/unit/packed_array_driver.cpp": "aa5cc67fd1436e5051811222774da2148656a944bd65e465d11c520f44b8d155",
+    "test/maintenance/mechanism_alignment/validate_timing.py": "30abc669452c19e3ce6588a45037831fce61134da67b926abe3f89145cfa2b4d",
+    "test/maintenance/native_tu_runtime/PLAN.md": "c232b3227451f273367f7faabf9a88c5f9eb3cc74293629b80fa8fbd7369d741",
+    "test/prefill/README.md": "cffd5c3f5e5ff9fdd121fe15b329f237f43f1890cfbb4cb4a2aa812d8e605262",
+    "test/run_native_llm_regression.py": "1948215ec78898d5e066dab961de424a7c66f8361d2af38b48b0571c71d0ce8d"
+  },
+  "compiled_source_identity": "PASS",
+  "compiled_cpp_source_sha256": {
+    "src/sst/elements/golem/Makefile.am": "e864e985fc86658338b56a9c47ab01a9fcbe7476127e2988137cd173aadfa24f",
+    "src/sst/elements/golem/array/mvmComputeArray.h": "75b364560dcf3561c529cd4b39b257c293804439b8a242c810c4d8dc3f2a242d",
+    "src/sst/elements/golem/isa/nativeDescriptor.h": "336952174d5cfbc7fd56d6a04f3b993f08d9c74c6384dec49b701e3b67ad2108",
+    "src/sst/elements/golem/rocc/roccAnalog.h": "76bbc73871ba5a532d743b5597f8e49e66e739efb7d685657fb2edcc961631e0",
+    "src/sst/elements/golem/tileunit/README.md": "68dc448df89142527a59696eca448ef7702c26b7619f96a2a393ff6b68d26946",
+    "src/sst/elements/golem/tileunit/tileUnitArray.h": "a67d7a56fd722038bed2f4407bbeb6beb902595655fc72129601f10b99a1e051",
+    "src/sst/elements/golem/tileunit/tileUnitArrayModel.h": "4d1aef053a29ee7a115c04ca716f1a380a642015c5fece516cd9b45764ead2c3",
+    "src/sst/elements/vanadis/os/vnodeos.cc": "9d1c9ead85aedc133659ae487c3a86b811a6ca71fa589f35852c051ee8d1eb35",
+    "src/sst/elements/vanadis/os/vnodeos.h": "dac89457239670a9651e8f5ad29dd96c20b9741d0aed2bae645820f05723d8e7",
+    "src/sst/elements/vanadis/os/vphysmemmanager.h": "6b5d2d7f1c36513324039ceb97d056a60163b166c23da9a7d6c061360587f906"
+  },
+  "libraries": {
+    "libgolem.so": "5f3bec0e613a1f4c733c0b26577101336702db6d0ce701cf080c9e8008e84177",
+    "libmemHierarchy.so": "8296ac6ae7a4f6846b452fa7207ce7956f2e5b3ae4afb2a84001a58f942a853d",
+    "libvanadis.so": "298f0fb7b72000b9a56634830b9db6211b7f3bf8d9ddb5c622f73875e3d1fd95"
+  },
+  "guest_sha256": "19730a6ff2e45df5f936a4ef914753bafd741b75627ae0b3c411197fae46f8fd",
+  "formal_gate": {
+    "status": "PASS",
+    "phase": "native_tu_runtime",
+    "source_commit": "c43350a9f1afbee4fa2fe081f50da1902f8af7c0",
+    "library_sha256": "5f3bec0e613a1f4c733c0b26577101336702db6d0ce701cf080c9e8008e84177",
+    "memhierarchy_sha256": "8296ac6ae7a4f6846b452fa7207ce7956f2e5b3ae4afb2a84001a58f942a853d",
+    "stages": {
+      "GEMM": "PASS",
+      "Attention": "PASS",
+      "GQA": "PASS",
+      "prefill": "PASS"
+    },
+    "original_base_commit": "4db8d6fbe029f2177bb751a443764cc6b9bf4110",
+    "initial_failure_receipt": "/data/jjgong/LLM/exp-native-tu-runtime/test/reports/alignment_native_tu_runtime/gate_initial_failure.json",
+    "cycles": {
+      "GEMM": 3500.0,
+      "Attention": 12852,
+      "GQA": 37928,
+      "prefill": 6084167.75
+    },
+    "delta_from_public_cycles": {
+      "GEMM": 0,
+      "Attention": 0,
+      "GQA": 0,
+      "prefill": 0
+    },
+    "postprocessing_recovery": {
+      "reason": "SST simulation and memory verification passed; postprocessing stopped on missing historical-reference symlink. Restored results symlink and reran complete numerical/resource/ACK verification on saved outputs.",
+      "initial_invocation": "/data/jjgong/LLM/exp-native-tu-runtime/test/reports/alignment_native_tu_runtime/prefill_invocation_initial_failure.json",
+      "initial_exit_code": 1,
+      "simulation_reexecuted": false,
+      "verification_command": [
+        "/usr/bin/python3",
+        "/data/jjgong/LLM/exp-native-tu-runtime/test/attention_cluster_8qk_8pv/run_decoder_stack.py",
+        "--artifact-root",
+        "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/alignment_native_tu_runtime/reuse_window_probe",
+        "--verify-only"
+      ],
+      "verification_exit_code": 0,
+      "completed_case_command": [
+        "/usr/bin/python3",
+        "/data/jjgong/LLM/exp-native-tu-runtime/test/attention_cluster_8qk_8pv/run_all_gemm_reuse_window_baseline.py",
+        "--artifact-root",
+        "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/alignment_native_tu_runtime",
+        "--completed-case",
+        "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/alignment_native_tu_runtime/reuse_window_probe",
+        "--baseline-result",
+        "/data/jjgong/LLM/exp-native-tu-runtime/results/ffn_critical_path_20261025/formal_control/reuse_window_probe/decoder_stack_result.json",
+        "--shape",
+        "formal",
+        "--layers",
+        "2",
+        "--vocab",
+        "128256",
+        "--window-array-groups",
+        "2",
+        "--window-k-tiles",
+        "32",
+        "--window-prefetch-slots",
+        "4",
+        "--window-early-a",
+        "1",
+        "--window-output-overlap",
+        "1",
+        "--window-a-prefetch",
+        "1",
+        "--window-gm-lookahead",
+        "4",
+        "--ffn-gm-lookahead",
+        "0",
+        "--ffn-panel-tiles",
+        "16",
+        "--lm-n-parallel",
+        "1",
+        "--gm-stage-chain",
+        "--layer-residency",
+        "--lm-input-residency",
+        "--input-residency",
+        "--elide-intermediate-output",
+        "--add-norm-fusion",
+        "--eager-final-norm"
+      ],
+      "completed_case_exit_code": 0
+    }
+  },
+  "formal_gate_artifact": "/data/jjgong/LLM/exp-native-tu-runtime/test/reports/alignment_native_tu_runtime/gate_resumed.json",
+  "formal_source_note": "Gate started with uncommitted implementation on base 4db8d6f. Committed C++ sources match the copied build sources byte-for-byte; installed candidate and main libraries match byte-for-byte.",
+  "native_pairs": [
+    {
+      "name": "qkv_int4",
+      "operator": "qkv",
+      "precision": "int4",
+      "status": "PASS",
+      "cycles": 35157.0,
+      "delta_cycles": 0,
+      "output_tiles": 64,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "4833b355690738fac3cab121eb973da41d3d9f5765a666aa4b12103f686aab34",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_int8",
+      "operator": "qkv",
+      "precision": "int8",
+      "status": "PASS",
+      "cycles": 35111.0,
+      "delta_cycles": 0,
+      "output_tiles": 64,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "384485c847a1c0ea9cf2481d1584c9c1cebded11d60f195b634eaa939dfa4c9e",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_fp16",
+      "operator": "qkv",
+      "precision": "fp16",
+      "status": "PASS",
+      "cycles": 35554.0,
+      "delta_cycles": 0,
+      "output_tiles": 64,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "8dd849fe772ea544e775dc147496f54a8250c640c9d2cee559d833a307f4d175",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_bf16",
+      "operator": "qkv",
+      "precision": "bf16",
+      "status": "PASS",
+      "cycles": 35554.0,
+      "delta_cycles": 0,
+      "output_tiles": 64,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "97ae76ba1a68b63ceb22e7c55a785e27c0f49be2a1eea185ac594787028e8e97",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_tf32",
+      "operator": "qkv",
+      "precision": "tf32",
+      "status": "PASS",
+      "cycles": 36220.0,
+      "delta_cycles": 0,
+      "output_tiles": 64,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "e64c53d51380c653cda11bb39fe150dcb6d2a9ce8fc49d49fc6eb8c953063fc1",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_fp32",
+      "operator": "qkv",
+      "precision": "fp32",
+      "status": "PASS",
+      "cycles": 36228.0,
+      "delta_cycles": 0,
+      "output_tiles": 64,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "60685ca13020205de099e6aabc976522e2738a13a89b3ce01c5ef850cb34874b",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_fp8e4m3",
+      "operator": "qkv",
+      "precision": "fp8e4m3",
+      "status": "PASS",
+      "cycles": 35309.0,
+      "delta_cycles": 0,
+      "output_tiles": 64,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "ec14e8a795f5faa0d7a0e2c38c43827138a5be31883e298c27d49d07e961f98f",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_fp8e5m2",
+      "operator": "qkv",
+      "precision": "fp8e5m2",
+      "status": "PASS",
+      "cycles": 35309.0,
+      "delta_cycles": 0,
+      "output_tiles": 64,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "d6933ddc028353d12ec1f300a95acaa23c8d92fb186cc248f4503177736c00b1",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "wo",
+      "operator": "wo",
+      "precision": "fp16",
+      "status": "PASS",
+      "cycles": 37909.0,
+      "delta_cycles": 0,
+      "output_tiles": 32,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        128,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        128,
+        128
+      ],
+      "bundle_sha256": "1d3ff99bf5cd66bd3f8192c5cad3c15fe7cf1a3f43416170f88ee81162679c81",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "c0efab9c7999cff5f7bf9fe6411e16c3e29e764f4ee670bbb86041a75331e24b"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "gate",
+      "operator": "gate",
+      "precision": "fp16",
+      "status": "PASS",
+      "cycles": 55776.0,
+      "delta_cycles": 0,
+      "output_tiles": 128,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        512,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        512,
+        128
+      ],
+      "bundle_sha256": "d6bc11f0e181418f07b94d9f0674f19f3ff06d020db850eab534f319a5a8d34f",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "577ed0f7d77eae7d654f00bf6246ff5c3b4d2910ffde194f0708d3b468fe4d27"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "up",
+      "operator": "up",
+      "precision": "fp16",
+      "status": "PASS",
+      "cycles": 55776.0,
+      "delta_cycles": 0,
+      "output_tiles": 128,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        512,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        512,
+        128
+      ],
+      "bundle_sha256": "d6bc11f0e181418f07b94d9f0674f19f3ff06d020db850eab534f319a5a8d34f",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "577ed0f7d77eae7d654f00bf6246ff5c3b4d2910ffde194f0708d3b468fe4d27"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "down",
+      "operator": "down",
+      "precision": "fp16",
+      "status": "PASS",
+      "cycles": 40000.0,
+      "delta_cycles": 0,
+      "output_tiles": 32,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        128,
+        512
+      ],
+      "padded_shape": [
+        1024,
+        128,
+        512
+      ],
+      "bundle_sha256": "8cae5268606516dc9a6fee60d6c5ca13c2d0d7c2cd84b1e8987c92f6a74d0973",
+      "input_sha256": [
+        {
+          "a": "0e075e328e7e77c574e4c2996c115cc0991ca80b0c5253f04999eb40717f60ac",
+          "b": "02823ece783c6042bdf24b741c2dcbf3c4a2424922dd89185d82a71d0bbd5f3a"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "lm_head",
+      "operator": "lm_head",
+      "precision": "fp16",
+      "status": "PASS",
+      "cycles": 67556.0,
+      "delta_cycles": 0,
+      "output_tiles": 129,
+      "instances": 1,
+      "logical_shape": [
+        1,
+        8201,
+        128
+      ],
+      "padded_shape": [
+        64,
+        8256,
+        128
+      ],
+      "bundle_sha256": "eecf244dfd855b109e65c837a78c97065d8c95c3344bc543a80383d80b28ddfe",
+      "input_sha256": [
+        {
+          "a": "5c327e73f80052201d805eecd1d03c689f3da5b47b1c5a0527be28839ec8da9f",
+          "b": "40fc36b8bd629fb0295dd2c844efd2d6ab3d327b41ece1113e0871e1868bd803"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_formal128",
+      "operator": "qkv",
+      "precision": "fp16",
+      "status": "PASS",
+      "cycles": 88001.0,
+      "delta_cycles": 0,
+      "output_tiles": 96,
+      "instances": 1,
+      "logical_shape": [
+        128,
+        3072,
+        2048
+      ],
+      "padded_shape": [
+        128,
+        3072,
+        2048
+      ],
+      "bundle_sha256": "6fdcda1a29bf094ca250e8e95852fd842acc4b0b321eaa9ac2ffc655819949b1",
+      "input_sha256": [
+        {
+          "a": "de46b6a20bf0fa5b624077d20a854cc671c679ca69dbdf16be76abdcc505e83b",
+          "b": "f9eff0019b6a298cb94f2d388e700b21f4c425e94f8003228b9e4efcfb45f44b"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_striped",
+      "operator": "qkv",
+      "precision": "fp16",
+      "status": "PASS",
+      "cycles": 35552.0,
+      "delta_cycles": 0,
+      "output_tiles": 64,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "27190af6a2c127a3e9f8608ea021385f11820ee08f5e26a6d80116efa86ea455",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_replicated",
+      "operator": "qkv",
+      "precision": "fp16",
+      "status": "PASS",
+      "cycles": 35574.0,
+      "delta_cycles": 0,
+      "output_tiles": 64,
+      "instances": 1,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "1fc07a235086589f028d19974eb6e736661554bd785ebc1e29faf31e98ff48e6",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        }
+      ],
+      "functional_numerics": [
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_independent2",
+      "operator": "qkv",
+      "precision": "fp16",
+      "status": "PASS",
+      "cycles": 33617.0,
+      "delta_cycles": 0,
+      "output_tiles": 128,
+      "instances": 2,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "0caed6f71d450e61ca2c4aad8869fc8f1a524e79a8452ce2c26f80bf206a0de4",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        },
+        {
+          "a": "e4bc3a4276f0a4d36bbaadaa85f9a79c9f106feffcb9109f28a86c9a9c9470e4",
+          "b": "b6e267a67e6eb4617fc368e2b2fd4b70a6a509996073ed73d43a2ba86eb51c9a"
+        }
+      ],
+      "functional_numerics": [
+        "PASS",
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED",
+        "SKIPPED"
+      ]
+    },
+    {
+      "name": "qkv_independent4_mpi4",
+      "operator": "qkv",
+      "precision": "int8",
+      "status": "PASS",
+      "cycles": 34153.0,
+      "delta_cycles": 0,
+      "output_tiles": 256,
+      "instances": 4,
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "bundle_sha256": "9cec242e22cd3862894017a026856c5929c1c9c6f59aafdfea23fbeeb7c012ea",
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        },
+        {
+          "a": "e4bc3a4276f0a4d36bbaadaa85f9a79c9f106feffcb9109f28a86c9a9c9470e4",
+          "b": "b6e267a67e6eb4617fc368e2b2fd4b70a6a509996073ed73d43a2ba86eb51c9a"
+        },
+        {
+          "a": "20923760c79c91ba3e20f377f1bfb100b335b38d745049b3cd471981fa38249b",
+          "b": "402f979b772487fe599a1feb94d77890e61b43419c2d5301c8cb16c7dd766b44"
+        },
+        {
+          "a": "6cb608b104d3f607e5aedc1a476863b854cf405ccb4a1b090027c63360c7028b",
+          "b": "4506b22278df9ded5d7040392dec111451915ef87730fbb59d0176e15a1c4414"
+        }
+      ],
+      "functional_numerics": [
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "timing_numerics": [
+        "SKIPPED",
+        "SKIPPED",
+        "SKIPPED",
+        "SKIPPED"
+      ]
+    }
+  ],
+  "native_matrix_artifact": "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/fixed_runtime_matrix/result.json",
+  "general_pairs": [
+    {
+      "name": "gemm_k64",
+      "stage": "GEMM",
+      "status": "PASS",
+      "cycles": 3158.0,
+      "delta_cycles": 0
+    },
+    {
+      "name": "gemm_k192_mpi2",
+      "stage": "GEMM",
+      "status": "PASS",
+      "cycles": 5008.0,
+      "delta_cycles": 0
+    },
+    {
+      "name": "attention_d64_mpi2",
+      "stage": "Attention",
+      "status": "PASS",
+      "cycles": 4645,
+      "delta_cycles": 0
+    },
+    {
+      "name": "attention_causal_rope",
+      "stage": "Attention",
+      "status": "PASS",
+      "cycles": 5289,
+      "delta_cycles": 0
+    },
+    {
+      "name": "gqa_group4",
+      "stage": "GQA",
+      "status": "PASS",
+      "cycles": 10594,
+      "delta_cycles": 0
+    },
+    {
+      "name": "gqa_group2_d128",
+      "stage": "GQA",
+      "status": "PASS",
+      "cycles": 21595,
+      "delta_cycles": 0
+    },
+    {
+      "name": "gqa_q1024_k512",
+      "stage": "GQA",
+      "status": "PASS",
+      "cycles": 19147,
+      "delta_cycles": 0
+    },
+    {
+      "name": "prefill_token1",
+      "stage": "prefill",
+      "status": "PASS",
+      "cycles": 469442.625,
+      "delta_cycles": 0
+    },
+    {
+      "name": "prefill_l2_token65",
+      "stage": "prefill",
+      "status": "PASS",
+      "cycles": 855409.625,
+      "delta_cycles": 0
+    },
+    {
+      "name": "prefill_padded2048",
+      "stage": "prefill",
+      "status": "PASS",
+      "cycles": 788735.625,
+      "delta_cycles": 0
+    }
+  ],
+  "general_matrix_artifact": "/data/jjgong/LLM/exp-native-tu-runtime/test/reports/native_tu_runtime_timing/result.json",
+  "same_build_control": {
+    "status": "PASS",
+    "cycles": 3500.0,
+    "latency_unit": "cycles",
+    "scope": "first descriptor start through last WCP completion, inclusive +1",
+    "mode": "full-timing",
+    "timing_numerical_fast_path": 1,
+    "command": [
+      "taskset",
+      "-c",
+      "22",
+      "bash",
+      "/data/jjgong/LLM/exp-native-tu-runtime/test/golem/run_noc_dma_pipeline.sh",
+      "--groups",
+      "4",
+      "--num-cores",
+      "20",
+      "--gemm-cores",
+      "20",
+      "--num-mem-nodes",
+      "5",
+      "--mesh-dim-x",
+      "4",
+      "--gemm-m",
+      "128",
+      "--gemm-n",
+      "128",
+      "--gemm-k",
+      "128",
+      "--gemm-block-m",
+      "64",
+      "--gemm-block-n",
+      "64",
+      "--gemm-block-k",
+      "64",
+      "--mpi-ranks",
+      "1",
+      "--output-mode",
+      "hbm",
+      "--tensor-source",
+      "sample",
+      "--sim-mode",
+      "full-timing",
+      "--cpuset",
+      "22"
+    ],
+    "library_sha256": "5f3bec0e613a1f4c733c0b26577101336702db6d0ce701cf080c9e8008e84177",
+    "memhierarchy_sha256": "8296ac6ae7a4f6846b452fa7207ce7956f2e5b3ae4afb2a84001a58f942a853d",
+    "metrics_sha256": {
+      "execution_summary.csv": "91610435ab73c3210e0badd521b7718bb7ac7f7cdeb7e93fd8926c3a680fdb5e",
+      "terminal_summary.csv": "d6911d741b08d4e3002440e88eeaa29a96a6a29c82d83d852a32726b99a28b0d",
+      "memory_summary.csv": "9aa15fbf60221484d87e9bf59cf68584f449ff9eeb479db14ff94a46b54898be",
+      "dma_summary.csv": "39b24773fefa69ac0c1e5b4246836efea70b30e5dd2e5a60fcb0aeb1be51fd40",
+      "noc_summary.csv": "73cf9bc7cef249ac46379d8f2e8228e5feedc51a4dd4920b9f9783c78584c930",
+      "hbm_read_command_summary.csv": "05ebabff45ef30055b86c8c082dabffe9fee91a2dccfc0e0d7048798fdf65bad"
+    },
+    "final_c_writeback_complete_ratio": "4/4",
+    "source_commit": "4db8d6fbe029f2177bb751a443764cc6b9bf4110",
+    "observed_backend_mode": {
+      "functional": 0,
+      "timing_fast_path": 1,
+      "materialize": 0,
+      "observed_arrays": 16
+    },
+    "paired_control": "test/reports/native_tu_runtime_control/result.json",
+    "delta_cycles": 0.0,
+    "same_build_control": "/data/jjgong/LLM/exp-native-tu-runtime/test/reports/native_tu_runtime_paired_same_build_control/result.json",
+    "same_build_metrics_equal": true,
+    "same_build_delta_cycles": 0
+  },
+  "additional_checks": {
+    "functional_abi": {
+      "status": "PASS",
+      "cycles": 31912.0,
+      "native_workers": 16,
+      "precision": "fp16",
+      "launcher": "fixed",
+      "numerics": [
+        {
+          "instance": 0,
+          "status": "PASS",
+          "max_abs_error": 0.0
+        }
+      ],
+      "artifact": "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/fixed_launcher_probe4/native_case/result.json",
+      "abi_selftest": "PASS"
+    },
+    "timing_abi": {
+      "status": "PASS",
+      "cycles": 31912.0,
+      "native_workers": 16,
+      "precision": "fp16",
+      "launcher": "fixed",
+      "numerics": [
+        {
+          "instance": 0,
+          "status": "SKIPPED",
+          "max_abs_error": null
+        }
+      ],
+      "artifact": "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/fixed_launcher_timing_selftest/native_case/result.json",
+      "abi_selftest": "PASS"
+    },
+    "legacy_compatibility": {
+      "status": "PASS",
+      "cycles": 4989.0,
+      "native_workers": 16,
+      "precision": "fp16",
+      "launcher": "legacy",
+      "numerics": [
+        {
+          "instance": 0,
+          "status": "PASS",
+          "max_abs_error": 0.0
+        }
+      ],
+      "artifact": "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/native_tu_legacy_compat/native_case/result.json"
+    },
+    "external_int8": {
+      "status": "PASS",
+      "cycles": 35111.0,
+      "native_workers": 16,
+      "precision": "int8",
+      "launcher": "fixed",
+      "numerics": [
+        {
+          "instance": 0,
+          "status": "PASS",
+          "max_abs_error": 0.0
+        }
+      ],
+      "artifact": "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/fixed_external_int8/native_case/result.json"
+    },
+    "external_fp16": {
+      "status": "PASS",
+      "cycles": 35554.0,
+      "native_workers": 16,
+      "precision": "fp16",
+      "launcher": "fixed",
+      "numerics": [
+        {
+          "instance": 0,
+          "status": "PASS",
+          "max_abs_error": 0.0
+        }
+      ],
+      "artifact": "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/fixed_external_fp16/native_case/result.json"
+    },
+    "main_native_smoke": {
+      "status": "PASS",
+      "sim_mode": "full-functional",
+      "operator": "qkv",
+      "precision": "int8",
+      "logical_shape": [
+        1024,
+        256,
+        128
+      ],
+      "padded_shape": [
+        1024,
+        256,
+        128
+      ],
+      "instances": 2,
+      "input_sha256": [
+        {
+          "a": "beb98f26f4278d6fb0a176adcb97c7478f397c5ad0ceb8ae00567dbb4b271896",
+          "b": "066e1f6d7e971a640d7286359da76452f187d630d0c28d221775b4aa73d85c02"
+        },
+        {
+          "a": "e4bc3a4276f0a4d36bbaadaa85f9a79c9f106feffcb9109f28a86c9a9c9470e4",
+          "b": "b6e267a67e6eb4617fc368e2b2fd4b70a6a509996073ed73d43a2ba86eb51c9a"
+        }
+      ],
+      "panel_mapping": "reuse-striped",
+      "replicate_b": true,
+      "native_workers": 16,
+      "output_tiles": 128,
+      "numerics": [
+        {
+          "instance": 0,
+          "status": "PASS",
+          "max_abs_error": 0.0
+        },
+        {
+          "instance": 1,
+          "status": "PASS",
+          "max_abs_error": 0.0
+        }
+      ],
+      "latency_unit": "cycles",
+      "cycles": 33356.0,
+      "scope": "first guest descriptor start through last native WCP completion after final C write ACK, inclusive +1",
+      "library_sha256": "5f3bec0e613a1f4c733c0b26577101336702db6d0ce701cf080c9e8008e84177",
+      "memhierarchy_sha256": "8296ac6ae7a4f6846b452fa7207ce7956f2e5b3ae4afb2a84001a58f942a853d",
+      "vanadis_sha256": "298f0fb7b72000b9a56634830b9db6211b7f3bf8d9ddb5c622f73875e3d1fd95",
+      "config_sha256": "ee351d662b51411fe5a7cc28b601524f5bc7f8b5d74a0082ab7050889e98d3b5",
+      "real_noc_hbm": true,
+      "output_contract": "32-bit outputs; padded work is timed; no decoder next-token claim",
+      "command": [
+        "bash",
+        "/data/jjgong/LLM/test/golem/run_noc_dma_pipeline.sh",
+        "--groups",
+        "4",
+        "--num-cores",
+        "20",
+        "--gemm-cores",
+        "20",
+        "--num-mem-nodes",
+        "5",
+        "--mem-node-size",
+        "134217728",
+        "--mesh-dim-x",
+        "4",
+        "--gemm-m",
+        "1024",
+        "--gemm-n",
+        "256",
+        "--gemm-k",
+        "128",
+        "--gemm-block-m",
+        "64",
+        "--gemm-block-n",
+        "64",
+        "--gemm-block-k",
+        "64",
+        "--dtype",
+        "fp32",
+        "--tensor-source",
+        "synthetic",
+        "--output-mode",
+        "hbm",
+        "--memory-backend",
+        "ramulator2",
+        "--mpi-ranks",
+        "1",
+        "--sim-mode",
+        "full-functional"
+      ],
+      "launcher": "fixed",
+      "guest_sha256": "19730a6ff2e45df5f936a4ef914753bafd741b75627ae0b3c411197fae46f8fd",
+      "bundle_sha256": "75f45bb4879b6d26aaf5c9d37a15e8b0527b5d66ee021bd1cdc587718d9362e1",
+      "descriptor_status": "PASS",
+      "native_tu": true,
+      "artifact": "/data/jjgong/LLM/test/prefill/results/native_tu_runtime_main_smoke_v2/native_case/result.json"
+    },
+    "main_host_checks": {
+      "status": "PASS",
+      "stages": {
+        "GEMM": "PASS",
+        "Attention": "PASS",
+        "GQA": "PASS",
+        "prefill": "PASS"
+      },
+      "artifact": "/data/jjgong/LLM/test/reports/native_tu_runtime_main_host/result.json"
+    },
+    "main_install": {
+      "status": "PASS",
+      "method": "Atomic promotion of exact candidate-tested library files; no recompilation",
+      "source_commit": "9a543c9",
+      "candidate": "/data/jjgong/LLM/exp-native-tu-runtime",
+      "libraries": [
+        {
+          "library": "libgolem.so",
+          "previous_sha256": "fa56f0206ee501722bd91dcfa1d30a5e1bf933149c9e9eef7539f46c2e3eea1a",
+          "candidate_sha256": "5f3bec0e613a1f4c733c0b26577101336702db6d0ce701cf080c9e8008e84177",
+          "installed_sha256": "5f3bec0e613a1f4c733c0b26577101336702db6d0ce701cf080c9e8008e84177"
+        },
+        {
+          "library": "libmemHierarchy.so",
+          "previous_sha256": "79f779c8ac7b4646c7fbfc9d75bf1be4a68f542308dbeb32c0da701b4dee0016",
+          "candidate_sha256": "8296ac6ae7a4f6846b452fa7207ce7956f2e5b3ae4afb2a84001a58f942a853d",
+          "installed_sha256": "8296ac6ae7a4f6846b452fa7207ce7956f2e5b3ae4afb2a84001a58f942a853d"
+        },
+        {
+          "library": "libvanadis.so",
+          "previous_sha256": "e39e6f87e2f7dbf65574d81746bb2224f3389a8e73ccf32faf84e2c653914c33",
+          "candidate_sha256": "298f0fb7b72000b9a56634830b9db6211b7f3bf8d9ddb5c622f73875e3d1fd95",
+          "installed_sha256": "298f0fb7b72000b9a56634830b9db6211b7f3bf8d9ddb5c622f73875e3d1fd95"
+        }
+      ],
+      "artifact": "/data/jjgong/LLM/test/reports/native_tu_runtime_install/result.json"
+    },
+    "main_default_gemm": {
+      "status": "PASS",
+      "cycles": 3500,
+      "artifact": "/data/jjgong/LLM/test/GEMM/results/native_tu_runtime_main"
+    }
+  },
+  "scope": {
+    "native": "First guest descriptor timestamp through last native WCP completion after final C write ACK; inclusive +1.",
+    "prefill": "First token-ID DMA send through final valid-token full-vocabulary logits DMA ACK; host argmax excluded.",
+    "hardware": "Existing 4 managers, 16 workers, 64 64x64 arrays per worker, 2 MiB GM per core, 5x128 MiB HBM nodes. Reserve 1 MiB within Node0; add no capacity.",
+    "limits": "Native GEMM ABI only, not donor TileBin compatibility or a compiler. Tokens per-core; no inter-core dependency graph. Explicit native operator experiment, not eight-precision full decoder. Timing does not produce real next tokens."
+  },
+  "resolved_failure_artifacts": [
+    "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/fixed_launcher_first",
+    "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/fixed_launcher_probe2",
+    "/data/jjgong/LLM/exp-native-tu-runtime/test/prefill/results/fixed_launcher_probe3",
+    "/data/jjgong/LLM/test/prefill/results/native_tu_runtime_main_smoke"
+  ],
+  "fixed_guest_reuse": {
+    "launches": 36,
+    "compiler_invocations": 0,
+    "make_reuse_confirmations": 36
+  }
+}
