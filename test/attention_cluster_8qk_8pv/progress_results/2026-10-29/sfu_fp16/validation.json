@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-29",
+  "default_internal_precision": "fp32",
+  "optional_internal_precision": "fp16",
+  "numerical_contract": "binary16 operands, per-operation RNE, gradual underflow, FP16 reductions and online state; host-libm transcendental model",
+  "resource_change": false,
+  "full_llm_quality_validation": false,
+  "tests": {
+    "existing_production_regressions": {
+      "passed": 180
+    },
+    "new_precision_tests_final_rerun": {
+      "passed": 4
+    },
+    "host_sfu_pipeline_audit": {
+      "passed": 6
+    },
+    "binary16_conversion_reference_values": 253956,
+    "broad_run_note": "184 collected; 183 passed in the first broad run. While that run was in progress, the new fixture gained rmsnorm_job/softmax_tile cases; the already-imported reference therefore failed its set-of-cases assertion. All 4 new tests were rerun from the final source and passed. Existing 180 regressions all passed.",
+    "independent_reference": "NumPy binary16, explicit per-operation casts and sequential reductions",
+    "actual_sfu_cases": [
+      "add",
+      "multiply",
+      "silu",
+      "rope",
+      "rmsnorm",
+      "attention0",
+      "attention1",
+      "direct0",
+      "direct1",
+      "reduce_sum",
+      "sigmoid",
+      "softmax_row",
+      "rmsnorm_job",
+      "softmax_tile"
+    ],
+    "legacy_head_fp32_values_and_completion_schedule_identical": true,
+    "legacy_head": "c7b9e11545f669bc7469feb5f3ff51cfcac88fb3",
+    "legacy_fp32_fixture_evidence_sha256": "9b384a60d654fe11cef7954617b0f6d1ecd761d6ae150c5e0531e32130fd0288",
+    "fp16_fixture_evidence_sha256": "312f8a99322096c1c9cb5e29d5c20a204ecd7cc7830f18ca47e39ea3244869bb"
+  },
+  "build": {
+    "status": "PASS",
+    "command": "bash scripts/build_and_install_local.sh --no-autogen --jobs 8",
+    "installed_library_sha256": "769d9dbea903e3dcda872f3941225e6ef823bd346416ecbda94a17ebd1d9024d",
+    "note": "Production SFU source and cpu_builder match the final build tree.",
+    "final_incremental_command": "make -C build/sst-elements/src/sst/elements/golem -j8 && make -C build/sst-elements/src/sst/elements/golem install"
+  },
+  "source_sha256": {
+    "src/sst/elements/golem/sfu/arithmetic.h": "c4df76609d12eda17275958038f765ac12420dc0f16b0b8d2719504df0416e7c",
+    "src/sst/elements/golem/sfu/sfu.h": "9bbb07de7349b07e04c66e95eaea9970f3688068528a08b21cb0b85266964ca8",
+    "src/sst/elements/golem/sfu/sfu.cc": "74e6671531a1c5bd2e48715678a0907873c351e20dd7f49bf583ca54de06a95e",
+    "src/sst/elements/golem/sfu/vector_math.h": "176f0aa403d7c389be6bea790d2fa15a13aee93c7a16b59d949033d1e48af3c0",
+    "src/sst/elements/golem/sfu/vector_pipeline.h": "f4942dea9e1742b8ec1c986710d45f4f0b918d0e77d20ba380d5e26c57fe750a",
+    "src/sst/elements/golem/tests/architecture/cpu_builder.py": "5793146e5fba5c79f670f7bf2a1592ebc04f0cbae274288725d0d659f9bea074",
+    "src/sst/elements/golem/tests/small/muticore_attention/sfu_precision_fixture.cpp": "006c58fc64f8f0655383b796cc74630bed2ad633fe2c4d90dc81a4a78831a878",
+    "src/sst/elements/golem/tests/small/muticore_attention/test_sfu_arithmetic.py": "2a4ba5d24fd0329dc8265099f8adee4e15836201f69612de1b016a41b060f2e4",
+    "src/sst/elements/golem/tests/small/muticore_attention/test_sfu_internal_precision.py": "99b2b2109540e2612aaa7c649d13d3b4912e9798c72dc748a4e4e6a1bd8f6f40"
+  }
+}

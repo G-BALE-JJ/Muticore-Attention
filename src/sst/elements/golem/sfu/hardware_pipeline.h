@@ -58,5 +58,26 @@ struct TensorHardwarePipeline {
     }
 };
 
+// Arbitration follows successful VPU grants, not wall-clock parity. With II=2,
+// a parity policy otherwise gives the same client every eligible issue slot.
+// A client with no ready work does not consume its turn or block the other one.
+struct SFUSharedVectorArbiter {
+    bool grantBased=true, preferRows=true;
+    uint64_t rowGrants=0, vectorGrants=0;
+    template<class Rows,class Vectors>
+    void step(uint64_t now,TensorHardwarePipeline& resource,Rows rows,Vectors vectors) {
+        const auto runRows=[&] {
+            const auto before=resource.acceptedTokens; rows();
+            if(resource.acceptedTokens!=before){rowGrants+=resource.acceptedTokens-before;preferRows=false;}
+        };
+        const auto runVectors=[&] {
+            const auto before=resource.acceptedTokens; vectors();
+            if(resource.acceptedTokens!=before){vectorGrants+=resource.acceptedTokens-before;preferRows=true;}
+        };
+        const bool first=grantBased ? preferRows : bool(now&1);
+        if(first){runRows();runVectors();}else{runVectors();runRows();}
+    }
+};
+
 } }
 #endif

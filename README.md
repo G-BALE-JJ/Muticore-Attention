@@ -2,7 +2,12 @@
 
 公共架构源码位于 `src/sst/elements/`，本项目的基线与实验测试位于 `test/`。
 当前公共版本提取自 `Muticore-Attention-all-gemm` 的实际工作区，包含原有未提交改动；
-默认 prefill 配置沿用 2026-10-26 已验证选择。硬件参数与数值契约未因目录整理而改变。
+默认 prefill 配置沿用 2026-10-26 的历史选择。
+2026-10-29 已同步试验区的 SFU 全 FP16 计算：归约和 online softmax 状态也逐步按 FP16 舍入。
+公共入口默认使用该模式，`GOLEM_SFU_INTERNAL_PRECISION=fp32` 可显式选择历史内部精度。
+该选项不修改矩阵阵列的 dtype 或累加规则。旧 prefill 选择尚未通过新数值契约验收，
+当前支持情况见 [SFU FP16 四阶段回归](docs/SFU_FP16_INTEGRATION_2026-10-29.md)。
+SFU v4 的行级 RMSNorm、直接 SiLU FP16 ROM 和完整 Prefill 模拟范围见 [v4 主工程接入记录](docs/SFU_FP16_V4_PREFILL_2026-10-31.md)。
 
 ```text
 LLM/
@@ -50,6 +55,8 @@ cd /data/jjgong/LLM/test/GEMM     # 可替换为 Attention、GQA、prefill
 Attention 与 GQA 支持 `-- --causal --rope` 等原 runner 参数。
 `prefill --run` 使用 `SELECTED_PREFILL_2026-10-26.json`，保留 guest/library
 SHA256 检查及原数值、资源验证；它是合成 workload，不是完整真实模型推理。
+此历史选择固定的是旧库；重新构建 FP16 SFU 后会触发库哈希保护，不能直接视为新模式已验收。
+各阶段的 `stage_invocation.json` 会记录实际 `sfu_internal_precision`。
 `prefill --smoke` 为独立小规模配置，其结果不能替代正式配置验收。
 新延迟报告统一使用 **cycles**，宿主运行/验证时间单独标注。
 

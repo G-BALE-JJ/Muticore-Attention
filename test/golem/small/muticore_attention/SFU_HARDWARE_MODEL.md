@@ -5,6 +5,16 @@ arrays: host code evaluates functional values, but a value becomes visible only
 after a finite physical resource accepts the operation and its completion event
 arrives. This is a cycle/resource model, not gate-level RTL simulation.
 
+## Internal precision
+
+The default `GOLEM_SFU_INTERNAL_PRECISION=fp16` uses binary16 arithmetic with rounding
+after every operation, including reductions and online softmax state. Explicit
+`GOLEM_SFU_INTERNAL_PRECISION=fp32` selects legacy arithmetic. Resource and timing parameters remain independent.
+See [the numerical contract and validation](../../../attention_cluster_8qk_8pv/SFU_FULL_FP16_2026-10-29.md).
+Measurements and FP32 output errors below are archived results from the original
+FP32 internal mode. They are not validation of the new default; see the
+[public FP16 integration report](../../../../docs/SFU_FP16_INTEGRATION_2026-10-29.md).
+
 ## Physical Resources
 
 The fixed sequential-64 QK1024 preset instantiates these resources in every
@@ -16,7 +26,7 @@ worker:
 | MAX compare | 16 | 1 | 1 | compare one 16-value beat |
 | MAX reduction | 16 inputs | 4 | 1 | reduce a beat to one maximum |
 | Vector EXP | 16 | 8 | 1 | shifted exponentials |
-| SUM reduction | 16 inputs | 8 | 1 | FP32 sum of one EXP beat |
+| SUM reduction | 16 inputs | 8 | 1 | sum of one EXP beat in the selected precision |
 | Online MAX | 1 | 1 | 1 | merge old and tile maxima |
 | Online EXP | 1 | 8 | 1 | compute the non-trivial rescale factor |
 | Online MUL | 2 | 3 | 1 | two independent rescale products |
@@ -32,8 +42,8 @@ state and is not charged as a per-tile RSQRT operation.
 
 ## Functional Commit
 
-The simulator evaluates FP32 vector results and the existing online-state
-arithmetic with host operations only when the matching completion event fires.
+In the explicit legacy `fp32` mode, the simulator evaluates FP32 vector results and
+the existing online-state arithmetic with host operations only when the matching completion event fires.
 Host execution time never contributes to simulated time, and no result is
 published at issue time.
 

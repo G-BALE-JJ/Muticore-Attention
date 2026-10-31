@@ -1,11 +1,18 @@
 {
   "description": "Synthetic token embedding -> decoder layers -> final RMSNorm -> last-token LM head",
   "selection": "../attention_cluster_8qk_8pv/SELECTED_PREFILL_2026-10-26.json",
+  "prefill_mode": "complete_prefill_simulation",
+  "kv_cache_scope": "temporary_per_run",
+  "environment": {
+    "GOLEM_SFU_INTERNAL_PRECISION": "fp16",
+    "GOLEM_SFU_NONLINEAR_BACKEND": "lut"
+  },
   "arguments": [],
   "host_checks": {
     "guest": [
       "test_decoder_guest_schedule.py",
-      "test_decoder_vectors.py"
+      "test_decoder_vectors.py",
+      "test_decoder_silu_fusion.py"
     ],
     "baseline": [
       "test_prefill_generalization.py",

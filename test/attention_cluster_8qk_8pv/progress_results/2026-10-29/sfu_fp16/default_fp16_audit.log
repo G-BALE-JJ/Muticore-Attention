@@ -1,0 +1,11 @@
+test_balanced_work_and_shared_reservations (test_sfu_pipeline_audit.SFUPipelineAuditTest) ... ok
+test_rejects_comparison_with_different_weights (test_sfu_pipeline_audit.SFUPipelineAuditTest) ... ok
+test_rejects_completion_before_scalar_reciprocal_can_finish (test_sfu_pipeline_audit.SFUPipelineAuditTest) ... ok
+test_rejects_fifo_overflow (test_sfu_pipeline_audit.SFUPipelineAuditTest) ... ok
+test_rejects_formula_only_exp_without_reservations (test_sfu_pipeline_audit.SFUPipelineAuditTest) ... ok
+test_rejects_missing_completions (test_sfu_pipeline_audit.SFUPipelineAuditTest) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.028s
+
+OK

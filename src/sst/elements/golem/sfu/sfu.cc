@@ -6,6 +6,10 @@
 #include <map>
 #include <set>
 #include <tuple>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <stdexcept>
 
 #include <sst/elements/golem/sfu/sfu.h>
 #include <sst/elements/golem/attention/resourceTrace.h>
@@ -15,6 +19,37 @@ namespace SST {
 namespace Golem {
 
 namespace {
+
+// Opt-in diagnostic payloads only: no modeled events, resources or arithmetic.
+// The caller creates the directory. Each core owns a separate stream under MPI.
+template<class T>
+void traceAttentionNumeric(uint32_t core, uint64_t job, uint32_t head,
+    uint32_t tile, uint32_t row, uint32_t offset, const char* phase,
+    const std::vector<T>& values)
+{
+    const char* directory = std::getenv("GOLEM_SFU_NUMERIC_TRACE_DIR");
+    if (!directory || !*directory) return;
+    static std::map<std::pair<std::string, uint32_t>, std::ofstream> streams;
+    auto key = std::make_pair(std::string(directory), core);
+    auto it = streams.find(key);
+    if (it == streams.end()) {
+        it = streams.emplace(key, std::ofstream(key.first + "/core-" +
+            std::to_string(core) + ".jsonl")).first;
+        if (!it->second) throw std::runtime_error("cannot open SFU numeric trace");
+        it->second << std::setprecision(17);
+    }
+    auto& out = it->second;
+    out << "{\"job\":" << job << ",\"head\":" << head << ",\"tile\":" << tile
+        << ",\"row\":" << row << ",\"offset\":" << offset
+        << ",\"phase\":\"" << phase << "\",\"values\":[";
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i) out << ',';
+        if (values[i] == 0) out << (std::signbit(values[i]) ? "-0.0" : "0.0");
+        else if (std::isfinite(values[i])) out << values[i];
+        else out << '"' << values[i] << '"';
+    }
+    out << "]}\n";
+}
 
 using SoftmaxReducerKey = std::pair<uint64_t, uint32_t>;
 using DistributedSoftmaxReducerKey =
@@ -227,7 +262,7 @@ DistributedReducerResult submitDistributedSoftmaxMax(uint64_t jobId,
                                                       uint32_t expectedWorkers,
                                                       uint32_t expectedRows,
                                                       uint32_t expectedCols,
-                                                      double localMax)
+                                                      double localMax, const SFUArithmetic& arithmetic)
 {
     const auto key = distributedSoftmaxReducerKey(jobId, tag, ownerCore, row);
     if (distributedSoftmaxRowAborted(key)) {
@@ -247,7 +282,7 @@ DistributedReducerResult submitDistributedSoftmaxMax(uint64_t jobId,
         return DistributedReducerResult::Invalid;
     }
     rowState.maxSeen[workerSlot] = 1;
-    rowState.globalMax = std::max(rowState.globalMax, localMax);
+    rowState.globalMax = std::max(rowState.globalMax, arithmetic.round(localMax));
     return DistributedReducerResult::Accepted;
 }
 
@@ -287,7 +322,7 @@ DistributedReducerResult submitDistributedSoftmaxSum(uint64_t jobId,
                                                       uint32_t expectedWorkers,
                                                       uint32_t expectedRows,
                                                       uint32_t expectedCols,
-                                                      double localSum)
+                                                      double localSum, const SFUArithmetic& arithmetic)
 {
     auto& rows = distributedSoftmaxReducerRows();
     const auto key = distributedSoftmaxReducerKey(jobId, tag, ownerCore, row);
@@ -309,7 +344,7 @@ DistributedReducerResult submitDistributedSoftmaxSum(uint64_t jobId,
         return DistributedReducerResult::Invalid;
     }
     it->second.sumSeen[workerSlot] = 1;
-    it->second.globalSum += localSum;
+    it->second.globalSum = arithmetic.add(it->second.globalSum, localSum);
     return DistributedReducerResult::Accepted;
 }
 
@@ -539,6 +574,9 @@ bool writeDistributedSoftmaxJobChunk(GlobalMemoryAPI* globalMem,
 SFU::SFU(ComponentId_t id, SST::Params& params)
     : SFUAPI(id, params),
       coreId_(params.find<uint32_t>("core_id", 0)),
+      arithmetic_(SFUArithmetic::parse(params.find<std::string>("internal_precision", "fp16")),
+          SFUArithmetic::parseBackend(params.find<std::string>("nonlinear_backend",
+              params.find<std::string>("internal_precision", "fp16") == "fp16" ? "lut" : "libm"))),
       activeWorkerCores_(params.find<uint32_t>("active_worker_cores", 1)),
       maxInflight_(params.find<uint32_t>("max_inflight", 8)),
       statsLatency_(params.find<uint32_t>("stats_latency", 1)),
@@ -577,8 +615,31 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
     maxReductionPipeline_.configure(
         params.find<uint64_t>("max_reduction_latency", 4),
         params.find<uint64_t>("max_reduction_ii", 1), pipelineQueueDepth);
+    reciprocalLanes_ = params.find<uint32_t>("reciprocal_lanes", 16);
+    const bool lut = arithmetic_.backend()==SFUNonlinearBackend::Lut;
+    const uint32_t expPorts=params.find<uint32_t>("lut_exp_ports",4);
+    const uint32_t rcpPorts=params.find<uint32_t>("lut_reciprocal_ports",4);
+    if(lut && (!expPorts || !rcpPorts || expPorts>rowEngineExpLanes_ || rcpPorts>reciprocalLanes_))
+        output_.fatal(CALL_INFO,-1,"SFU LUT ports must be positive and not exceed their pipeline lane counts\n");
+    const uint64_t expII=std::max<uint64_t>(params.find<uint64_t>("exp_ii",1),lut ? ceilDiv(rowEngineExpLanes_,expPorts) : 1);
+    const uint64_t rcpII=std::max<uint64_t>(params.find<uint64_t>("reciprocal_ii",1),lut ? ceilDiv(reciprocalLanes_,rcpPorts) : 1);
+    if(lut) {
+        rowEngineExpLatency_=std::max<uint32_t>(rowEngineExpLatency_,ceilDiv(rowEngineExpLanes_,expPorts));
+        rowEngineExpLatency_+=SFULut::expDecodeLatency;
+        rowEngineReciprocalLatency_=std::max<uint32_t>(rowEngineReciprocalLatency_,ceilDiv(reciprocalLanes_,rcpPorts));
+    }
+    const uint64_t replicatedBytes=lut ? SFULut::expBytes*(expPorts+1)+
+        SFULut::reciprocalBytes*rcpPorts+SFULut::sqrtBytes+SFULut::rsqrtBytes : 0;
+    output_.output("[SFU_NONLINEAR] core=%u backend=%s implementation=%s logical_rom_bytes=%" PRIu64
+        " silu_rom_bytes=%" PRIu64 " replicated_rom_bytes=%" PRIu64 " exp_ports=%u online_exp_ports=%u reciprocal_ports=%u root_ports=%u exp_ii=%" PRIu64 " reciprocal_ii=%" PRIu64
+        " exp_decode_cycles=%" PRIu64 " exp_latency_cycles=%u online_exp_latency_cycles=%" PRIu64 "\n",
+        coreId_,arithmetic_.backendName(),lut ? SFULut::implementation : "libm",
+        lut ? SFULut::expBytes+SFULut::reciprocalBytes+SFULut::sqrtBytes+SFULut::rsqrtBytes : 0,
+        lut ? SFULut::siluBytes : 0, replicatedBytes + (lut ? SFULut::siluBytes : 0), lut ? expPorts : 0,lut ? 1u : 0,lut ? rcpPorts : 0,lut ? 2u : 0,expII,rcpII,
+        lut ? SFULut::expDecodeLatency : uint64_t{0},rowEngineExpLatency_,
+        params.find<uint64_t>("online_exp_latency",8)+(lut ? SFULut::expDecodeLatency : 0));
     expPipeline_.configure(
-        rowEngineExpLatency_, params.find<uint64_t>("exp_ii", 1),
+        rowEngineExpLatency_, expII,
         pipelineQueueDepth);
     sumReductionPipeline_.configure(
         params.find<uint64_t>("sum_reduction_latency", 8),
@@ -587,7 +648,7 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
         params.find<uint64_t>("online_max_latency", 1),
         params.find<uint64_t>("online_max_ii", 1), pipelineQueueDepth);
     onlineExpPipeline_.configure(
-        params.find<uint64_t>("online_exp_latency", 8),
+        params.find<uint64_t>("online_exp_latency", 8)+(lut ? SFULut::expDecodeLatency : 0),
         params.find<uint64_t>("online_exp_ii", 1), pipelineQueueDepth);
     onlineMulPipeline_.configure(
         params.find<uint64_t>("online_mul_latency", 3),
@@ -597,7 +658,7 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
         params.find<uint64_t>("online_add_ii", 1), pipelineQueueDepth);
     reciprocalPipeline_.configure(
         rowEngineReciprocalLatency_,
-        params.find<uint64_t>("reciprocal_ii", 1), pipelineQueueDepth);
+        rcpII, pipelineQueueDepth);
     normalizePipeline_.configure(
         params.find<uint64_t>("normalize_vector_latency", 3),
         params.find<uint64_t>("normalize_vector_ii", 1), pipelineQueueDepth);
@@ -656,9 +717,41 @@ SFU::SFU(ComponentId_t id, SST::Params& params)
     const uint32_t vectorMaxRequests = params.find<uint32_t>("vector_max_requests", 8);
     if (!vectorMaxRequests || vectorFifoElements < std::max(vectorOpLanes_, rowEngineExpLanes_))
         output_.fatal(CALL_INFO, -1, "Invalid vector pipeline capacity\n");
+    const auto reductionOrder = params.find<std::string>("norm_reduction", "tree");
+    if (reductionOrder != "tree" && reductionOrder != "sequential")
+        output_.fatal(CALL_INFO, -1, "norm_reduction must be tree or sequential\n");
+    normTreeReduction_ = reductionOrder == "tree";
+    rowReductionPipeline_.configure(vectorReduceLatency_, params.find<uint64_t>("vector_reduce_ii", 1), pipelineQueueDepth);
+    rowRsqrtPipeline_.configure(vectorRsqrtLatency_, params.find<uint64_t>("vector_rsqrt_ii", 1), pipelineQueueDepth);
+    rowDividePipeline_.configure(params.find<uint64_t>("vector_divide_latency",8),params.find<uint64_t>("vector_divide_ii",1),pipelineQueueDepth);
+    rowReadPipeline_.configure(params.find<uint64_t>("vector_buffer_latency", 1), 1, pipelineQueueDepth);
+    rowWritePipeline_.configure(params.find<uint64_t>("vector_buffer_latency", 1), 1, pipelineQueueDepth);
+    const auto rowScheduling=params.find<std::string>("vector_row_scheduling","overlap");
+    const auto sharedArbitration=params.find<std::string>("vector_shared_arbitration","grant");
+    if(rowScheduling!="serial" && rowScheduling!="overlap")
+        output_.fatal(CALL_INFO,-1,"vector_row_scheduling must be serial or overlap\n");
+    if(sharedArbitration!="parity" && sharedArbitration!="grant")
+        output_.fatal(CALL_INFO,-1,"vector_shared_arbitration must be parity or grant\n");
+    sharedVectorArbiter_.grantBased=sharedArbitration=="grant";
+    rowScheduler_.reset(new SFURowPipeline(vectorOpPipeline_, rowReductionPipeline_, rowRsqrtPipeline_,
+        rowReadPipeline_, rowWritePipeline_, vectorOpLanes_,
+        params.find<uint32_t>("vector_buffer_read_elements", 32),
+        params.find<uint32_t>("vector_buffer_write_elements", 16),
+        params.find<uint64_t>("vector_row_buffer_bytes", 65536),
+        params.find<uint64_t>("vector_staging_bytes", 262144),
+        params.find<uint32_t>("vector_row_contexts", 4), vectorMaxRequests,
+        vectorFifoElements, arithmetic_.precision(), normTreeReduction_, &rowDividePipeline_, arithmetic_.backend(),rowScheduling=="overlap"));
     vectorScheduler_.reset(new SFUVectorPipeline(
         vectorOpPipeline_, expPipeline_, reciprocalPipeline_, vectorOpLanes_,
-        rowEngineExpLanes_, vectorFifoElements, vectorMaxRequests));
+        rowEngineExpLanes_, vectorFifoElements, vectorMaxRequests, 8192,
+        arithmetic_.precision(), reciprocalLanes_, arithmetic_.backend()));
+    output_.output("[SFU_ARCH] core=%u version=row_pipeline_v4 reciprocal_lanes=%u norm_reduction=%s row_buffer_bytes=%zu staging_bytes=%zu row_contexts=%zu row_scheduling=%s shared_arbitration=%s beat_capacity=%zu\n",
+        coreId_, reciprocalLanes_, reductionOrder.c_str(), rowScheduler_->rowCapacity(),
+        rowScheduler_->stagingCapacity(), rowScheduler_->contexts(),rowScheduling.c_str(),sharedArbitration.c_str(),rowScheduler_->beatCapacity());
+    output_.output("[SFU_NORM_COMPENSATION] core=%u enabled=%u word_bits=16 words_per_partial=2 fma_rounding=binary16_rne scratch_banks=4 beat_register_words_per_lane=10 beat_register_bytes=%zu scalar_register_words=12 micro_ops_timed=1\n",
+        coreId_, arithmetic_.fp16() && normTreeReduction_, rowScheduler_->beatCapacity()*size_t(vectorOpLanes_)*10*2);
+    output_.output("[SFU_PRECISION] core=%u internal=%s rounding=%s numerical_version=%s\n",
+        coreId_, arithmetic_.name(), arithmetic_.fp16() ? "binary16_rne_gradual" : "legacy", arithmetic_.fp16() ? "sfu-fp16-v4" : "legacy-fp32");
     const std::string transport =
         params.find<std::string>("distributed_reduction_transport", "shared");
     if (transport == "shared") {
@@ -890,7 +983,7 @@ void SFU::handleControlTransportMessage(const ControlTransportMessage& message)
                                              message.expectedWorkers,
                                              message.expectedRows,
                                              message.expectedCols,
-                                             message.value);
+                                             message.value, arithmetic_);
     } else {
         result = submitDistributedSoftmaxSum(message.jobId,
                                              message.tag,
@@ -900,7 +993,7 @@ void SFU::handleControlTransportMessage(const ControlTransportMessage& message)
                                              message.expectedWorkers,
                                              message.expectedRows,
                                              message.expectedCols,
-                                             message.value);
+                                             message.value, arithmetic_);
     }
     if (result != DistributedReducerResult::Accepted) {
         staleDrop();
@@ -1051,9 +1144,27 @@ void SFU::finish()
     reportPipeline("online_exp", 1, onlineExpPipeline_);
     reportPipeline("online_mul", 2, onlineMulPipeline_);
     reportPipeline("online_add", 1, onlineAddPipeline_);
-    reportPipeline("reciprocal", 1, reciprocalPipeline_);
+    reportPipeline("reciprocal", reciprocalLanes_, reciprocalPipeline_);
     reportPipeline("normalize", rowEngineVectorLanes_, normalizePipeline_);
     reportPipeline("vector_op", vectorOpLanes_, vectorOpPipeline_);
+    reportPipeline("norm_reduce", vectorOpLanes_, rowReductionPipeline_);
+    reportPipeline(arithmetic_.fp16() ? "norm_sqrt" : "norm_rsqrt", 1, rowRsqrtPipeline_);
+    reportPipeline("norm_divide", vectorOpLanes_, rowDividePipeline_);
+    reportPipeline("row_buffer_read", 1, rowReadPipeline_);
+    reportPipeline("row_buffer_write", 1, rowWritePipeline_);
+    std::printf("[SFU_ROW_PIPELINE] core=%u row_buffer_bytes=%zu row_high_water=%zu staging_bytes=%zu staging_high_water=%zu request_high_water=%zu resource_backpressure=%llu admission_backpressure=%llu read_bytes=%llu write_bytes=%llu\n",
+        coreId_, rowScheduler_->rowCapacity(), rowScheduler_->rowHighWater,
+        rowScheduler_->stagingCapacity(), rowScheduler_->stagingHighWater, rowScheduler_->requestHighWater,
+        (unsigned long long)rowScheduler_->resourceBackpressure, (unsigned long long)rowScheduler_->admissionBackpressure,
+        (unsigned long long)rowScheduler_->readBytes, (unsigned long long)rowScheduler_->writeBytes);
+    std::printf("[SFU_ROW_OVERLAP] core=%u mode=%s beat_capacity=%zu beat_high_water=%zu row_beat_high_water=%zu issued_beats=%llu beat_backpressure=%llu active_cycles=%llu read_issues=%llu compute_issues=%llu write_issues=%llu read_wait=%llu compute_wait=%llu write_wait=%llu row_vpu_grants=%llu vector_vpu_grants=%llu\n",
+        coreId_,rowScheduler_->overlaps()?"overlap":"serial",rowScheduler_->beatCapacity(),
+        rowScheduler_->beatHighWater,rowScheduler_->rowBeatHighWater,
+        (unsigned long long)rowScheduler_->issuedBeats,(unsigned long long)rowScheduler_->beatBackpressure,
+        (unsigned long long)rowScheduler_->activeCycles,
+        (unsigned long long)rowScheduler_->portIssues[0],(unsigned long long)rowScheduler_->portIssues[1],(unsigned long long)rowScheduler_->portIssues[2],
+        (unsigned long long)rowScheduler_->portWaitCycles[0],(unsigned long long)rowScheduler_->portWaitCycles[1],(unsigned long long)rowScheduler_->portWaitCycles[2],
+        (unsigned long long)sharedVectorArbiter_.rowGrants,(unsigned long long)sharedVectorArbiter_.vectorGrants);
     std::printf("[SFU_VECTOR_PIPELINE] core=%u fifo_elements=%zu fifo_high_water=%llu "
         "request_high_water=%llu fifo_backpressure_events=%llu resource_backpressure_events=%llu\n",
         coreId_, vectorScheduler_->fifoCapacity(),
@@ -1247,7 +1358,7 @@ bool SFU::issueJob(uint64_t descAddr, uint64_t tag)
             (state.tensorParams.flags & SFU_SOFTMAX_PARAMS_FLAG_CAUSAL) != 0;
         if (state.attentionMode) {
             const float headDim = static_cast<float>(state.tensorParams.reserved0);
-            state.attentionScale = 1.0f / std::sqrt(headDim);
+            state.attentionScale = arithmetic_.rsqrt(headDim);
             statAttentionJobs_->addData(1);
         }
     }
@@ -1413,9 +1524,11 @@ bool SFU::wait(uint64_t tag, uint64_t* status)
                 auto jobIt = pendingJobOps_.find(tag);
                 if (jobIt != pendingJobOps_.end()) {
                     JobOpState& state = jobIt->second;
+                    if (state.status == SFUStatus::Pending && state.rmsNormPhase == 5)
+                        tryRmsNormVector(tag);
                     if (state.status == SFUStatus::Pending &&
                         state.desc.op_type == static_cast<uint32_t>(SFUJobOp::RMSNORM) &&
-                        state.rmsNormPhase == 3 &&
+                        state.rmsNormPhase == 3 && state.rmsNormResult.completed &&
                         getCurrentSimCycle() >= state.rmsNormResult.readyTick) {
                         startRmsNormOutputDma(tag);
                     }
@@ -1488,7 +1601,7 @@ bool SFU::completionTick(uint64_t tag, uint64_t* tick) const
     if (it == pendingJobOps_.end()) return false;
     if (it->second.status == SFUStatus::Pending &&
         it->second.desc.op_type == static_cast<uint32_t>(SFUJobOp::RMSNORM) &&
-        it->second.rmsNormPhase == 3) {
+        it->second.rmsNormPhase == 3 && it->second.rmsNormResult.completed) {
         if (tick != nullptr) *tick = it->second.rmsNormResult.readyTick;
         return true;
     }
@@ -1574,17 +1687,25 @@ void SFU::onRmsNormGammaDma(uint64_t tag, bool ok)
         std::memcpy(&bits, gammaRaw.data() + index * sizeof(bits), sizeof(bits));
         gamma[index] = golem_fp16_to_float(bits);
     }
+    state.rmsNormInput = std::move(input);
+    state.rmsNormGamma = std::move(gamma);
+    state.rmsNormPhase = 5;
+    tryRmsNormVector(tag);
+}
+
+void SFU::tryRmsNormVector(uint64_t tag)
+{
+    auto& state = pendingJobOps_.at(tag);
+    const auto& desc = state.desc;
     SFUVectorRequest request{};
     request.op = SFUVectorOp::RmsNorm;
-    request.input = &input;
-    request.coefficients = &gamma;
+    request.input = &state.rmsNormInput;
+    request.coefficients = &state.rmsNormGamma;
     request.rowWidth = desc.cols;
     const uint32_t epsilonBits = static_cast<uint32_t>(desc.reserved1);
     std::memcpy(&request.epsilon, &epsilonBits, sizeof(request.epsilon));
-    if (!issueVectorOp(request, &state.rmsNormResult)) {
-        state.status = SFUStatus::InvalidDescriptor;
-        return;
-    }
+    if (!issueVectorOp(request, &state.rmsNormResult)) return; // Admission backpressure.
+    state.rmsNormInput.clear(); state.rmsNormGamma.clear();
     state.rmsNormPhase = 3;
     state.processedElems = desc.elem_count;
     statPrimitiveElems_->addData(desc.elem_count);
@@ -1805,7 +1926,9 @@ SFUStatus SFU::validateJobDescriptor(const SFUJobDesc& desc) const
                 desc.worker_cores != 1 || desc.owner_core != coreId_ ||
                 desc.input1_addr == 0 || desc.scratch_addr == 0 ||
                 desc.rows == 0 || desc.cols == 0 ||
-                elements > UINT32_MAX || desc.elem_count != elements ||
+                elements > 8192 || desc.elem_count != elements ||
+                uint64_t(desc.cols) * 8 > rowScheduler_->rowCapacity() ||
+                stagingBytes > rowScheduler_->stagingCapacity() ||
                 desc.chunk_elems != desc.cols ||
                 !std::isfinite(epsilon) || epsilon <= 0.0f ||
                 stagingBytes > rowEngineScratchpadBytes_ ||
@@ -1917,6 +2040,7 @@ bool SFU::executePrimitive(PrimitiveOpState* state)
         return false;
     }
 
+    for (float& value : state->input0) value = arithmetic_.round(value);
     if (state->desc.op == static_cast<uint32_t>(SFUPrimitiveOp::REDUCE_MAX)) {
         auto maxIt = std::max_element(state->input0.begin(), state->input0.end());
         if (maxIt == state->input0.end()) {
@@ -1929,10 +2053,10 @@ bool SFU::executePrimitive(PrimitiveOpState* state)
     if (state->desc.op == static_cast<uint32_t>(SFUPrimitiveOp::REDUCE_SUM)) {
         double sum = 0.0;
         for (float value : state->input0) {
-            sum += static_cast<double>(value);
+            sum = arithmetic_.add(sum, static_cast<double>(value));
         }
         state->output.assign(1, 0.0f);
-        state->output[0] = static_cast<float>(sum);
+        state->output[0] = arithmetic_.fp16() ? arithmetic_.treeSum(state->input0) : static_cast<float>(sum);
         return true;
     }
 
@@ -1941,22 +2065,24 @@ bool SFU::executePrimitive(PrimitiveOpState* state)
         const float value = state->input0[i];
         switch (state->desc.op) {
             case static_cast<uint32_t>(SFUPrimitiveOp::EXP):
-                state->output[i] = static_cast<float>(std::exp(static_cast<double>(value)));
+                state->output[i] = static_cast<float>(arithmetic_.exp(static_cast<double>(value)));
                 break;
             case static_cast<uint32_t>(SFUPrimitiveOp::LOG):
-                state->output[i] = static_cast<float>(std::log(static_cast<double>(value)));
+                state->output[i] = static_cast<float>(arithmetic_.log(static_cast<double>(value)));
                 break;
             case static_cast<uint32_t>(SFUPrimitiveOp::RECIPROCAL):
-                state->output[i] = 1.0f / value;
+                state->output[i] = arithmetic_.reciprocal(value);
                 break;
             case static_cast<uint32_t>(SFUPrimitiveOp::RSQRT):
-                state->output[i] = 1.0f / static_cast<float>(std::sqrt(static_cast<double>(value)));
+                state->output[i] = arithmetic_.fp16() ? arithmetic_.rsqrt(value)
+                    : 1.0f / static_cast<float>(std::sqrt(static_cast<double>(value)));
                 break;
             case static_cast<uint32_t>(SFUPrimitiveOp::TANH):
-                state->output[i] = static_cast<float>(std::tanh(static_cast<double>(value)));
+                state->output[i] = static_cast<float>(arithmetic_.tanh(static_cast<double>(value)));
                 break;
             case static_cast<uint32_t>(SFUPrimitiveOp::SIGMOID):
-                state->output[i] = 1.0f / (1.0f + static_cast<float>(std::exp(-static_cast<double>(value))));
+                state->output[i] = arithmetic_.reciprocal(arithmetic_.add(1.0f,
+                    static_cast<float>(arithmetic_.exp(-static_cast<double>(value)))));
                 break;
             default:
                 return false;
@@ -2073,7 +2199,7 @@ bool SFU::executeSoftmaxRowJob(JobOpState* state)
                     const uint32_t bandRow = rowIdx - band.rowBegin;
                     double& localMax = band.localMax[worker * bandRows + bandRow];
                     for (float value : chunk) {
-                        localMax = std::max(localMax, static_cast<double>(value));
+                        localMax = std::max(localMax, arithmetic_.round(static_cast<double>(value)));
                     }
                 }
             }
@@ -2101,10 +2227,11 @@ bool SFU::executeSoftmaxRowJob(JobOpState* state)
                     double& localSum = band.localSum[worker * bandRows + bandRow];
                     for (float& value : chunk) {
                         const double expValue =
-                            std::exp(static_cast<double>(value) - band.globalMax[bandRow]);
+                            arithmetic_.exp(arithmetic_.sub(static_cast<double>(value), band.globalMax[bandRow]));
                         value = static_cast<float>(expValue);
-                        localSum += expValue;
+                        if (!arithmetic_.fp16()) localSum = arithmetic_.add(localSum, expValue);
                     }
+                    if (arithmetic_.fp16()) localSum=arithmetic_.add(localSum,arithmetic_.treeSum(chunk));
                     if (!writeSoftmaxJobChunk(globalMem_, desc, rowIdx, col, chunk)) {
                         return false;
                     }
@@ -2115,7 +2242,8 @@ bool SFU::executeSoftmaxRowJob(JobOpState* state)
 
         for (uint32_t bandRow = 0; bandRow < bandRows; ++bandRow) {
             for (uint32_t worker = 0; worker < workerCores; ++worker) {
-                band.globalSum[bandRow] += band.localSum[worker * bandRows + bandRow];
+                band.globalSum[bandRow] = arithmetic_.add(
+                    band.globalSum[bandRow], band.localSum[worker * bandRows + bandRow]);
             }
             if (band.globalSum[bandRow] == 0.0) {
                 return false;
@@ -2133,9 +2261,9 @@ bool SFU::executeSoftmaxRowJob(JobOpState* state)
                         return false;
                     }
                     const uint32_t bandRow = rowIdx - band.rowBegin;
-                    const float invSum = static_cast<float>(1.0 / band.globalSum[bandRow]);
+                    const float invSum = static_cast<float>(arithmetic_.reciprocal(band.globalSum[bandRow]));
                     for (float& value : chunk) {
-                        value *= invSum;
+                        value = arithmetic_.mul(value, invSum);
                     }
                     if (!writeSoftmaxJobChunk(globalMem_, desc, rowIdx, col, chunk)) {
                         return false;
@@ -2573,69 +2701,23 @@ bool SFU::issueVectorOp(const SFUVectorRequest& request,
                        SFUVectorResult* result)
 {
     if (result == nullptr) return false;
-    if (request.op == SFUVectorOp::Add || request.op == SFUVectorOp::Multiply ||
-        request.op == SFUVectorOp::Silu) {
-        uint64_t job = 0;
-        if (!vectorScheduler_->submit(request, rowEngineCurrentCycle(), &job)) return false;
-        *result = SFUVectorResult{};
-        result->readyTick = std::numeric_limits<uint64_t>::max();
-        vectorResults_.emplace(job, result);
-        statVectorOps_->addData(1);
-        statVectorElems_->addData(request.input->size());
-        if (!vectorPumpScheduled_) {
-            vectorPumpScheduled_ = true;
-            rowEngineSelfLink_->send(1, new TensorRowEngineEvent(
-                0, 0, 0, TensorRowEngineStage::Max,
-                TensorRowEngineEventKind::VectorPump, 0));
-        }
-        return true;
+    // An output slot cannot be reused while an accepted job owns its pointer.
+    for (const auto& entry : vectorResults_) if (entry.second == result) return false;
+    for (const auto& entry : rowResults_) if (entry.second == result) return false;
+    uint64_t job = 0;
+    const bool row = request.op == SFUVectorOp::Rope || request.op == SFUVectorOp::RmsNorm;
+    const bool accepted = row ? rowScheduler_->submit(request, rowEngineCurrentCycle(), &job)
+                              : vectorScheduler_->submit(request, rowEngineCurrentCycle(), &job);
+    if (!accepted) return false;
+    *result = SFUVectorResult{};
+    result->readyTick = std::numeric_limits<uint64_t>::max();
+    (row ? rowResults_ : vectorResults_).emplace(job, result);
+    statVectorOps_->addData(1); statVectorElems_->addData(request.input->size());
+    if (!vectorPumpScheduled_) {
+        vectorPumpScheduled_ = true;
+        rowEngineSelfLink_->send(1, new TensorRowEngineEvent(
+            0, 0, 0, TensorRowEngineStage::Max, TensorRowEngineEventKind::VectorPump, 0));
     }
-    if (vectorOpLanes_ == 0 || vectorReduceLatency_ == 0 || vectorRsqrtLatency_ == 0 ||
-        !evaluateSFUVectorOp(request, &result->values)) return false;
-    result->completed = false;
-    uint64_t activeElements = 0;
-    if (request.op == SFUVectorOp::Rope) {
-        activeElements = static_cast<uint64_t>(request.positions->size()) *
-            request.activeWidth;
-        result->modeledCycles = vectorOpPipeline_.latency +
-            ceilDiv(activeElements / 2, vectorOpLanes_) *
-                vectorOpPipeline_.initiationInterval;
-    } else if (request.op == SFUVectorOp::RmsNorm) {
-        activeElements = request.input->size();
-        uint64_t reductionStages = 0;
-        for (uint32_t remaining = request.rowWidth; remaining > 1;
-             remaining = (remaining + 1) / 2) ++reductionStages;
-        const uint64_t chunks = ceilDiv(request.rowWidth, vectorOpLanes_);
-        const uint64_t rowCycles =
-            3 * chunks * vectorOpPipeline_.initiationInterval +
-            reductionStages * vectorReduceLatency_ + vectorRsqrtLatency_;
-        result->modeledCycles = vectorOpPipeline_.latency +
-            (activeElements / request.rowWidth) * rowCycles;
-    }
-    const uint64_t now = getCurrentSimCycle();
-    const uint64_t modeledTicks = ceilMulDiv(
-        result->modeledCycles, rowEngineTimebaseTicksPerSecond_,
-        rowEngineAcceleratorClockHz_);
-    // RoPE/RMSNorm retain their aggregate timing model. Reserve the vector
-    // resource exclusively over that interval, including previously issued
-    // tokens, so they cannot silently overlap the new vector requests.
-    uint64_t vectorReadyCycle = vectorOpPipeline_.nextIssueCycle;
-    if (!vectorOpPipeline_.completionCycles.empty())
-        vectorReadyCycle = std::max(vectorReadyCycle, vectorOpPipeline_.completionCycles.back());
-    const uint64_t vectorReadyTick = ceilMulDiv(
-        vectorReadyCycle, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
-    const uint64_t traceStart = std::max(std::max(now, vectorOpFreeTick_), vectorReadyTick);
-    result->readyTick = traceStart + modeledTicks;
-    if (resourceTraceEnabled()) traceResourceInterval("sfu_model", request.op == SFUVectorOp::Rope ? "rope_vector" : request.op == SFUVectorOp::RmsNorm ? "norm_vector" :
-        request.op == SFUVectorOp::Add ? "add_vector" : request.op == SFUVectorOp::Multiply ? "multiply_vector" : "silu_vector",
-        coreId_, ++traceResourceSequence_, 0, 0, now, traceStart, result->readyTick,
-        result->readyTick, activeElements * sizeof(float), 0);
-    vectorOpFreeTick_ = result->readyTick;
-    vectorOpPipeline_.nextIssueCycle = ceilMulDiv(
-        result->readyTick, rowEngineAcceleratorClockHz_, rowEngineTimebaseTicksPerSecond_);
-    result->completed = true; // readyTick still gates aggregate result visibility.
-    statVectorOps_->addData(1);
-    statVectorElems_->addData(activeElements);
     return true;
 }
 
@@ -2643,10 +2725,21 @@ void SFU::advanceVectorPipeline()
 {
     vectorPumpScheduled_ = false;
     const uint64_t now = rowEngineCurrentCycle();
-    vectorScheduler_->step(now, [this](const SFUVectorPipeline::Issue& issue) {
+    const auto advanceRows = [this, now] {
+        rowScheduler_->step(now, [this](const SFURowPipeline::Issue& issue) {
+            if (!resourceTraceEnabled()) return;
+            const uint64_t start = ceilMulDiv(issue.issueCycle, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+            const uint64_t done = ceilMulDiv(issue.completionCycle, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
+            const char* resource = issue.port == SFURowPipeline::Port::Read ? "row_buffer_read" :
+                issue.port == SFURowPipeline::Port::Write ? "row_buffer_write" : SFURowPipeline::name(issue.phase);
+            traceResourceInterval("sfu_row", resource, coreId_, ++traceResourceSequence_,
+                issue.job, issue.context, start, start, done, done, issue.bytes, 0, issue.first);
+        });
+    };
+    const auto advanceVectors=[this,now] { vectorScheduler_->step(now, [this](const SFUVectorPipeline::Issue& issue) {
         if (!resourceTraceEnabled()) return;
         const char* resources[] = {"vector_negate", "exp", "vector_add_one",
-                                   "reciprocal", "vector_multiply", "vector_direct"};
+                                   "reciprocal", "vector_multiply", "vector_direct", "vector_gate_multiply"};
         const uint64_t start = ceilMulDiv(issue.issueCycle,
             rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_);
         const uint64_t done = ceilMulDiv(issue.completionCycle,
@@ -2655,6 +2748,27 @@ void SFU::advanceVectorPipeline()
             ++traceResourceSequence_, issue.job, 0, start, start, done, done,
             issue.elements * sizeof(float), 0, issue.first);
     });
+    };
+    sharedVectorArbiter_.step(now,vectorOpPipeline_,advanceRows,advanceVectors);
+    for (auto& completion : rowScheduler_->takeCompleted()) {
+        auto* result = rowResults_.at(completion.job);
+        result->values = std::move(completion.values);
+        result->modeledCycles = completion.completionCycle - completion.submittedCycle;
+        result->readyTick = getCurrentSimCycle(); result->completed = true;
+        if (resourceTraceEnabled()) {
+            std::printf("[SFU_VECTOR_OP] core=%u op=%u job=%llu elements=%zu cycles=%llu submit_tick=%llu done_tick=%llu\n",
+                coreId_, unsigned(completion.op), (unsigned long long)completion.job, result->values.size(),
+                (unsigned long long)result->modeledCycles,
+                (unsigned long long)ceilMulDiv(completion.submittedCycle, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_),
+                (unsigned long long)result->readyTick);
+            traceResourceInterval("sfu_model", completion.op == SFUVectorOp::Rope ? "rope_vector" : "norm_vector",
+                coreId_, ++traceResourceSequence_, completion.job, 0,
+                ceilMulDiv(completion.submittedCycle, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_),
+                ceilMulDiv(completion.submittedCycle, rowEngineTimebaseTicksPerSecond_, rowEngineAcceleratorClockHz_),
+                result->readyTick, result->readyTick, result->values.size() * 2, 0);
+        }
+        rowResults_.erase(completion.job);
+    }
     for (auto& completion : vectorScheduler_->takeCompleted()) {
         auto* result = vectorResults_.at(completion.job);
         result->values = std::move(completion.values);
@@ -2671,7 +2785,8 @@ void SFU::advanceVectorPipeline()
             (unsigned long long)result->readyTick);
         if (resourceTraceEnabled()) traceResourceInterval("sfu_model",
             completion.op == SFUVectorOp::Silu ? "silu_vector" :
-            completion.op == SFUVectorOp::Add ? "add_vector" : "multiply_vector",
+            completion.op == SFUVectorOp::Add ? "add_vector" :
+            completion.op == SFUVectorOp::SiluMultiply ? "silu_multiply_vector" : "multiply_vector",
             coreId_, ++traceResourceSequence_, completion.job, 0,
             ceilMulDiv(completion.submittedCycle, rowEngineTimebaseTicksPerSecond_,
                 rowEngineAcceleratorClockHz_),
@@ -2680,7 +2795,7 @@ void SFU::advanceVectorPipeline()
             result->readyTick, result->readyTick, result->values.size() * sizeof(float), 0);
         vectorResults_.erase(completion.job);
     }
-    if (vectorScheduler_->active()) {
+    if (vectorScheduler_->active() || rowScheduler_->active()) {
         vectorPumpScheduled_ = true;
         rowEngineSelfLink_->send(1, new TensorRowEngineEvent(
             0, 0, 0, TensorRowEngineStage::Max,
@@ -2780,7 +2895,7 @@ bool SFU::issueAttentionTile(const AttentionTileRequest& request,
     worker.dispatch.expectedCols = request.cols;
     worker.dispatch.rowsPerBand = request.rows;
     worker.dispatch.headDim = request.headDim;
-    const double scale = 1.0 / std::sqrt(static_cast<double>(request.headDim));
+    const double scale = arithmetic_.rsqrt(static_cast<double>(request.headDim));
     worker.dispatch.value = request.causal ? -scale : scale;
     worker.scratchAddr = request.localScoreAddr;
     worker.nextRow = request.globalRowBegin;
@@ -3091,6 +3206,7 @@ void SFU::beginTensorRowStage(const TensorWorkerKey& key,
         }
     } else if (stage == TensorRowEngineStage::ExpSum) {
         context.rowSum = 0.0;
+        context.reductionPartials.clear();
         context.invSum = 0.0f;
     } else {
         if (!workerIt->second.localTileMode &&
@@ -3471,14 +3587,16 @@ void SFU::advanceTensorRowChunk(const TensorWorkerKey& key, uint32_t contextInde
         if (workerIt->second.dispatch.value != 0.0) {
             statAttentionScaleMaskDoneTick_->addData(getCurrentSimCycle());
         }
-        beginTensorRowStage(key, contextIndex, TensorRowEngineStage::ExpSum);
+        if (arithmetic_.fp16() && workerIt->second.localTileMode)
+            scheduleTensorHardwareOperation(key,contextIndex,TensorRowEngineEventKind::OnlineMaxDone);
+        else beginTensorRowStage(key, contextIndex, TensorRowEngineStage::ExpSum);
     } else if (context.stage == TensorRowEngineStage::ExpSum) {
         statTensorExpSumDoneTick_->addData(getCurrentSimCycle());
         scheduleTensorHardwareOperation(
             key, contextIndex,
-            workerIt->second.localTileMode
-                ? TensorRowEngineEventKind::OnlineMaxDone
-                : TensorRowEngineEventKind::ReciprocalDone);
+            arithmetic_.fp16() ? TensorRowEngineEventKind::SumReductionDone :
+                (workerIt->second.localTileMode ? TensorRowEngineEventKind::OnlineMaxDone
+                : TensorRowEngineEventKind::ReciprocalDone));
     } else {
         statTensorNormalizeDoneTick_->addData(getCurrentSimCycle());
         statTensorComputeDoneTick_->addData(getCurrentSimCycle());
@@ -3709,17 +3827,23 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
         advanceTensorRowChunk(key, contextIndex);
         return;
     }
+    auto numericTrace = [&](const char* phase, const std::vector<float>& values) {
+        if (worker.localTileMode) traceAttentionNumeric(coreId_, worker.attentionJobId,
+            worker.attentionOnlineHeadIndex, worker.attentionKvTileIndex,
+            context.row, context.chunkBegin, phase, values);
+    };
     if (kind == TensorRowEngineEventKind::ScaleDone) {
+        numericTrace("qk", context.laneValues);
         if (worker.dispatch.value != 0.0) {
             if (context.chunkBegin == 0) {
                 statAttentionScaleMaskStartTick_->addData(getCurrentSimCycle());
             }
             const bool causal = worker.dispatch.value < 0.0;
-            const float scale = static_cast<float>(std::abs(worker.dispatch.value));
+            const float scale = arithmetic_.round(static_cast<float>(std::abs(worker.dispatch.value)));
             uint64_t masked = 0;
             for (uint32_t lane = 0; lane < context.laneValues.size(); ++lane) {
                 const uint32_t col = context.chunkBegin + lane;
-                context.laneValues[lane] *= scale;
+                context.laneValues[lane] = arithmetic_.mul(context.laneValues[lane], scale);
                 if (causal && worker.attentionKeyBegin + col > context.row) {
                     context.laneValues[lane] = -std::numeric_limits<float>::infinity();
                     ++masked;
@@ -3728,6 +3852,7 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
             statAttentionScaledElements_->addData(context.laneValues.size());
             statAttentionMaskedElements_->addData(masked);
         }
+        numericTrace("scaled", context.laneValues);
         scheduleTensorHardwareOperation(
             key, contextIndex, TensorRowEngineEventKind::MaxCompareDone);
         return;
@@ -3738,6 +3863,7 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
         return;
     }
     if (kind == TensorRowEngineEventKind::MaxReductionDone) {
+        for (float& value : context.laneValues) value = arithmetic_.round(value);
         context.rowMax = std::max(
             context.rowMax,
             *std::max_element(context.laneValues.begin(), context.laneValues.end()));
@@ -3754,7 +3880,17 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
         return;
     }
     if (kind == TensorRowEngineEventKind::SumReductionDone) {
-        for (const float value : context.laneValues) context.rowSum += value;
+        if (arithmetic_.fp16() && context.laneValues.empty()) {
+            context.rowSum=arithmetic_.treeSum(context.reductionPartials);
+            context.reductionPartials.clear();
+            scheduleTensorHardwareOperation(key,contextIndex,worker.localTileMode ?
+                TensorRowEngineEventKind::OnlineExpDone : TensorRowEngineEventKind::ReciprocalDone);
+            return;
+        }
+        numericTrace("exp", context.laneValues);
+        if (arithmetic_.fp16()) context.reductionPartials.push_back(arithmetic_.treeSum(context.laneValues));
+        else for (const float value : context.laneValues)
+            context.rowSum = arithmetic_.add(context.rowSum, static_cast<double>(value));
         if (worker.localTileMode) {
             std::copy(context.laneValues.begin(), context.laneValues.end(),
                       context.residentValues.begin() + context.chunkBegin);
@@ -3780,7 +3916,8 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
         }
         context.pendingMNew = std::max(
             online.m, static_cast<double>(context.rowMax));
-        scheduleTensorHardwareOperation(
+        if (arithmetic_.fp16()) beginTensorRowStage(key,contextIndex,TensorRowEngineStage::ExpSum);
+        else scheduleTensorHardwareOperation(
             key, contextIndex, TensorRowEngineEventKind::OnlineExpDone);
         return;
     }
@@ -3789,9 +3926,9 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
             AttentionOnlineRowKey(worker.attentionJobId,
                 worker.attentionOnlineHeadIndex, context.row));
         context.pendingAlpha = std::isinf(online.m) && online.m < 0.0
-            ? 0.0 : std::exp(online.m - context.pendingMNew);
-        context.pendingBeta = std::exp(
-            context.rowMax - context.pendingMNew);
+            ? 0.0 : arithmetic_.exp(arithmetic_.sub(online.m, context.pendingMNew));
+        context.pendingBeta = arithmetic_.fp16() ? 1.0 : arithmetic_.exp(arithmetic_.sub(
+            context.rowMax, context.pendingMNew));
         scheduleTensorHardwareOperation(
             key, contextIndex, TensorRowEngineEventKind::OnlineMulDone);
         return;
@@ -3800,8 +3937,8 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
         AttentionOnlineRowContext& online = attentionOnlineContexts_.at(
             AttentionOnlineRowKey(worker.attentionJobId,
                 worker.attentionOnlineHeadIndex, context.row));
-        context.pendingOldTerm = online.l * context.pendingAlpha;
-        context.pendingTileTerm = context.rowSum * context.pendingBeta;
+        context.pendingOldTerm = arithmetic_.mul(online.l, context.pendingAlpha);
+        context.pendingTileTerm = arithmetic_.mul(context.rowSum, context.pendingBeta);
         scheduleTensorHardwareOperation(
             key, contextIndex, TensorRowEngineEventKind::OnlineAddDone);
         return;
@@ -3810,12 +3947,16 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
         AttentionOnlineRowContext& online = attentionOnlineContexts_.at(
             AttentionOnlineRowKey(worker.attentionJobId,
                 worker.attentionOnlineHeadIndex, context.row));
-        context.pendingLNew = context.pendingOldTerm + context.pendingTileTerm;
+        context.pendingLNew = arithmetic_.add(context.pendingOldTerm, context.pendingTileTerm);
         if (!(context.pendingLNew > 0.0) ||
             !std::isfinite(context.pendingLNew)) {
             finishTensorWorker(key, false);
             return;
         }
+        numericTrace("state", std::vector<float>{context.rowMax,
+            static_cast<float>(context.rowSum), static_cast<float>(context.pendingMNew),
+            static_cast<float>(context.pendingLNew), static_cast<float>(context.pendingAlpha),
+            static_cast<float>(context.pendingBeta)});
         online.m = context.pendingMNew;
         online.l = context.pendingLNew;
         if (worker.attentionKvTileIndex + 1 == worker.attentionNumKvTiles) {
@@ -3830,13 +3971,13 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
     }
     if (kind == TensorRowEngineEventKind::ReciprocalDone) {
         if (worker.localTileMode) {
-            const double normalization = 1.0 / context.pendingLNew;
+            const double normalization = arithmetic_.reciprocal(context.pendingLNew);
             context.oldOutputScale = static_cast<float>(
-                context.pendingAlpha * normalization);
+                arithmetic_.mul(context.pendingAlpha, normalization));
             context.tileWeightScale = static_cast<float>(
-                context.pendingBeta * normalization);
+                arithmetic_.mul(context.pendingBeta, normalization));
         } else {
-            context.invSum = static_cast<float>(1.0 / context.rowSum);
+            context.invSum = static_cast<float>(arithmetic_.reciprocal(context.rowSum));
         }
         beginTensorRowStage(key, contextIndex, TensorRowEngineStage::Normalize);
         return;
@@ -3847,15 +3988,18 @@ void SFU::handleTensorRowEngineEvent(SST::Event* event)
     }
     if (stage == TensorRowEngineStage::ExpSum) {
         for (float& value : context.laneValues) {
-            value = std::exp(value - context.rowMax);
+            value = arithmetic_.exp(arithmetic_.sub(value,
+                arithmetic_.fp16() && worker.localTileMode ? context.pendingMNew : context.rowMax));
         }
         scheduleTensorHardwareOperation(
             key, contextIndex, TensorRowEngineEventKind::SumReductionDone);
         return;
     }
     for (float& value : context.laneValues) {
-        value *= context.invSum;
+        value = arithmetic_.mul(value, context.invSum);
     }
+    numericTrace("p", context.laneValues);
+    numericTrace("scales", std::vector<float>{context.oldOutputScale, context.tileWeightScale});
     issueTensorLocalWrite(key, contextIndex);
 }
 
@@ -4075,7 +4219,7 @@ bool SFU::executeDistributedSoftmaxRowJob(JobOpState* state)
             statJobSoftmaxMaxChunks_->addData(1);
             for (float value : chunk) {
                 state->localMax[row] =
-                    std::max(state->localMax[row], static_cast<double>(value));
+                    std::max(state->localMax[row], arithmetic_.round(static_cast<double>(value)));
             }
         }
     }
@@ -4109,7 +4253,7 @@ bool SFU::executeDistributedSoftmaxRowJob(JobOpState* state)
                                                  desc.worker_cores,
                                                  desc.rows,
                                                  desc.cols,
-                                                 state->localMax[row]);
+                                                 state->localMax[row], arithmetic_);
         }
         if (result == DistributedReducerResult::Aborted) {
             observeDistributedSoftmaxJobAbort(state);
@@ -4211,9 +4355,9 @@ bool SFU::advanceDistributedSoftmaxJob(JobOpState* state)
                 }
                 for (float& value : chunk) {
                     const double expValue =
-                        std::exp(static_cast<double>(value) - globalMax[row]);
+                        arithmetic_.exp(arithmetic_.sub(static_cast<double>(value), globalMax[row]));
                     value = static_cast<float>(expValue);
-                    state->localSum[row] += expValue;
+                    state->localSum[row] = arithmetic_.add(state->localSum[row], expValue);
                 }
                 if (!writeDistributedSoftmaxJobChunk(globalMem_,
                                                       desc.output_addr,
@@ -4256,7 +4400,7 @@ bool SFU::advanceDistributedSoftmaxJob(JobOpState* state)
                                                      desc.worker_cores,
                                                      desc.rows,
                                                      desc.cols,
-                                                     state->localSum[row]);
+                                                     state->localSum[row], arithmetic_);
             }
             if (result == DistributedReducerResult::Aborted) {
                 observeDistributedSoftmaxJobAbort(state);
@@ -4351,9 +4495,9 @@ bool SFU::advanceDistributedSoftmaxJob(JobOpState* state)
                                                      &chunk)) {
                     return false;
                 }
-                const float invSum = static_cast<float>(1.0 / globalSum[row]);
+                const float invSum = static_cast<float>(arithmetic_.reciprocal(globalSum[row]));
                 for (float& value : chunk) {
-                    value *= invSum;
+                    value = arithmetic_.mul(value, invSum);
                 }
                 if (!writeDistributedSoftmaxJobChunk(globalMem_,
                                                       desc.output_addr,
@@ -4553,13 +4697,14 @@ void SFU::computeTileStats(SoftmaxOpState* state)
         double tile_m = -std::numeric_limits<double>::infinity();
         for (uint32_t col = 0; col < desc.valid_n; ++col) {
             const size_t idx = tilePackedIndex(desc, row, col);
-            tile_m = std::max(tile_m, static_cast<double>(state->inputTile[idx]));
+            tile_m = std::max(tile_m, arithmetic_.round(static_cast<double>(state->inputTile[idx])));
         }
 
         double tile_l = 0.0;
         for (uint32_t col = 0; col < desc.valid_n; ++col) {
             const size_t idx = tilePackedIndex(desc, row, col);
-            tile_l += std::exp(static_cast<double>(state->inputTile[idx]) - tile_m);
+            tile_l = arithmetic_.add(tile_l, arithmetic_.exp(arithmetic_.sub(
+                static_cast<double>(state->inputTile[idx]), tile_m)));
         }
 
         state->rowStats.push_back(SFUTileRowStats{
@@ -4587,8 +4732,9 @@ bool SFU::mergeTileStats(SoftmaxOpState* state)
         }
 
         const double m_new = std::max(rowState.m_acc, row.tile_m);
-        const double l_new = rowState.l_acc * std::exp(rowState.m_acc - m_new) +
-                             row.tile_l * std::exp(row.tile_m - m_new);
+        const double l_new = arithmetic_.add(
+            arithmetic_.mul(rowState.l_acc, arithmetic_.exp(arithmetic_.sub(rowState.m_acc, m_new))),
+            arithmetic_.mul(row.tile_l, arithmetic_.exp(arithmetic_.sub(row.tile_m, m_new))));
         rowState.m_acc = m_new;
         rowState.l_acc = l_new;
         rowState.partials_seen += 1;
@@ -4635,7 +4781,8 @@ bool SFU::normalizeTile(SoftmaxOpState* state)
                 const auto& rowState = rowIt->second;
                 const size_t idx = tilePackedIndex(desc, row, col);
                 const double normalized =
-                    std::exp(static_cast<double>(state->inputTile[idx]) - rowState.m_acc) / rowState.l_acc;
+                    arithmetic_.div(arithmetic_.exp(arithmetic_.sub(
+                        static_cast<double>(state->inputTile[idx]), rowState.m_acc)), rowState.l_acc);
                 outputTile[idx] = static_cast<float>(normalized);
             }
         }

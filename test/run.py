@@ -55,6 +55,16 @@ def main():
         if not baseline.is_dir():
             baseline = workspace / 'baseline' / 'attention_cluster_8qk_8pv'
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1')
+    for key, value in config.get('environment', {}).items():
+        env.setdefault(key, value)
+    sfu_precision = env.setdefault('GOLEM_SFU_INTERNAL_PRECISION', 'fp16')
+    if sfu_precision not in ('fp16', 'fp32'):
+        parser.error('GOLEM_SFU_INTERNAL_PRECISION must be fp16 or fp32')
+    sfu_backend = env.setdefault('GOLEM_SFU_NONLINEAR_BACKEND', 'lut')
+    if sfu_backend not in ('lut', 'libm'):
+        parser.error('GOLEM_SFU_NONLINEAR_BACKEND must be lut or libm')
+    if sfu_backend == 'lut' and sfu_precision != 'fp16':
+        parser.error('GOLEM_SFU_NONLINEAR_BACKEND=lut requires fp16')
     if args.native_operator and (args.stage!='prefill' or args.check):
         parser.error('--native-operator requires prefill --run/--smoke/--dry-run/--show-config')
     if args.check:
@@ -76,7 +86,7 @@ def main():
         arguments=[x for x in config['arguments'] if not (sim_mode=='full-timing' and x=='--verify-c')]
         command = ['bash', str(golem / 'run_noc_dma_pipeline.sh'), *arguments,
                    '--tensor-dir', str(artifacts / 'inputs')]
-        env.update(config.get('environment', {}), GOLEM_ARTIFACT_ROOT=str(artifacts))
+        env.update(GOLEM_ARTIFACT_ROOT=str(artifacts))
         env.setdefault('GOLEM_TEST_BINARY',str(artifacts/'guest/test_noc_dma'))
         if args.dry_run:
             command.append('--dry-run')
@@ -102,7 +112,8 @@ def main():
     command += [*extra,'--sim-mode',sim_mode]
     env['GOLEM_SIM_MODE']=sim_mode
     details = dict(stage=args.stage, native_operator=args.native_operator, sim_mode=sim_mode, workspace=str(workspace), artifact_root=str(artifacts), command=command,
-                   environment_overrides={k: env[k] for k in config.get('environment', {})},
+                   sfu_internal_precision=sfu_precision,
+                   environment_overrides={k: env[k] for k in (*config.get('environment', {}), 'GOLEM_SFU_INTERNAL_PRECISION', 'GOLEM_SFU_NONLINEAR_BACKEND')},
                    latency_unit='cycles', mode='smoke' if args.smoke else 'dry-run' if args.dry_run else 'run')
     print(json.dumps(details, indent=2, ensure_ascii=False), flush=True)
     if args.show_config:

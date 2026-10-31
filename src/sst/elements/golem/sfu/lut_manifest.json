@@ -1,0 +1,63 @@
+{
+  "format": "fp16-rom-v2-delta16",
+  "rounding": "binary16 RNE, gradual underflow",
+  "exp_spans": {
+    "ExpPositive": [
+      4096,
+      18828
+    ],
+    "ExpNegative": [
+      3073,
+      19542
+    ]
+  },
+  "tables": {
+    "ExpPositiveBase": {
+      "entries": 921,
+      "bytes": 1842,
+      "sha256": "6b1269e3c3041820c4416538b58d0d1ce38885ee36c300672a89f72ce5175e39"
+    },
+    "ExpPositiveDelta": {
+      "entries": 14732,
+      "bytes": 14732,
+      "sha256": "1c1034988ea2636a417d4f9e664cd73574cd2235ea082d5a960f70c484db7d22"
+    },
+    "ExpNegativeBase": {
+      "entries": 1030,
+      "bytes": 2060,
+      "sha256": "f259bdf2961ad787a72ea0f9229095c0e33a35ab7e9c7fd5ec5ccc815e1766ad"
+    },
+    "ExpNegativeDelta": {
+      "entries": 16469,
+      "bytes": 16469,
+      "sha256": "5016259f5ccab3034e203e22a5b2fb3358b81719e287b6feb8061868ddb14698"
+    },
+    "Reciprocal": {
+      "entries": 3072,
+      "bytes": 6144,
+      "sha256": "be96d3eb940db6488d69a15b18171af5c62c376a32ff7fe00902ea957b9f3e0e"
+    },
+    "Sqrt": {
+      "entries": 2048,
+      "bytes": 4096,
+      "sha256": "aa3c6fe41a7b0d23c4f1d990ee027c1500024c5bb99c83ed927c3b05cc346460"
+    },
+    "Rsqrt": {
+      "entries": 2048,
+      "bytes": 4096,
+      "sha256": "5e2c6187ebf5dd311ab01c0bedf8e81a1bbcf94ef66beecddbb62c6f16c3e072"
+    }
+  },
+  "exp_encoding": {
+    "block_entries": 16,
+    "base_bits": 16,
+    "delta_bits": 8,
+    "decode_latency_cycles": 1,
+    "decoded_sha256": {
+      "ExpPositive": "7523f699e1c3f691beb97ce4ac52b15c1e0932cd6a088b45343cb82c4c91f9fc",
+      "ExpNegative": "9c0408e044b730ec13f6ec41eb471d3b171b7b3090262b1044c5ffda144de4e7"
+    }
+  },
+  "logical_bytes": 49439,
+  "header_sha256": "61463fb69b2be0938d7a8d0254fbec87a120e8e04b54b85b8d19d9832eb80653"
+}

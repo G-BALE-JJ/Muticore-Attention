@@ -26,8 +26,14 @@ libgolem_la_SOURCES = \
 	requestscheduler/requestscheduler.cc \
 	sfu/sfu.h \
 	sfu/vector_math.h \
+	sfu/arithmetic.h \
+	sfu/norm_compensated.h \
+	sfu/silu_lut_tables.h \
+	sfu/lut.h \
+	sfu/lut_tables.h \
 	sfu/hardware_pipeline.h \
 	sfu/vector_pipeline.h \
+	sfu/row_pipeline.h \
 	sfu/sfu.cc \
 	workercmdproc/workercmdproc.h \
 	tileengine/tileEngine.h \

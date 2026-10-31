@@ -1,0 +1,5 @@
+stage,status,cycles,unit,artifact_root
+GEMM,PASS,3500,cycles,test/GEMM/results/sfu_fp16_20261029
+Attention,PASS,12852,cycles,test/Attention/results/sfu_fp16_20261029
+GQA,PASS,37928,cycles,test/GQA/results/sfu_fp16_20261029
+prefill,FAIL,,cycles,test/prefill/results/sfu_fp16_20261029

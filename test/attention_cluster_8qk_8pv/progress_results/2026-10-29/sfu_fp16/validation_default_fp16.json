@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-29",
+  "status": "PASS",
+  "default_internal_precision": "fp16",
+  "explicit_legacy_override": "GOLEM_SFU_INTERNAL_PRECISION=fp32",
+  "default_entry_points": [
+    "cpu_builder environment fallback",
+    "SFU parameter metadata",
+    "SFU constructor",
+    "SFUArithmetic constructor",
+    "SFUVectorPipeline constructor",
+    "evaluateSFUVectorOp default arithmetic"
+  ],
+  "tests": {
+    "production_regression_passed": 185,
+    "host_sfu_audit_passed": 6,
+    "standalone_vector_math_cpp": "PASS",
+    "default_matches_explicit_fp16": true,
+    "fp16_independent_reference": "PASS",
+    "architecture_default_and_fp32_override": "PASS"
+  },
+  "build": {
+    "status": "PASS",
+    "command": "bash scripts/build_and_install_local.sh --no-autogen --jobs 8",
+    "installed_library_sha256": "83e1b587f86733c8a946e00ebc000c3073c5fa79431b03a038db2550ccc309e3"
+  },
+  "source_sha256": {
+    "src/sst/elements/golem/sfu/arithmetic.h": "e0e3b4f976b84c2d33f2b52794e09166e6433914620fcfbc42a77681f68b8be7",
+    "src/sst/elements/golem/sfu/sfu.h": "4ed9bc69973b57f5fee8547b44ea356ed1e38c291016dc5b3b99f4a1e440c0bc",
+    "src/sst/elements/golem/sfu/sfu.cc": "a6007cace5653f5131ec8c7a86cb9e26fd05de1f0f9be5ec1a2d592185340b1e",
+    "src/sst/elements/golem/sfu/vector_math.h": "176f0aa403d7c389be6bea790d2fa15a13aee93c7a16b59d949033d1e48af3c0",
+    "src/sst/elements/golem/sfu/vector_pipeline.h": "799b3316eda6fc2e50018a7817a74b4dc2dfe209f9e2cd03b0387587ba07debd",
+    "src/sst/elements/golem/tests/architecture/cpu_builder.py": "767dd9810fed4dfa0e0dfec9b5e00fbf9ccd549e3e3c96eef67f3e1309a1f042",
+    "src/sst/elements/golem/tests/small/muticore_attention/test_sfu_internal_precision.py": "07580a5582fc0f241a184b29eb0dfd88814d285ccd553bef915d6e02171d0208",
+    "src/sst/elements/golem/tests/small/muticore_attention/test_sfu_arithmetic.py": "5e37224a25796c435fb7e269aaaeaf0630b0b2776ba4c655224ad9656f7d8dc3",
+    "src/sst/elements/golem/tests/small/muticore_attention/test_sfu_vector_pipeline.py": "d84afea651b699b86caafbcb3d5ec0f79dda73ddcdd6f27dd48282452206e6b2",
+    "src/sst/elements/golem/tests/small/muticore_attention/test_decoder_silu_fusion.py": "d88e13ab25f4f354528ede7a3493307aa61125d615c5a250038a25fdd2921b24",
+    "AGENTS.md": "b0eb48c21fa48a41c8cdd019b753da0ec274dcabacad720d571e64537d3c7a01"
+  },
+  "full_llm_quality_validation": false,
+  "hardware_lane_or_timing_changes": false
+}

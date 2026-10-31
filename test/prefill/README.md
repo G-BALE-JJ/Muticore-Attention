@@ -42,7 +42,7 @@ python3 ../run_native_llm_regression.py --artifact-root /tmp/native-llm-matrix -
 `int4/int8/fp16/bf16/tf32/fp32/fp8e4m3/fp8e5m2`。默认通过固定 RISC-V guest、版本化描述符、生产 TE、
 调度器及真实 NoC/HBM 执行，保持 16 workers、每 worker 64 阵列及四个数据 HBM 节点。
 `--instances 1|2|4` 划分已有 worker 和 HBM，使用不同输入；`--panel-mapping`
-和 `--replicate-b` 控制放置。完整 prefill 默认仍采用原有 FP16 数值契约。
+和 `--replicate-b` 控制放置。完整 prefill 默认采用 `complete_prefill_simulation` 模式和 SFU FP16 v4 数值契约：归约、online softmax、RMSNorm 和 SiLU 均在 SFU 内部按 FP16 舍入，非线性使用直接 FP16 LUT。当前验收是一次完整 Prefill 模拟；K/V 为本次运行的临时张量，持久 KV cache、跨请求复用和 Decode ABI 暂缓到接口固定后再接入。
 
 该入口对单个矩阵算子使用 INT32/FP32 输出和原生累加语义，不运行完整 decoder，
 也不输出 next token。小规模 WO/down 请加 `--reuse 1`，保证至少有 16 个宏任务。

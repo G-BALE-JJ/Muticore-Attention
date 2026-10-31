@@ -24,6 +24,7 @@
 #include <sst/elements/golem/attention/attentionCluster.h>
 #include <sst/elements/golem/sfu/vector_math.h>
 #include <sst/elements/golem/sfu/vector_pipeline.h>
+#include <sst/elements/golem/sfu/row_pipeline.h>
 #include <memory>
 
 namespace SST {
@@ -386,36 +387,54 @@ public:
         {"core_id", "Owning core id", "0"},
         {"active_worker_cores", "Number of active worker cores", "1"},
         {"max_inflight", "Maximum in-flight SFU operations", "8"},
+        {"internal_precision", "SFU arithmetic: fp16 (default, round every operation) or fp32 (legacy)", "fp16"},
+        {"nonlinear_backend", "Nonlinear implementation: exact FP16 lut (default) or libm", "lut"},
+        {"lut_exp_ports", "Single-read EXP ROM replicas; one additional replica for online EXP", "4"},
+        {"lut_reciprocal_ports", "Single-read reciprocal ROM replicas shared by scalar/vector requests", "4"},
         {"stats_latency", "Softmax tile statistics latency", "1"},
         {"merge_latency", "Softmax online merge latency", "1"},
         {"normalize_latency", "Softmax normalize latency", "1"},
         {"accelerator_clock_hz", "Row Engine accelerator clock frequency", "2300000000"},
-        {"vector_lanes", "FP32 vector lanes per physical Row Engine", "16"},
+        {"vector_lanes", "Vector lanes per physical Row Engine (selected internal precision)", "16"},
         {"vector_op_lanes", "Generic vector operation lanes", "16"},
         {"vector_op_latency", "Generic vector operation pipeline latency", "3"},
         {"vector_op_ii", "Generic vector operation initiation interval", "1"},
         {"vector_fifo_elements", "Elements per vector interstage FIFO and request", "64"},
         {"vector_max_requests", "Concurrent vector pipeline request contexts", "8"},
+        {"reciprocal_lanes", "Shared RCP pipeline elements per issue (scalar Attention uses one lane)", "16"},
+        {"norm_reduction", "RMSNorm reduction order: tree or sequential", "tree"},
+        {"vector_row_buffer_bytes", "Four FP16 banks across active vector row contexts", "65536"},
+        {"vector_staging_bytes", "FP16 input/output/coefficient descriptor staging capacity", "262144"},
+        {"vector_row_scheduling", "Row scheduling: overlap (shared beat credits) or serial", "overlap"},
+        {"vector_shared_arbitration", "Shared VPU arbitration: grant or parity comparison", "grant"},
+        {"vector_row_contexts", "Maximum active RoPE/Norm rows", "4"},
+        {"vector_buffer_read_elements", "Shared row SRAM read elements per cycle", "32"},
+        {"vector_buffer_write_elements", "Shared row SRAM write elements per cycle", "16"},
+        {"vector_buffer_latency", "Row SRAM read/write access latency in cycles", "1"},
+        {"vector_reduce_ii", "Pairwise reduction node vector issue interval", "1"},
+        {"vector_rsqrt_ii", "Scalar RMSNorm root issue interval", "1"},
+        {"vector_divide_latency", "FP16 RMSNorm vector divider latency", "8"},
+        {"vector_divide_ii", "FP16 RMSNorm vector divider issue interval", "1"},
         {"vector_reduce_latency", "Vector reduction stage latency", "4"},
         {"vector_rsqrt_latency", "Vector reciprocal square-root latency", "8"},
-        {"exp_lanes", "FP32 EXP issue lanes per physical Row Engine", "4"},
+        {"exp_lanes", "EXP issue lanes per physical Row Engine (selected internal precision)", "4"},
         {"exp_latency", "Row Engine EXP pipeline latency in accelerator cycles", "8"},
-        {"scale_latency", "Scale/mask FP32 multiply pipeline latency", "3"},
-        {"scale_ii", "Scale/mask FP32 multiply pipeline initiation interval", "1"},
+        {"scale_latency", "Scale/mask multiply pipeline latency", "3"},
+        {"scale_ii", "Scale/mask multiply pipeline initiation interval", "1"},
         {"max_compare_latency", "MAX compare pipeline latency", "1"},
         {"max_compare_ii", "MAX compare pipeline initiation interval", "1"},
         {"max_reduction_latency", "16-input MAX reduction latency", "4"},
         {"max_reduction_ii", "MAX reduction pipeline initiation interval", "1"},
-        {"sum_reduction_latency", "16-input FP32 SUM reduction latency", "8"},
+        {"sum_reduction_latency", "16-input SUM reduction latency", "8"},
         {"sum_reduction_ii", "SUM reduction pipeline initiation interval", "1"},
         {"exp_ii", "EXP vector pipeline initiation interval", "1"},
         {"online_max_latency", "Online scalar MAX latency", "1"},
         {"online_max_ii", "Online scalar MAX initiation interval", "1"},
         {"online_exp_latency", "Online scalar EXP latency", "8"},
         {"online_exp_ii", "Online scalar EXP initiation interval", "1"},
-        {"online_mul_latency", "Two-lane online FP32 multiply latency", "3"},
+        {"online_mul_latency", "Two-lane online multiply latency", "3"},
         {"online_mul_ii", "Online multiply initiation interval", "1"},
-        {"online_add_latency", "Online FP32 add latency", "3"},
+        {"online_add_latency", "Online add latency", "3"},
         {"online_add_ii", "Online add initiation interval", "1"},
         {"reciprocal_latency", "Row Engine reciprocal pipeline latency in accelerator cycles", "8"},
         {"reciprocal_ii", "Reciprocal pipeline initiation interval", "1"},
@@ -621,6 +640,7 @@ private:
         uint64_t rowEngineReadyTick;
         uint64_t rowEngineModeledCycles;
         uint8_t rmsNormPhase;
+        std::vector<double> rmsNormInput, rmsNormGamma;
         SFUVectorResult rmsNormResult;
         SFUSoftmaxJobParamsV1 tensorParams;
         uint32_t tensorRowsCompleted;
@@ -652,6 +672,7 @@ private:
             uint64_t pendingLocalTag = 0;
             float rowMax = 0.0f;
             double rowSum = 0.0;
+            std::vector<float> reductionPartials;
             float invSum = 0.0f;
             float oldOutputScale = 0.0f;
             float tileWeightScale = 1.0f;
@@ -747,6 +768,7 @@ private:
     void startRmsNormJob(uint64_t tag);
     void onRmsNormInputDma(uint64_t tag, bool ok);
     void onRmsNormGammaDma(uint64_t tag, bool ok);
+    void tryRmsNormVector(uint64_t tag);
     void startRmsNormOutputDma(uint64_t tag);
     bool readTensorJobParams(uint64_t paramsAddr, SFUSoftmaxJobParamsV1* params);
     SFUStatus validateJobDescriptor(const SFUJobDesc& desc) const;
@@ -815,6 +837,7 @@ private:
     void clearDistributedReductionResponseInbox(const JobOpState& state);
 
     uint32_t coreId_;
+    SFUArithmetic arithmetic_;
     uint32_t activeWorkerCores_;
     uint32_t maxInflight_;
     uint32_t statsLatency_;
@@ -832,7 +855,6 @@ private:
     uint64_t rowEngineScratchpadBytes_;
     uint64_t rowEngineTimebaseTicksPerSecond_;
     uint64_t rowEngineFreeTick_;
-    uint64_t vectorOpFreeTick_ = 0;
     TensorHardwarePipeline scalePipeline_;
     TensorHardwarePipeline maxComparePipeline_;
     TensorHardwarePipeline maxReductionPipeline_;
@@ -845,9 +867,15 @@ private:
     TensorHardwarePipeline reciprocalPipeline_;
     TensorHardwarePipeline normalizePipeline_;
     TensorHardwarePipeline vectorOpPipeline_;
+    TensorHardwarePipeline rowReductionPipeline_, rowRsqrtPipeline_, rowDividePipeline_, rowReadPipeline_, rowWritePipeline_;
     std::unique_ptr<SFUVectorPipeline> vectorScheduler_;
+    std::unique_ptr<SFURowPipeline> rowScheduler_;
+    std::map<uint64_t, SFUVectorResult*> rowResults_;
+    uint32_t reciprocalLanes_ = 16;
+    bool normTreeReduction_ = true;
     std::map<uint64_t, SFUVectorResult*> vectorResults_;
     bool vectorPumpScheduled_ = false;
+    SFUSharedVectorArbiter sharedVectorArbiter_;
     bool tileStreamEnable_ = true;
     uint64_t tileStreamBytesPerCycle_ = 256;
     uint64_t tileStreamBaseLatencyCycles_ = 1;

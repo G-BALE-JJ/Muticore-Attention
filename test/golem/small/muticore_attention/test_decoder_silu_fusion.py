@@ -38,20 +38,25 @@ void run(uint32_t rows,uint32_t lane,uint32_t width) {
   ++wantedRows;
   for(uint32_t n=0;n<width;++n) {
    const float x=gm.get(d.input_addr+(uint64_t(r)*width+n)*2);
-   const float exponential=std::exp(-x), denominator=1.0f+exponential, reciprocal=1.0f/denominator;
-   const float act=vectorFp16Value(x*reciprocal);
-   assert(gm.get(d.output_addr+(uint64_t(r)*width+n)*2)==vectorFp16Value(act*gm.get(d.input1_addr+(uint64_t(r)*width+n)*2)));
+   const float exponential=vectorFp16Value(std::exp(-std::abs(x)));
+   const float denominator=vectorFp16Value(1.0f+exponential), reciprocal=vectorFp16Value(1.0f/denominator);
+   const float numerator=vectorFp16Value(x<0 ? x*exponential : x);
+   const float act=vectorFp16Value(numerator*reciprocal);
+   assert(std::abs(gm.get(d.output_addr+(uint64_t(r)*width+n)*2)-vectorFp16Value(act*gm.get(d.input1_addr+(uint64_t(r)*width+n)*2))) < 1e-3f);
   }
  }
  assert(wcp.active.empty());size_t output=0;
  for(auto e:gm.writes) {assert(e.first==d.completion_addr || (d.output_addr<=e.first && e.first<d.output_addr+uint64_t(rows)*width*2));if(e.first!=d.completion_addr)output+=e.second;}
  assert(output==uint64_t(wantedRows)*width*2);
  assert(gm.writes.back().first==d.completion_addr && gm.bytes[d.completion_addr]==9);
- assert(sfu.ops.size()%2==0);
- for(size_t i=0;i<sfu.ops.size();i+=2) {
-  assert(sfu.ops[i]==SFUVectorOp::Silu && sfu.ops[i+1]==SFUVectorOp::Multiply);
-  assert(sfu.sizes[i]<=8192 && sfu.sizes[i]==sfu.sizes[i+1]);
+ assert(!sfu.ops.empty());
+ size_t elements=0;
+ for(size_t i=0;i<sfu.ops.size();++i) {
+  assert(sfu.ops[i]==SFUVectorOp::Silu || sfu.ops[i]==SFUVectorOp::Multiply || sfu.ops[i]==SFUVectorOp::SiluMultiply);
+  assert(sfu.sizes[i]<=8192);
+  if(sfu.ops[i]==SFUVectorOp::Silu || sfu.ops[i]==SFUVectorOp::SiluMultiply) elements+=sfu.sizes[i];
  }
+ assert(elements==uint64_t(wantedRows)*width);
 }
 int main() {run(65,1,2048);run(2,0,8192);run(257,0,256);}
 '''

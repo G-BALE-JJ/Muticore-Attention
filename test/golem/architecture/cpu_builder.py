@@ -340,6 +340,16 @@ wcp_gemm_proxy_completion_latency_cycles = os.getenv(
 )
 sfu_enable = int(os.getenv("GOLEM_SFU_ENABLE", "0")) != 0
 sfu_max_inflight = os.getenv("GOLEM_SFU_MAX_INFLIGHT", "8")
+sfu_internal_precision = os.getenv("GOLEM_SFU_INTERNAL_PRECISION", "fp16")
+if sfu_internal_precision not in ("fp32", "fp16"):
+    raise ValueError("GOLEM_SFU_INTERNAL_PRECISION must be fp32 or fp16")
+sfu_nonlinear_backend = os.getenv("GOLEM_SFU_NONLINEAR_BACKEND", "lut")
+if sfu_nonlinear_backend not in ("libm", "lut"):
+    raise ValueError("GOLEM_SFU_NONLINEAR_BACKEND must be libm or lut")
+if sfu_nonlinear_backend == "lut" and sfu_internal_precision != "fp16":
+    raise ValueError("GOLEM_SFU_NONLINEAR_BACKEND=lut requires fp16")
+sfu_lut_exp_ports = os.getenv("GOLEM_SFU_LUT_EXP_PORTS", "4")
+sfu_lut_reciprocal_ports = os.getenv("GOLEM_SFU_LUT_RECIPROCAL_PORTS", "4")
 sfu_stats_latency = os.getenv("GOLEM_SFU_STATS_LATENCY", "1")
 sfu_merge_latency = os.getenv("GOLEM_SFU_MERGE_LATENCY", "1")
 sfu_normalize_latency = os.getenv("GOLEM_SFU_NORMALIZE_LATENCY", "1")
@@ -349,6 +359,26 @@ sfu_vector_op_latency = os.getenv("GOLEM_SFU_VECTOR_OP_LATENCY", "3")
 sfu_vector_op_ii = os.getenv("GOLEM_SFU_VECTOR_OP_II", "1")
 sfu_vector_fifo_elements = os.getenv("GOLEM_SFU_VECTOR_FIFO_ELEMENTS", "64")
 sfu_vector_max_requests = os.getenv("GOLEM_SFU_VECTOR_MAX_REQUESTS", "8")
+sfu_reciprocal_lanes = os.getenv("GOLEM_SFU_RECIPROCAL_LANES", "16")
+sfu_norm_reduction = os.getenv("GOLEM_SFU_NORM_REDUCTION", "tree")
+sfu_vector_row_buffer_bytes = os.getenv("GOLEM_SFU_VECTOR_ROW_BUFFER_BYTES", "65536")
+sfu_vector_staging_bytes = os.getenv("GOLEM_SFU_VECTOR_STAGING_BYTES", "262144")
+sfu_vector_row_scheduling = os.getenv("GOLEM_SFU_VECTOR_ROW_SCHEDULING", "overlap")
+sfu_vector_shared_arbitration = os.getenv("GOLEM_SFU_VECTOR_SHARED_ARBITRATION", "grant")
+if sfu_vector_row_scheduling not in ("serial", "overlap"):
+    raise ValueError("GOLEM_SFU_VECTOR_ROW_SCHEDULING must be serial or overlap")
+if sfu_vector_shared_arbitration not in ("parity", "grant"):
+    raise ValueError("GOLEM_SFU_VECTOR_SHARED_ARBITRATION must be parity or grant")
+sfu_vector_row_contexts = os.getenv("GOLEM_SFU_VECTOR_ROW_CONTEXTS", "4")
+sfu_vector_buffer_read_elements = os.getenv("GOLEM_SFU_VECTOR_BUFFER_READ_ELEMENTS", "32")
+sfu_vector_buffer_write_elements = os.getenv("GOLEM_SFU_VECTOR_BUFFER_WRITE_ELEMENTS", "16")
+sfu_vector_buffer_latency = os.getenv("GOLEM_SFU_VECTOR_BUFFER_LATENCY", "1")
+sfu_vector_reduce_latency = os.getenv("GOLEM_SFU_VECTOR_REDUCE_LATENCY", "4")
+sfu_vector_reduce_ii = os.getenv("GOLEM_SFU_VECTOR_REDUCE_II", "1")
+sfu_vector_rsqrt_latency = os.getenv("GOLEM_SFU_VECTOR_RSQRT_LATENCY", "8")
+sfu_vector_rsqrt_ii = os.getenv("GOLEM_SFU_VECTOR_RSQRT_II", "1")
+sfu_vector_divide_latency = os.getenv("GOLEM_SFU_VECTOR_DIVIDE_LATENCY", "8")
+sfu_vector_divide_ii = os.getenv("GOLEM_SFU_VECTOR_DIVIDE_II", "1")
 sfu_exp_lanes = os.getenv("GOLEM_SFU_EXP_LANES", "4")
 sfu_scale_latency = os.getenv("GOLEM_SFU_SCALE_LATENCY", "3")
 sfu_scale_ii = os.getenv("GOLEM_SFU_SCALE_II", "1")
@@ -1126,6 +1156,10 @@ class CPU_Builder:
                         "core_id": cpuId,
                         "active_worker_cores": active_worker_cores,
                         "max_inflight": sfu_max_inflight,
+                        "internal_precision": sfu_internal_precision,
+                        "nonlinear_backend": sfu_nonlinear_backend,
+                        "lut_exp_ports": sfu_lut_exp_ports,
+                        "lut_reciprocal_ports": sfu_lut_reciprocal_ports,
                         "stats_latency": sfu_stats_latency,
                         "merge_latency": sfu_merge_latency,
                         "normalize_latency": sfu_normalize_latency,
@@ -1136,6 +1170,22 @@ class CPU_Builder:
                         "vector_op_ii": sfu_vector_op_ii,
                         "vector_fifo_elements": sfu_vector_fifo_elements,
                         "vector_max_requests": sfu_vector_max_requests,
+                        "reciprocal_lanes": sfu_reciprocal_lanes,
+                        "norm_reduction": sfu_norm_reduction,
+                        "vector_row_buffer_bytes": sfu_vector_row_buffer_bytes,
+                        "vector_staging_bytes": sfu_vector_staging_bytes,
+                        "vector_row_scheduling": sfu_vector_row_scheduling,
+                        "vector_shared_arbitration": sfu_vector_shared_arbitration,
+                        "vector_row_contexts": sfu_vector_row_contexts,
+                        "vector_buffer_read_elements": sfu_vector_buffer_read_elements,
+                        "vector_buffer_write_elements": sfu_vector_buffer_write_elements,
+                        "vector_buffer_latency": sfu_vector_buffer_latency,
+                        "vector_reduce_latency": sfu_vector_reduce_latency,
+                        "vector_reduce_ii": sfu_vector_reduce_ii,
+                        "vector_rsqrt_latency": sfu_vector_rsqrt_latency,
+                        "vector_rsqrt_ii": sfu_vector_rsqrt_ii,
+                        "vector_divide_latency": sfu_vector_divide_latency,
+                        "vector_divide_ii": sfu_vector_divide_ii,
                         "exp_lanes": sfu_exp_lanes,
                         "scale_latency": sfu_scale_latency,
                         "scale_ii": sfu_scale_ii,

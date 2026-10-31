@@ -903,7 +903,7 @@ def main():
         '--num-query-heads',str(m['num_query_heads']),'--num-kv-heads',str(m['num_kv_heads']),
         '--head-dim','64','--causal','--rope','--artifact-root',str(case),'--sim-mode',a.sim_mode]
     sources=[ROOT/'src/sst/elements/golem'/name for name in (
-        'sfu/sfu.cc','sfu/sfu.h','sfu/vector_math.h','sfu/hardware_pipeline.h','sfu/vector_pipeline.h',
+        'sfu/sfu.cc','sfu/sfu.h','sfu/arithmetic.h','sfu/vector_math.h','sfu/hardware_pipeline.h','sfu/vector_pipeline.h','sfu/row_pipeline.h','sfu/norm_compensated.h','sfu/lut.h','sfu/lut_tables.h','sfu/silu_lut_tables.h',
         'tests/architecture/cpu_builder.py',
         'globalmemory/globalmemory.cc','globalmemory/globalmemory.h','globalmemory/localGmBankScheduler.h',
         'attention/decoderMemoryLayout.h','attention/projectionJobAbi.h','attention/projectionJob.h',

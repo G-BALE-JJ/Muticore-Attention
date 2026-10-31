@@ -17,7 +17,10 @@
   "host_checks": {
     "guest": [
       "test_flash_attention_baseline_contract.py",
-      "test_attention_metrics_report.py"
+      "test_attention_metrics_report.py",
+      "test_sfu_arithmetic.py",
+      "test_sfu_internal_precision.py",
+      "test_sfu_vector_pipeline.py"
     ],
     "baseline": [
       "test_timing_mode.py",

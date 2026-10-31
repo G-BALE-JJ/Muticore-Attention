@@ -6,6 +6,8 @@
 #include <vector>
 
 #include <sst/elements/golem/fp16.h>
+#include <sst/elements/golem/sfu/arithmetic.h>
+#include <sst/elements/golem/sfu/norm_compensated.h>
 
 namespace SST {
 namespace Golem {
@@ -16,6 +18,7 @@ enum class SFUVectorOp : uint8_t {
     Add = 3,
     Multiply = 4,
     Silu = 5,
+    SiluMultiply = 6,
 };
 
 struct SFUVectorRequest {
@@ -36,7 +39,9 @@ inline float vectorFp16Value(double value) {
 }
 
 inline bool evaluateSFUVectorOp(const SFUVectorRequest& request,
-                                std::vector<double>* output) {
+                                std::vector<double>* output,
+                                const SFUArithmetic& arithmetic = SFUArithmetic{},
+                                bool treeReduction = true) {
     if (output == nullptr || request.input == nullptr ||
         request.coefficients == nullptr || request.rowWidth == 0 ||
         request.input->empty() ||
@@ -46,22 +51,30 @@ inline bool evaluateSFUVectorOp(const SFUVectorRequest& request,
     const size_t rows = input.size() / request.rowWidth;
 
     if (request.op == SFUVectorOp::Add || request.op == SFUVectorOp::Multiply ||
-        request.op == SFUVectorOp::Silu) {
+        request.op == SFUVectorOp::Silu || request.op == SFUVectorOp::SiluMultiply) {
         if (request.op != SFUVectorOp::Silu && coefficients.size() != input.size()) return false;
         output->resize(input.size());
         for (size_t i = 0; i < input.size(); ++i) {
             const float x = vectorFp16Value(input[i]);
-            // FP16 operands/output, FP32 arithmetic. SiLU matches the hardware
+            // FP16 operands/output; arithmetic uses the selected internal precision.
+            // SiLU matches the hardware
             // stage sequence EXP -> add-one -> reciprocal -> multiply.
             float y;
-            if (request.op == SFUVectorOp::Silu) {
-                const float exponential = std::exp(-x);
-                const float denominator = 1.0f + exponential;
-                const float reciprocal = 1.0f / denominator;
-                y = x * reciprocal;
+            if (request.op == SFUVectorOp::Silu || request.op == SFUVectorOp::SiluMultiply) {
+                if (arithmetic.fp16() && arithmetic.backend()==SFUNonlinearBackend::Lut) {
+                    y = arithmetic.silu(x);
+                } else {
+                    const float exponential = arithmetic.exp(arithmetic.fp16() ? -std::abs(x) : -x);
+                    const float denominator = arithmetic.add(1.0f, exponential);
+                    const float reciprocal = arithmetic.reciprocal(denominator);
+                    y = arithmetic.mul(arithmetic.fp16() && x<0 ? arithmetic.mul(x,exponential) : x, reciprocal);
+                }
+                if (request.op == SFUVectorOp::SiluMultiply)
+                    y = arithmetic.mul(vectorFp16Value(y), vectorFp16Value(coefficients[i]));
             } else {
                 const float coefficient = vectorFp16Value(coefficients[i]);
-                y = request.op == SFUVectorOp::Add ? x + coefficient : x * coefficient;
+                y = request.op == SFUVectorOp::Add ? arithmetic.add(x, coefficient)
+                                                  : arithmetic.mul(x, coefficient);
             }
             (*output)[i] = vectorFp16Value(y);
         }
@@ -91,9 +104,9 @@ inline bool evaluateSFUVectorOp(const SFUVectorRequest& request,
                 const float cosine = vectorFp16Value(coefficients[tableBase + dim]);
                 const float sine = vectorFp16Value(coefficients[tableBase + dim + 1]);
                 (*output)[base + dim] = vectorFp16Value(
-                    even * cosine - odd * sine);
+                    arithmetic.sub(arithmetic.mul(even, cosine), arithmetic.mul(odd, sine)));
                 (*output)[base + dim + 1] = vectorFp16Value(
-                    even * sine + odd * cosine);
+                    arithmetic.add(arithmetic.mul(even, sine), arithmetic.mul(odd, cosine)));
             }
         }
         return true;
@@ -106,18 +119,44 @@ inline bool evaluateSFUVectorOp(const SFUVectorRequest& request,
         output->resize(input.size());
         for (size_t row = 0; row < rows; ++row) {
             const size_t base = row * request.rowWidth;
-            float squareSum = 0.0f;
+            float squareSum = 0.0f, inputScale=1.f;
+            if(arithmetic.fp16()) {
+                float maximum=0;for(uint32_t dim=0;dim<request.rowWidth;++dim)maximum=std::max(maximum,std::abs(vectorFp16Value(input[base+dim])));
+                int exponent=0;std::frexp(maximum,&exponent);inputScale=std::ldexp(1.f,std::max(0,exponent-1));
+            }
+            if(arithmetic.fp16() && treeReduction) {
+                std::vector<SFUNormPair> p(request.rowWidth);
+                for(size_t i=0;i<p.size();++i)p[i]=normSquare(arithmetic,arithmetic.div(vectorFp16Value(input[base+i]),inputScale));
+                for(size_t n=p.size();n>1;n=(n+1)/2)
+                    for(size_t i=0;i<(n+1)/2;++i)if(2*i+1<n)p[i]=normAdd(arithmetic,p[2*i],p[2*i+1]);else p[i]=p[2*i];
+                SFUNormPair m{arithmetic.div(p[0].hi,float(request.rowWidth)),arithmetic.div(p[0].lo,float(request.rowWidth))};
+                const float eps=arithmetic.div(arithmetic.div(request.epsilon,inputScale),inputScale);
+                m=normAdd(arithmetic,m,{eps,0});
+                const auto root=normRoot(arithmetic,m);
+                for(size_t i=0;i<p.size();++i)(*output)[base+i]=normGamma(arithmetic,normDivide(arithmetic,arithmetic.div(vectorFp16Value(input[base+i]),inputScale),root),vectorFp16Value(coefficients[i]));
+                continue;
+            }
+            std::vector<float> partials(request.rowWidth);
             for (uint32_t dim = 0; dim < request.rowWidth; ++dim) {
                 const float value = vectorFp16Value(input[base + dim]);
-                squareSum += value * value;
+                const float scaled=arithmetic.fp16() ? arithmetic.div(value,inputScale) : value;
+                partials[dim] = arithmetic.mul(scaled, scaled);
+                if (!treeReduction) squareSum = arithmetic.add(squareSum, partials[dim]);
             }
-            const float inverseRms = 1.0f / std::sqrt(
-                squareSum / request.rowWidth + request.epsilon);
+            if (treeReduction) {
+                for (size_t size = partials.size(); size > 1; size = (size + 1) / 2)
+                    for (size_t i = 0; i < (size + 1) / 2; ++i)
+                        partials[i] = 2*i+1 < size ? arithmetic.add(partials[2*i], partials[2*i+1]) : partials[2*i];
+                squareSum = partials[0];
+            }
+            const float epsilon=arithmetic.fp16() ? arithmetic.div(arithmetic.div(request.epsilon,inputScale),inputScale) : request.epsilon;
+            const float mean=arithmetic.add(arithmetic.div(squareSum,static_cast<float>(request.rowWidth)),epsilon);
+            const float root=arithmetic.fp16() ? arithmetic.sqrt(mean) : arithmetic.rsqrt(mean);
             for (uint32_t dim = 0; dim < request.rowWidth; ++dim) {
                 const float value = vectorFp16Value(input[base + dim]);
                 const float gamma = vectorFp16Value(coefficients[dim]);
                 (*output)[base + dim] = vectorFp16Value(
-                    value * inverseRms * gamma);
+                    arithmetic.mul(arithmetic.fp16() ? arithmetic.div(arithmetic.div(value,inputScale),root) : arithmetic.mul(value,root), gamma));
             }
         }
         return true;
